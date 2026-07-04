@@ -1,0 +1,17 @@
+[options]
+mode bmc
+depth 12
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal zkf_pipe.v
+read -formal zkf_pipe_eq.v
+chparam -set W 24 -set N 4 zkf_pipe_eq
+prep -top zkf_pipe_eq
+
+[files]
+float/hdl/zkf_pipe.v
+float/proof/harness/zkf_pipe_eq.v

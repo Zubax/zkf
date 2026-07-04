@@ -1,0 +1,23 @@
+[options]
+mode bmc
+depth 4
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal zkf_cmp_comb.v
+read -formal zkf_pipe.v
+read -formal zkf_cmp.v
+read -formal zkf_cmp_ref.v
+read -formal zkf_cmp_eq.v
+chparam -set WEXP 6 -set WMAN 18 zkf_cmp_eq
+prep -top zkf_cmp_eq
+
+[files]
+float/hdl/zkf_cmp_comb.v
+float/hdl/zkf_pipe.v
+float/hdl/zkf_cmp.v
+float/proof/refs/zkf_cmp_ref.v
+float/proof/harness/zkf_cmp_eq.v

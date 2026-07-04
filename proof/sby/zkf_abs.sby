@@ -1,0 +1,17 @@
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal zkf_abs.v
+read -formal zkf_abs_eq.v
+chparam -set WEXP 6 -set WMAN 18 zkf_abs_eq
+prep -top zkf_abs_eq
+
+[files]
+float/hdl/zkf_abs.v
+float/proof/harness/zkf_abs_eq.v

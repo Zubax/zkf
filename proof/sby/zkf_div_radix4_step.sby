@@ -1,0 +1,19 @@
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal _zkf_div_core.v
+read -formal zkf_div_radix4_step_ref.v
+read -formal zkf_div_radix4_step_eq.v
+chparam -set WMAN 18 zkf_div_radix4_step_eq
+prep -top zkf_div_radix4_step_eq
+
+[files]
+float/hdl/_zkf_div_core.v
+float/proof/refs/zkf_div_radix4_step_ref.v
+float/proof/harness/zkf_div_radix4_step_eq.v

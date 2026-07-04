@@ -1,0 +1,17 @@
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal zkf_neg.v
+read -formal zkf_neg_eq.v
+chparam -set WEXP 6 -set WMAN 18 zkf_neg_eq
+prep -top zkf_neg_eq
+
+[files]
+float/hdl/zkf_neg.v
+float/proof/harness/zkf_neg_eq.v

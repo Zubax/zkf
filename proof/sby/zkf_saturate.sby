@@ -1,0 +1,19 @@
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal zkf_saturate.v
+read -formal zkf_is_finite.v
+read -formal zkf_saturate_eq.v
+chparam -set WEXP 6 -set WMAN 18 zkf_saturate_eq
+prep -top zkf_saturate_eq
+
+[files]
+float/hdl/zkf_saturate.v
+float/hdl/zkf_is_finite.v
+float/proof/harness/zkf_saturate_eq.v

@@ -1,0 +1,19 @@
+[options]
+mode bmc
+depth 6
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal _zkf_pack.v
+read -formal zkf_pack_ref.v
+read -formal zkf_pack_eq.v
+chparam -set WEXP 6 -set WMAN 18 -set WEXP_UNBIASED 8 zkf_pack_eq
+prep -top zkf_pack_eq
+
+[files]
+float/hdl/_zkf_pack.v
+float/proof/refs/zkf_pack_ref.v
+float/proof/harness/zkf_pack_eq.v
