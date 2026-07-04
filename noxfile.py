@@ -88,11 +88,14 @@ def accuracy(session: nox.Session) -> None:
     session.run("python", "zkf_trig.py", "--check")
 
 
-@nox.session
+# Runs in the ambient toolchain environment, not a fresh virtualenv: run_proofs.py/report.py are stdlib-only,
+# and sby (a Python program) must keep resolving its own interpreter -- a venv on PATH would shadow the system
+# Python that carries sby's dependencies (click, etc.), breaking every proof with "No module named 'click'".
+@nox.session(python=False)
 def formal(session: nox.Session) -> None:
-    session.install("-e", ".[test]")
+    """SymbiYosys equivalence proofs for the modules under proof/sby/."""
     session.run(
-        "python",
+        "python3",
         "proof/run_proofs.py",
         "--sby-dir",
         "proof/sby",
