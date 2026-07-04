@@ -11,6 +11,9 @@ See how ZKF beats other floating-point libraries in <https://zubax.github.io/fpg
 ## Usage
 
 The `zkf_*` modules located under `hdl/` implement various operators.
+Normally they should be submoduled or copy-pasted into the project tree.
+The Python reference model is contained in an adjacent directory, it can be used for bit-exact emulation.
+Everything else is just verification scaffolding and is not considered a shippable artifact.
 
 Most modules are zero-bubble throughput-1 pipelines; only those that implement computationally heavy functions
 are FSM-based and offer limited throughput.
