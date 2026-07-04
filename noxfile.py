@@ -9,7 +9,7 @@ import nox
 
 nox.options.reuse_existing_virtualenvs = True
 
-BLACK_TARGETS = ("zkf", "tb", "synth", "proof", "noxfile.py", "zkf_transcendental.py", "zkf_trig.py")
+BLACK_TARGETS = ("model/zkf", "tb", "synth", "proof", "noxfile.py", "zkf_transcendental.py", "zkf_trig.py")
 
 
 @nox.session(python=False, default=False)

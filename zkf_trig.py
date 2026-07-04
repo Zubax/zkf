@@ -36,7 +36,7 @@ mp.mp.prec = 400  # generous headroom for the gain/LUT constants and ground-trut
 REPO = Path(__file__).resolve().parent
 HDL = REPO / "hdl"
 TABLES = HDL / "_tables"
-PKG_TABLES = REPO / "zkf" / "_tables"
+PKG_TABLES = REPO / "model" / "zkf" / "_tables"
 
 FUNC = "sincos"
 
@@ -427,7 +427,7 @@ def _check() -> None:
     """End-to-end faithful-rounding check vs mpmath via the bit-exact model (imports only the public zkf package)."""
     import sys
 
-    sys.path.insert(0, str(REPO))
+    sys.path.insert(0, str(REPO / "model"))
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
@@ -629,7 +629,7 @@ def _check_atan2() -> None:
     """End-to-end faithful-rounding check for zkf_atan2 (theta and mag) vs mpmath via the bit-exact model."""
     import sys
 
-    sys.path.insert(0, str(REPO))
+    sys.path.insert(0, str(REPO / "model"))
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat

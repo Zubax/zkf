@@ -35,6 +35,7 @@ test = [
 Repository = "https://github.com/Zubax/zkf"
 
 [tool.setuptools.packages.find]
+where = ["model"]
 include = ["zkf*"]
 
 [tool.pytest.ini_options]
@@ -59,4 +60,4 @@ line-length = 120
 target-version = ["py311"]
 # The transcendental/trig lookup tables are machine-generated (zkf_transcendental.py / zkf_trig.py --emit);
 # keep them out of the style gate so the generators stay the single source of truth.
-extend-exclude = "zkf/_tables/.+\\.py"
+extend-exclude = "model/zkf/_tables/.+\\.py"

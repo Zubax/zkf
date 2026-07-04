@@ -18,7 +18,7 @@ import unittest
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # tb/ (harness siblings)
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root (the zkf package)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "model"))  # model/ (the zkf package)
 
 from zkf import Zkf, ZkfFormat  # noqa: E402
 from zkf.oracle import add, div, mul  # noqa: E402

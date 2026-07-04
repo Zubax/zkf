@@ -24,11 +24,12 @@ from cocotb_tools.runner import get_runner
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TB_DIR = REPO_ROOT / "tb"
+MODEL_DIR = REPO_ROOT / "model"  # parent of the zkf reference-model package
 
-# The simulator subprocess imports the reference-model package (zkf, at the repo root) and the cocotb harness
+# The simulator subprocess imports the reference-model package (zkf, under model/) and the cocotb harness
 # modules (in tb/). cocotb's runner derives the child PYTHONPATH from os.pathsep.join(sys.path), so both
 # directories must be on this process's sys.path.
-for _p in (str(TB_DIR), str(REPO_ROOT)):
+for _p in (str(TB_DIR), str(MODEL_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 

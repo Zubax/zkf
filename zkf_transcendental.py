@@ -33,7 +33,7 @@ mp.mp.prec = 280  # generous headroom for coefficient fitting and ground-truth r
 REPO = Path(__file__).resolve().parent
 HDL = REPO / "hdl"
 TABLES = HDL / "_tables"
-PKG_TABLES = REPO / "zkf" / "_tables"
+PKG_TABLES = REPO / "model" / "zkf" / "_tables"
 
 FUNCS = ("exp2", "log2")
 
@@ -622,7 +622,7 @@ def _check() -> None:
     """End-to-end accuracy check vs mpmath via the bit-exact model (imports only the public zkf package)."""
     import sys
 
-    sys.path.insert(0, str(REPO))
+    sys.path.insert(0, str(REPO / "model"))
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
