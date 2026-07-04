@@ -24,8 +24,8 @@ def main(argv: list[str]) -> None:
 
     bit_diagram = "s" + "e" * fmt.wexp + "f" * fmt.wfrac
     print(bit_diagram)
-    print(("0123456789" * ((fmt.wfull + 10) // 10))[:fmt.wfull][::-1])
-    print("".join((f"{x}" * 10) for x in range(10))[:fmt.wfull][::-1])
+    print(("0123456789" * ((fmt.wfull + 10) // 10))[: fmt.wfull][::-1])
+    print("".join((f"{x}" * 10) for x in range(10))[: fmt.wfull][::-1])
 
     if len(argv) > 3:
         value = float(argv[3])

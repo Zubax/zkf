@@ -1,0 +1,58 @@
+name: CI
+on:
+  push:
+    paths-ignore:
+      - '**/*.md'
+  pull_request:
+env:
+  COCOTB_IGNORE_PYTHON_REQUIRES: "1"
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-latest
+    container: &fpga_toolchain_container
+      image: ghcr.io/zubax/zubax-fpga-toolchain:latest
+      options: --user root
+    steps:
+      - &checkout_step
+        uses: actions/checkout@v4
+      - run: nox -s tests black
+
+  formal:
+    name: formal
+    runs-on: ubuntu-latest
+    container: *fpga_toolchain_container
+    steps:
+      - *checkout_step
+      - run: nox -s formal
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: formal-report, path: build/float/formal/report.html, if-no-files-found: ignore }
+
+  accuracy:
+    name: accuracy
+    runs-on: ubuntu-latest
+    container: *fpga_toolchain_container
+    steps:
+      - *checkout_step
+      - run: nox -s accuracy
+
+  deep:
+    name: deep
+    runs-on: ubuntu-latest
+    container: *fpga_toolchain_container
+    steps:
+      - *checkout_step
+      - run: nox -s deep
+
+  synth:
+    name: synth
+    runs-on: ubuntu-latest
+    container: *fpga_toolchain_container
+    steps:
+      - *checkout_step
+      - run: nox -s synth
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with: { name: synth-artifacts, path: build, if-no-files-found: ignore }

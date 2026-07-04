@@ -30,10 +30,7 @@ class ResizeCase:
     expected: int
 
     def describe(self, fmt_in: ZkfFormat, fmt_out: ZkfFormat) -> str:
-        return (
-            f"{self.label} a={hex_bits(self.a, fmt_in.wfull)} "
-            f"expected={hex_bits(self.expected, fmt_out.wfull)}"
-        )
+        return f"{self.label} a={hex_bits(self.a, fmt_in.wfull)} " f"expected={hex_bits(self.expected, fmt_out.wfull)}"
 
 
 def add_unique(
@@ -148,7 +145,7 @@ def cases_for(
 @cocotb.test()
 async def resize_runtime_cases(dut) -> None:
     context = resize_context("resize")
-    fmt_in  = ZkfFormat(context.wexp_in,  context.wman_in)
+    fmt_in = ZkfFormat(context.wexp_in, context.wman_in)
     fmt_out = ZkfFormat(context.wexp_out, context.wman_out)
 
     check_width("a", dut.a, fmt_in.wfull, context)
@@ -186,6 +183,6 @@ async def resize_runtime_cases(dut) -> None:
 
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
-    assert scoreboard.checked == len(cases), (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"
-    )
+    assert scoreboard.checked == len(
+        cases
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

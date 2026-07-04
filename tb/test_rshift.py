@@ -79,8 +79,8 @@ async def rshift_runtime_cases(dut) -> None:
             exp = rshift_sticky_reference(width, x, shamt)
             assert is_resolvable(dut.y), f"{cfg}: y unresolved x={x:#x} shamt={shamt}"
             obs = int(dut.y.value)
-            assert obs == exp, (
-                f"{cfg}: y mismatch x={x:#x} shamt={shamt} got={obs:#x} exp={exp:#x} (W={width} split={split})"
-            )
+            assert (
+                obs == exp
+            ), f"{cfg}: y mismatch x={x:#x} shamt={shamt} got={obs:#x} exp={exp:#x} (W={width} split={split})"
             checked += 1
     assert checked == len(xs) * len(shamts), f"{cfg}: checked {checked} of {len(xs) * len(shamts)}"

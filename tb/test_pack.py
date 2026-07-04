@@ -259,15 +259,17 @@ def _filter_no_overflow(fmt: ZkfFormat, cases: list[PackCase], assume_no_overflo
     # ASSUME_NO_OVERFLOW=1 prunes the packer's overflow detector, so it diverges from the overflow-detecting reference
     # only for a genuine exponent overflow with no force flag; that region is caller's-responsibility/undefined here, so
     # drop exp_unbiased above the finite range.
-    return [
-        case for case in cases
-        if case.force_inf or case.force_zero or case.exp_unbiased <= fmt.max_exp_unbiased
-    ]
+    return [case for case in cases if case.force_inf or case.force_zero or case.exp_unbiased <= fmt.max_exp_unbiased]
 
 
 def cases_for(
-    fmt: ZkfFormat, kind: str, seed: int, count: int, wexp_unbiased: int,
-    exp_is_biased: int = 0, assume_no_overflow: int = 0,
+    fmt: ZkfFormat,
+    kind: str,
+    seed: int,
+    count: int,
+    wexp_unbiased: int,
+    exp_is_biased: int = 0,
+    assume_no_overflow: int = 0,
 ) -> list[PackCase]:
     if kind == "exhaustive":
         return _filter_no_overflow(fmt, exhaustive_cases(fmt, wexp_unbiased, exp_is_biased), assume_no_overflow)
@@ -317,9 +319,7 @@ async def pack_runtime_cases(dut) -> None:
     check_width("exp_unbiased", dut.exp_unbiased, wexp_unbiased, context)
     exp_is_biased = context.exp_is_biased
     assume_no_overflow = context.assume_no_overflow
-    cases = cases_for(
-        fmt, context.kind, context.seed, context.count, wexp_unbiased, exp_is_biased, assume_no_overflow
-    )
+    cases = cases_for(fmt, context.kind, context.seed, context.count, wexp_unbiased, exp_is_biased, assume_no_overflow)
 
     start_clock(dut)
     dut.rst.value = 1
@@ -375,6 +375,6 @@ async def pack_runtime_cases(dut) -> None:
 
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
-    assert scoreboard.checked == len(cases), (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"
-    )
+    assert scoreboard.checked == len(
+        cases
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

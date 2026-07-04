@@ -3,15 +3,15 @@
 Single source of truth for the float verification matrix.
 
 Every simulation the suite runs is one Run here: a module, a simulator (icarus/verilator), a set of
-fusesoc parameters, and a tier. The tiers gate selection:
+vlog parameters, plusargs, and a tier. The tiers gate selection:
 
-  pr          per-PR set (runs by default; what make verify-float exercises)
+  pr          per-PR set (runs by default; what `nox -s tests` exercises)
   deep        full parameter-equivalence-class sweep (correctness on icarus, coverage on verilator)
   properties  algebraic-property tests (test_properties.py) on the add/addsub/mul toplevels
   fast        the smallest-config smoke set
 
 test_float_matrix.py parametrizes pytest over build_matrix(), tagging each Run with its tier and
-simulator as markers; pytest.ini deselects deep/properties/fast by default, so the deep work skips
+simulator as markers; pyproject.toml deselects deep/properties/fast by default, so the deep work skips
 unless explicitly selected (pytest -m deep, etc.).
 
 Running this module directly prints the matrix (counts per tier/sim, or the full list with --list).
@@ -72,8 +72,8 @@ UNARY = [
 # SUPPORTED_WMAN/WMAN_MIN in zkf_transcendental.py), so every config must use one of those.
 # (config, wexp, wman, kind, count)
 TRANS_EXPLOG = [
-    ("w2_m16_exhaustive", 2, 16, "exhaustive", 0),    # exhaustive at the minimum WMAN
-    ("w6_m16_random", 6, 16, "random", 512),          # min table width, wider exponent
+    ("w2_m16_exhaustive", 2, 16, "exhaustive", 0),  # exhaustive at the minimum WMAN
+    ("w6_m16_random", 6, 16, "random", 512),  # min table width, wider exponent
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w8_m32_random", 8, 32, "random", 768),
     ("w11_m53_random", 11, 53, "random", 384),
@@ -82,8 +82,10 @@ TRANS_EXPLOG = [
     ("w20_m16_random", 20, 16, "random", 2000),
 ]
 TRANS_EXPLOG_EXT = [
-    (2, 16, "exhaustive", 0), (3, 16, "exhaustive", 0),
-    (8, 27, "random", 512), (8, 32, "random", 512),
+    (2, 16, "exhaustive", 0),
+    (3, 16, "exhaustive", 0),
+    (8, 27, "random", 512),
+    (8, 32, "random", 512),
     (14, 16, "random", 2000),  # wide-exponent guard (exhaustive infeasible)
 ]
 
@@ -99,8 +101,11 @@ TRANS_TRIG = [
     ("w20_m16_random", 20, 16, "random", 2000),
 ]
 TRANS_TRIG_EXT = [
-    (2, 16, "exhaustive", 0), (3, 16, "random", 2000),
-    (6, 16, "random", 512), (8, 27, "random", 512), (8, 32, "random", 512),
+    (2, 16, "exhaustive", 0),
+    (3, 16, "random", 2000),
+    (6, 16, "random", 512),
+    (8, 27, "random", 512),
+    (8, 32, "random", 512),
     (14, 16, "random", 2000),
 ]
 
@@ -149,36 +154,59 @@ RESIZE = [
 
 # extended (deep) format lists.
 BIN_EXT = [
-    (2, 5, "exhaustive", 0), (4, 5, "exhaustive", 0), (2, 7, "exhaustive", 0), (3, 6, "exhaustive", 0),
-    (5, 4, "exhaustive", 0), (4, 6, "exhaustive", 0), (3, 7, "random", 512), (6, 17, "random", 768),
-    (8, 23, "random", 768), (7, 12, "random", 512), (9, 24, "random", 512), (6, 19, "random", 512),
+    (2, 5, "exhaustive", 0),
+    (4, 5, "exhaustive", 0),
+    (2, 7, "exhaustive", 0),
+    (3, 6, "exhaustive", 0),
+    (5, 4, "exhaustive", 0),
+    (4, 6, "exhaustive", 0),
+    (3, 7, "random", 512),
+    (6, 17, "random", 768),
+    (8, 23, "random", 768),
+    (7, 12, "random", 512),
+    (9, 24, "random", 512),
+    (6, 19, "random", 512),
 ]
 DIV_EXT = [
-    (2, 5, "exhaustive", 0), (4, 5, "exhaustive", 0), (3, 6, "exhaustive", 0), (5, 4, "exhaustive", 0),
-    (6, 17, "random", 512), (8, 23, "random", 512), (7, 12, "random", 512),
+    (2, 5, "exhaustive", 0),
+    (4, 5, "exhaustive", 0),
+    (3, 6, "exhaustive", 0),
+    (5, 4, "exhaustive", 0),
+    (6, 17, "random", 512),
+    (8, 23, "random", 512),
+    (7, 12, "random", 512),
 ]
 UNARY_EXT = [
-    (2, 5, "exhaustive", 0), (4, 5, "exhaustive", 0), (3, 6, "exhaustive", 0),
-    (6, 17, "random", 512), (8, 23, "random", 512),
+    (2, 5, "exhaustive", 0),
+    (4, 5, "exhaustive", 0),
+    (3, 6, "exhaustive", 0),
+    (6, 17, "random", 512),
+    (8, 23, "random", 512),
 ]
 # fma deep formats: all random (ternary-exhaustive infeasible above wfull=6). (wexp, wman, kind, count)
 FMA_EXT = [
-    (4, 5, "random", 512), (3, 6, "random", 512), (5, 4, "random", 512), (3, 7, "random", 512),
-    (6, 17, "random", 768), (8, 23, "random", 512), (7, 12, "random", 512), (9, 24, "random", 512),
+    (4, 5, "random", 512),
+    (3, 6, "random", 512),
+    (5, 4, "random", 512),
+    (3, 7, "random", 512),
+    (6, 17, "random", 768),
+    (8, 23, "random", 512),
+    (7, 12, "random", 512),
+    (9, 24, "random", 512),
 ]
 
 
 @dataclass
 class Run:
-    module: str          # mul, add, pack, to_int, pipe, ...
-    sim: str             # icarus | verilator
-    tier: str            # pr | deep | properties | fast
-    config: str          # config name including knob suffixes
-    target: str          # fusesoc target, e.g. sim_mul_icarus
+    module: str  # mul, add, pack, to_int, pipe, ...
+    sim: str  # icarus | verilator
+    tier: str  # pr | deep | properties | fast
+    config: str  # config name including knob suffixes
+    target: str  # simulation target, e.g. sim_mul_icarus
     root: str
-    vlog: list           # [(name, value), ...]  -> --NAME value
-    plus: list           # [(name, value), ...]  -> --ZKF_... value
-    defines: list = field(default_factory=list)   # [(name, value), ...] -> vlogdefine parameters
+    vlog: list  # [(name, value), ...]  -> --NAME value
+    plus: list  # [(name, value), ...]  -> --ZKF_... value
+    defines: list = field(default_factory=list)  # [(name, value), ...] -> vlogdefine parameters
 
     @property
     def id(self) -> str:
@@ -203,8 +231,21 @@ def _common(kind: str, count: int, config: str, with_kind: bool = True) -> list:
     return parts + [("ZKF_COUNT", count), ("ZKF_SEED", SEED), ("ZKF_CONFIG", config)]
 
 
-def _run(module, sim, tier, config, vlog, *, kind="exhaustive", count=0,
-         target=None, with_kind=True, plus_names=None, root_module=None, defines=None) -> Run:
+def _run(
+    module,
+    sim,
+    tier,
+    config,
+    vlog,
+    *,
+    kind="exhaustive",
+    count=0,
+    target=None,
+    with_kind=True,
+    plus_names=None,
+    root_module=None,
+    defines=None,
+) -> Run:
     """Assemble one Run. vlog params are mirrored to plusargs as ZKF_<name> unless plus_names overrides."""
     plus_names = plus_names or {}
     plus = [(plus_names.get(name, "ZKF_" + name), val) for name, val in vlog]
@@ -214,29 +255,55 @@ def _run(module, sim, tier, config, vlog, *, kind="exhaustive", count=0,
     return Run(module, sim, tier, config, target, root, vlog, plus, list(defines or []))
 
 
-def _binary(module, sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None,
-            pa=None, so=None, wm=None, target=None, root_module=None) -> Run:
+def _binary(
+    module,
+    sim,
+    tier,
+    base,
+    w,
+    m,
+    kind,
+    count,
+    *,
+    sp=None,
+    si=None,
+    sd=None,
+    sa=None,
+    sn=None,
+    pa=None,
+    so=None,
+    wm=None,
+    target=None,
+    root_module=None,
+) -> Run:
     # wm (WMULTIPLIER) is only meaningful for the multiply (zkf_mul); other _binary ops do not declare it.
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
-        vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+        vlog.append(("STAGE_PRODUCT", sp))
+        suffix += f"_sp{sp}"
     if wm is not None:
-        vlog.append(("WMULTIPLIER", wm)); suffix += f"_wm{wm}"
+        vlog.append(("WMULTIPLIER", wm))
+        suffix += f"_wm{wm}"
     if si is not None:
-        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
+        vlog.append(("STAGE_INPUT", si))
+        suffix += f"_si{si}"
     if sd is not None and sa is not None:
-        vlog += [("STAGE_DECODE", sd), ("STAGE_ALIGN", sa)]; suffix += f"_sd{sd}_sa{sa}"
+        vlog += [("STAGE_DECODE", sd), ("STAGE_ALIGN", sa)]
+        suffix += f"_sd{sd}_sa{sa}"
     elif sd is not None:
-        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+        vlog.append(("STAGE_DECODE", sd))
+        suffix += f"_sd{sd}"
     if sn is not None:
-        vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+        vlog.append(("STAGE_NORMALIZE", sn))
+        suffix += f"_sn{sn}"
     if pa is not None:
-        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
+        vlog.append(("STAGE_PACK", pa))
+        suffix += f"_pa{pa}"
     if so is not None:
-        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
-    return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count,
-                target=target, root_module=root_module)
+        vlog.append(("STAGE_OUTPUT", so))
+        suffix += f"_so{so}"
+    return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count, target=target, root_module=root_module)
 
 
 def _ilog2(sim, tier, base, w, m, kind, count, *, wk=None, si=None, sd=None) -> Run:
@@ -246,32 +313,43 @@ def _ilog2(sim, tier, base, w, m, kind, count, *, wk=None, si=None, sd=None) -> 
     vlog = [("WEXP", w), ("WMAN", m), ("WK", wk)]
     suffix = f"_wk{wk}"
     if si is not None:
-        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
+        vlog.append(("STAGE_INPUT", si))
+        suffix += f"_si{si}"
     if sd is not None:
-        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+        vlog.append(("STAGE_DECODE", sd))
+        suffix += f"_sd{sd}"
     return _run("mul_ilog2", sim, tier, base + suffix, vlog, kind=kind, count=count, root_module="zkf_mul_ilog2")
 
 
-def _fma(sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None, pa=None, so=None,
-         wm=None) -> Run:
+def _fma(
+    sim, tier, base, w, m, kind, count, *, sp=None, si=None, sd=None, sa=None, sn=None, pa=None, so=None, wm=None
+) -> Run:
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if sp is not None:
-        vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+        vlog.append(("STAGE_PRODUCT", sp))
+        suffix += f"_sp{sp}"
     if wm is not None:
-        vlog.append(("WMULTIPLIER", wm)); suffix += f"_wm{wm}"
+        vlog.append(("WMULTIPLIER", wm))
+        suffix += f"_wm{wm}"
     if si is not None:
-        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
+        vlog.append(("STAGE_INPUT", si))
+        suffix += f"_si{si}"
     if sd is not None:
-        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+        vlog.append(("STAGE_DECODE", sd))
+        suffix += f"_sd{sd}"
     if sa is not None:
-        vlog.append(("STAGE_ALIGN", sa)); suffix += f"_sa{sa}"
+        vlog.append(("STAGE_ALIGN", sa))
+        suffix += f"_sa{sa}"
     if sn is not None:
-        vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+        vlog.append(("STAGE_NORMALIZE", sn))
+        suffix += f"_sn{sn}"
     if pa is not None:
-        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
+        vlog.append(("STAGE_PACK", pa))
+        suffix += f"_pa{pa}"
     if so is not None:
-        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+        vlog.append(("STAGE_OUTPUT", so))
+        suffix += f"_so{so}"
     return _run("fma", sim, tier, base + suffix, vlog, kind=kind, count=count)
 
 
@@ -279,11 +357,14 @@ def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None
     vlog = [("WEXP", w), ("WMAN", m), ("WEXP_UNBIASED", u)]
     suffix = ""
     if so is not None:
-        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+        vlog.append(("STAGE_OUTPUT", so))
+        suffix += f"_so{so}"
     if eb is not None:
-        vlog.append(("EXP_IS_BIASED", eb)); suffix += f"_eb{eb}"
+        vlog.append(("EXP_IS_BIASED", eb))
+        suffix += f"_eb{eb}"
     if nov is not None:
-        vlog.append(("ASSUME_NO_OVERFLOW", nov)); suffix += f"_nov{nov}"
+        vlog.append(("ASSUME_NO_OVERFLOW", nov))
+        suffix += f"_nov{nov}"
     return _run("pack", sim, tier, config + suffix, vlog, kind=kind, count=count)
 
 
@@ -291,11 +372,14 @@ def _cast(module, sim, tier, base, w, m, wint, kind, count, si, *, sn=None, pa=N
     vlog = [("WEXP", w), ("WMAN", m), ("WINT", wint), ("STAGE_INPUT", si)]
     suffix = f"_si{si}"
     if sn is not None:
-        vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+        vlog.append(("STAGE_NORMALIZE", sn))
+        suffix += f"_sn{sn}"
     if pa is not None:
-        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
+        vlog.append(("STAGE_PACK", pa))
+        suffix += f"_pa{pa}"
     if so is not None:
-        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+        vlog.append(("STAGE_OUTPUT", so))
+        suffix += f"_so{so}"
     return _run(module, sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
 
 
@@ -303,7 +387,8 @@ def _resize(sim, tier, base, wi, mi, wo, mo, kind, count, si, so=None) -> Run:
     vlog = [("WEXP_IN", wi), ("WMAN_IN", mi), ("WEXP_OUT", wo), ("WMAN_OUT", mo), ("STAGE_INPUT", si)]
     suffix = f"_si{si}"
     if so is not None:
-        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+        vlog.append(("STAGE_OUTPUT", so))
+        suffix += f"_so{so}"
     return _run("resize", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
 
 
@@ -311,56 +396,100 @@ def _round(sim, tier, base, w, m, kind, count, *, si=None, sd=None, pa=None, so=
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if si is not None:
-        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
+        vlog.append(("STAGE_INPUT", si))
+        suffix += f"_si{si}"
     if sd is not None:
-        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+        vlog.append(("STAGE_DECODE", sd))
+        suffix += f"_sd{sd}"
     if pa is not None:
-        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
+        vlog.append(("STAGE_PACK", pa))
+        suffix += f"_pa{pa}"
     if so is not None:
-        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+        vlog.append(("STAGE_OUTPUT", so))
+        suffix += f"_so{so}"
     return _run("round", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
 
 
 def _pipe(sim, tier, config, w, n, count) -> Run:
-    return _run("pipe", sim, tier, config, [("W", w), ("N", n)], count=count, with_kind=False,
-                plus_names={"W": "ZKF_PIPE_W", "N": "ZKF_PIPE_N"})
+    return _run(
+        "pipe",
+        sim,
+        tier,
+        config,
+        [("W", w), ("N", n)],
+        count=count,
+        with_kind=False,
+        plus_names={"W": "ZKF_PIPE_W", "N": "ZKF_PIPE_N"},
+    )
 
 
-def _trans(module, sim, tier, base, w, m, kind, count, *,
-           si=None, sr=None, sd=None, sp=None, spf=None, sn=None, sno=None, pa=None, so=None, un=None, parallel=None,
-           wm=None) -> Run:
-    # Each module takes only its own knobs (an undeclared parameter makes fusesoc error). Knob legend: si/sp/so =
+def _trans(
+    module,
+    sim,
+    tier,
+    base,
+    w,
+    m,
+    kind,
+    count,
+    *,
+    si=None,
+    sr=None,
+    sd=None,
+    sp=None,
+    spf=None,
+    sn=None,
+    sno=None,
+    pa=None,
+    so=None,
+    un=None,
+    parallel=None,
+    wm=None,
+) -> Run:
+    # Each module takes only its own knobs (the driver passes only a module.s own declared parameters). Knob legend: si/sp/so =
     # STAGE_INPUT/PRODUCT/OUTPUT, wm = WMULTIPLIER (_zkf_pmul DSP-tile-grid hint), sr = STAGE_REDUCE (exp2),
     # sd/spf/sno = STAGE_DECODE/PRODUCT_FINAL/NORMALIZE_OUTPUT (log2), un = UNROLL100, parallel = PARALLEL
     # (decoupled z-path), sn = STAGE_NORMALIZE, pa = STAGE_PACK.
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if un is not None:
-        vlog.append(("UNROLL100", un)); suffix += f"_un{un}"
+        vlog.append(("UNROLL100", un))
+        suffix += f"_un{un}"
     if parallel is not None:
-        vlog.append(("PARALLEL", parallel)); suffix += f"_par{parallel}"
+        vlog.append(("PARALLEL", parallel))
+        suffix += f"_par{parallel}"
     if si is not None:
-        vlog.append(("STAGE_INPUT", si)); suffix += f"_si{si}"
+        vlog.append(("STAGE_INPUT", si))
+        suffix += f"_si{si}"
     if module == "exp2" and sr is not None:
-        vlog.append(("STAGE_REDUCE", sr)); suffix += f"_sr{sr}"
+        vlog.append(("STAGE_REDUCE", sr))
+        suffix += f"_sr{sr}"
     if module == "log2" and sd is not None:
-        vlog.append(("STAGE_DECODE", sd)); suffix += f"_sd{sd}"
+        vlog.append(("STAGE_DECODE", sd))
+        suffix += f"_sd{sd}"
     if sp is not None:
-        vlog.append(("STAGE_PRODUCT", sp)); suffix += f"_sp{sp}"
+        vlog.append(("STAGE_PRODUCT", sp))
+        suffix += f"_sp{sp}"
     if module == "log2":
         spf_eff = sp if spf is None else spf
         if spf_eff is not None:
-            vlog.append(("STAGE_PRODUCT_FINAL", spf_eff)); suffix += f"_spf{spf_eff}" if spf is not None else ""
+            vlog.append(("STAGE_PRODUCT_FINAL", spf_eff))
+            suffix += f"_spf{spf_eff}" if spf is not None else ""
     if wm is not None:
-        vlog.append(("WMULTIPLIER", wm)); suffix += f"_wm{wm}"
+        vlog.append(("WMULTIPLIER", wm))
+        suffix += f"_wm{wm}"
     if sn is not None:
-        vlog.append(("STAGE_NORMALIZE", sn)); suffix += f"_sn{sn}"
+        vlog.append(("STAGE_NORMALIZE", sn))
+        suffix += f"_sn{sn}"
     if module == "log2" and sno is not None:
-        vlog.append(("STAGE_NORMALIZE_OUTPUT", sno)); suffix += f"_sno{sno}"
+        vlog.append(("STAGE_NORMALIZE_OUTPUT", sno))
+        suffix += f"_sno{sno}"
     if pa is not None:
-        vlog.append(("STAGE_PACK", pa)); suffix += f"_pa{pa}"
+        vlog.append(("STAGE_PACK", pa))
+        suffix += f"_pa{pa}"
     if so is not None:
-        vlog.append(("STAGE_OUTPUT", so)); suffix += f"_so{so}"
+        vlog.append(("STAGE_OUTPUT", so))
+        suffix += f"_so{so}"
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count)
 
 
@@ -379,8 +508,7 @@ def _per_pr(sim, out: list) -> None:
         # si/pa knobs plus the all-on maxpipe row guard the latency bookkeeping against a register-stage change.
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
-        out.append(_binary(op, sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1,
-                           si=2, so=1))
+        out.append(_binary(op, sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1, si=2, so=1))
         # STAGE_INPUT>1 (dummy input stages) exercises the counted-latency bookkeeping and the multi-stage input pipe.
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
         out.append(_binary(op, sim, "pr", "w8_m18", 8, 18, "random", 256, si=2))
@@ -408,11 +536,18 @@ def _per_pr(sim, out: list) -> None:
         out.append(_fma(sim, "pr", cfg, w, m, k, c))
     # Each pipeline knob once (plus all-on) on a fast format; results are staging-independent, so this checks the
     # out_valid timing of every STAGE_* register without re-running the slow formats.
-    for si, sp, sd, sa, sn, pa, so in [(0, 0, 0, 0, 0, 0, 0), (1, 0, 0, 0, 0, 0, 0), (0, 1, 0, 0, 0, 0, 0),
-                                       (0, 0, 1, 0, 0, 0, 0), (0, 0, 0, 1, 0, 0, 0), (0, 0, 0, 0, 1, 0, 0),
-                                       (0, 0, 0, 0, 0, 1, 0), (0, 0, 0, 0, 0, 0, 1), (1, 1, 1, 1, 1, 1, 1)]:
-        out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256,
-                        sp=sp, si=si, sd=sd, sa=sa, sn=sn, pa=pa, so=so))
+    for si, sp, sd, sa, sn, pa, so in [
+        (0, 0, 0, 0, 0, 0, 0),
+        (1, 0, 0, 0, 0, 0, 0),
+        (0, 1, 0, 0, 0, 0, 0),
+        (0, 0, 1, 0, 0, 0, 0),
+        (0, 0, 0, 1, 0, 0, 0),
+        (0, 0, 0, 0, 1, 0, 0),
+        (0, 0, 0, 0, 0, 1, 0),
+        (0, 0, 0, 0, 0, 0, 1),
+        (1, 1, 1, 1, 1, 1, 1),
+    ]:
+        out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, si=si, sd=sd, sa=sa, sn=sn, pa=pa, so=so))
     # STAGE_PRODUCT 2/3 forward to _zkf_pmul's 2x2 / 3x3 split grids (bit-exact; checks latency bookkeeping).
     out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=2))
     out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=3))
@@ -512,12 +647,10 @@ def _per_pr(sim, out: list) -> None:
     # each adds STAGE_PRODUCT cycles. Native (sp=1), 2x2 (sp=2), plus the synthesized 6/18 operating point.
     out.append(_trans("atan2", sim, "pr", "w5_m16_prod", 5, 16, "random", 256, sp=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_prod", 5, 16, "random", 256, sp=2, wm=16))
-    out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256,
-                      un=50, sp=2, wm=18, sn=2, pa=1))
+    out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256, un=50, sp=2, wm=18, sn=2, pa=1))
     # Shipped zkf_atan2_w8m36 synth config tested directly (correctness + data-independent latency, not just
     # inferred from the knob sweeps).
-    out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256,
-                      un=50, sp=4, wm=18, sn=2, pa=1, so=1))
+    out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256, un=50, sp=4, wm=18, sn=2, pa=1, so=1))
     for sd in (0, 1):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
@@ -603,8 +736,23 @@ def _deep_correctness(out: list) -> None:
                 for sa in (0, 1):
                     for sn in (0, 1):
                         for so in (0, 1):
-                            out.append(_fma(s, "deep", "w4m6_knobs", 4, 6, "random", 256,
-                                            sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
+                            out.append(
+                                _fma(
+                                    s,
+                                    "deep",
+                                    "w4m6_knobs",
+                                    4,
+                                    6,
+                                    "random",
+                                    256,
+                                    sp=sp,
+                                    si=si,
+                                    sd=sd,
+                                    sa=sa,
+                                    sn=sn,
+                                    so=so,
+                                )
+                            )
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36_si1", 8, 36, "random", 768, sp=1, si=1, sd=1, sa=1, sn=2))
     # STAGE_PRODUCT 2/3 (2x2/3x3) on wide WMAN=36 with WMULTIPLIER=18 so _zkf_pmul derives the 18-bit DSP-tile grid.
@@ -612,8 +760,7 @@ def _deep_correctness(out: list) -> None:
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=2, wm=18, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=3, wm=18, sd=1, sa=1, sn=2))
     for si, sp, sd, sa, sn, so in ((0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1)):
-        out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0,
-                        sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
+        out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0, sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
     for w, m, k, c in DIV_EXT:
         for si in (0, 1):
             for so in (0, 1):
@@ -653,8 +800,7 @@ def _deep_correctness(out: list) -> None:
     # operating point synthesis actually builds, not just the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
     out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
-    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512,
-                      si=1, sp=3, spf=3, wm=18, sn=2, pa=1))
+    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, spf=3, wm=18, sn=2, pa=1))
     # zkf_atan2 deep: baseline per format, UNROLL100 sweep + full staging on 5/16, and the synthesized 6/18 + 8/36
     # operating points. Each asserts II == model.
     for cfg, w, m, k, c in TRANS_ATAN2:
@@ -662,22 +808,34 @@ def _deep_correctness(out: list) -> None:
     for un in (50, 100, 200, 400):
         out.append(_trans("atan2", s, "deep", "atan2_w5m16_un", 5, 16, "random", 512, un=un))
     out.append(_trans("atan2", s, "deep", "atan2_w5m16_stage", 5, 16, "random", 512, si=1, so=1, sn=2, pa=1))
-    out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512,
-                      un=50, sp=2, wm=18, sn=2, pa=1))
-    out.append(_trans("atan2", s, "deep", "atan2_w8m36_op", 8, 36, "random", 512,
-                      un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1))
+    out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512, un=50, sp=2, wm=18, sn=2, pa=1))
+    out.append(
+        _trans("atan2", s, "deep", "atan2_w8m36_op", 8, 36, "random", 512, un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1)
+    )
     # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 is exhaustive-only (test_pack iterates the biased field);
     # random formats stay EXP_IS_BIASED=0 (also exercised transitively via add/from_int).
-    for w, m, u, k, c in [(2, 5, 3, "exhaustive", 0), (2, 5, 5, "exhaustive", 0), (3, 5, 5, "exhaustive", 0),
-                          (4, 5, 8, "random", 768), (6, 17, 10, "random", 1024), (4, 4, 8, "random", 512)]:
+    for w, m, u, k, c in [
+        (2, 5, 3, "exhaustive", 0),
+        (2, 5, 5, "exhaustive", 0),
+        (3, 5, 5, "exhaustive", 0),
+        (4, 5, 8, "random", 768),
+        (6, 17, 10, "random", 1024),
+        (4, 4, 8, "random", 512),
+    ]:
         base = f"w{w}m{m}u{u}_{k}"
         for so in (0, 1):
             out.append(_pack(s, "deep", base, w, m, u, k, c, so=so))
             if k == "exhaustive":
                 out.append(_pack(s, "deep", base, w, m, u, k, c, so=so, eb=1))
-    for w, m, i, k, c in [(3, 5, 5, "exhaustive", 0), (2, 5, 3, "exhaustive", 0), (4, 5, 7, "exhaustive", 0),
-                          (4, 6, 5, "exhaustive", 0), (5, 11, 9, "random", 512), (6, 17, 33, "random", 512),
-                          (8, 24, 17, "random", 512)]:
+    for w, m, i, k, c in [
+        (3, 5, 5, "exhaustive", 0),
+        (2, 5, 3, "exhaustive", 0),
+        (4, 5, 7, "exhaustive", 0),
+        (4, 6, 5, "exhaustive", 0),
+        (5, 11, 9, "random", 512),
+        (6, 17, 33, "random", 512),
+        (8, 24, 17, "random", 512),
+    ]:
         base = f"w{w}m{m}i{i}_{k}"
         for si in (0, 1):
             out.append(_cast("to_int", s, "deep", base, w, m, i, k, c, si))
@@ -687,10 +845,16 @@ def _deep_correctness(out: list) -> None:
     # split are otherwise unexercised (the loop above tops out at WMAN=24, sn<=1).
     out.append(_cast("from_int", s, "deep", "w11m53i32", 11, 53, 32, "random", 384, 0))
     out.append(_cast("from_int", s, "deep", "w6m18i32_sn2", 6, 18, 32, "random", 256, 0, sn=2))
-    for wi, mi, wo, mo, k, c in [(4, 5, 4, 4, "exhaustive", 0), (4, 4, 4, 5, "exhaustive", 0),
-                                 (2, 5, 4, 7, "exhaustive", 0), (4, 7, 2, 5, "exhaustive", 0),
-                                 (5, 5, 3, 4, "exhaustive", 0), (3, 4, 5, 5, "exhaustive", 0),
-                                 (6, 17, 4, 11, "random", 512), (5, 11, 6, 17, "random", 512)]:
+    for wi, mi, wo, mo, k, c in [
+        (4, 5, 4, 4, "exhaustive", 0),
+        (4, 4, 4, 5, "exhaustive", 0),
+        (2, 5, 4, 7, "exhaustive", 0),
+        (4, 7, 2, 5, "exhaustive", 0),
+        (5, 5, 3, 4, "exhaustive", 0),
+        (3, 4, 5, 5, "exhaustive", 0),
+        (6, 17, 4, 11, "random", 512),
+        (5, 11, 6, 17, "random", 512),
+    ]:
         base = f"w{wi}m{mi}_to_w{wo}m{mo}_{k}"
         for si in (0, 1):
             for so in (0, 1):
@@ -801,18 +965,48 @@ def _deep_coverage(out: list) -> None:
     # pushes the radix-4 count to cnt[7] (CNTW=8 only for clog2(W) in {7,8}; count W-1=129 sets it, unreachable at
     # narrower W or any embedded instance). STAGE_OUTPUT and standalone STAGE_SPLIT=2 (w32s2, NL4>=3); the bench
     # checks out_valid/sb_out are delayed by STAGE_SPLIT + STAGE_OUTPUT.
-    for cfg, w, split, output, kind in [("w8s0", 8, 0, 0, "exhaustive"), ("w8s1", 8, 1, 0, "exhaustive"),
-                                        ("w9s1", 9, 1, 0, "exhaustive"), ("w32s1", 32, 1, 0, "directed"),
-                                        ("w56s1", 56, 1, 0, "directed"), ("w130s1", 130, 1, 0, "directed"),
-                                        ("w8s0o1", 8, 0, 1, "exhaustive"), ("w8s1o1", 8, 1, 1, "exhaustive"),
-                                        ("w32s2o0", 32, 2, 0, "directed"), ("w32s2o1", 32, 2, 1, "directed")]:
-        out.append(_run("normshift", s, "deep", cfg,
-                        [("W", w), ("STAGE_SPLIT", split), ("STAGE_OUTPUT", output)], kind=kind, count=0,
-                        plus_names={"W": "ZKF_NS_W", "STAGE_SPLIT": "ZKF_NS_SPLIT", "STAGE_OUTPUT": "ZKF_NS_OUTPUT"}))
-    for cfg, w, split, kind in [("w8s0", 8, 0, "exhaustive"), ("w8s1", 8, 1, "exhaustive"),
-                                ("w16s0", 16, 0, "directed"), ("w16s1", 16, 1, "directed")]:
-        out.append(_run("rshift", s, "deep", cfg, [("W", w), ("STAGE_SPLIT", split)], kind=kind, count=0,
-                        plus_names={"W": "ZKF_RSH_W", "STAGE_SPLIT": "ZKF_RSH_SPLIT"}))
+    for cfg, w, split, output, kind in [
+        ("w8s0", 8, 0, 0, "exhaustive"),
+        ("w8s1", 8, 1, 0, "exhaustive"),
+        ("w9s1", 9, 1, 0, "exhaustive"),
+        ("w32s1", 32, 1, 0, "directed"),
+        ("w56s1", 56, 1, 0, "directed"),
+        ("w130s1", 130, 1, 0, "directed"),
+        ("w8s0o1", 8, 0, 1, "exhaustive"),
+        ("w8s1o1", 8, 1, 1, "exhaustive"),
+        ("w32s2o0", 32, 2, 0, "directed"),
+        ("w32s2o1", 32, 2, 1, "directed"),
+    ]:
+        out.append(
+            _run(
+                "normshift",
+                s,
+                "deep",
+                cfg,
+                [("W", w), ("STAGE_SPLIT", split), ("STAGE_OUTPUT", output)],
+                kind=kind,
+                count=0,
+                plus_names={"W": "ZKF_NS_W", "STAGE_SPLIT": "ZKF_NS_SPLIT", "STAGE_OUTPUT": "ZKF_NS_OUTPUT"},
+            )
+        )
+    for cfg, w, split, kind in [
+        ("w8s0", 8, 0, "exhaustive"),
+        ("w8s1", 8, 1, "exhaustive"),
+        ("w16s0", 16, 0, "directed"),
+        ("w16s1", 16, 1, "directed"),
+    ]:
+        out.append(
+            _run(
+                "rshift",
+                s,
+                "deep",
+                cfg,
+                [("W", w), ("STAGE_SPLIT", split)],
+                kind=kind,
+                count=0,
+                plus_names={"W": "ZKF_RSH_W", "STAGE_SPLIT": "ZKF_RSH_SPLIT"},
+            )
+        )
     for w, m, u in [(4, 5, 6), (4, 5, 7), (3, 6, 5), (4, 4, 6)]:
         out.append(_pack(s, "deep", f"w{w}m{m}u{u}", w, m, u, "exhaustive", 0))
     for w, m, i in [(4, 5, 7), (4, 6, 5), (3, 6, 4), (5, 4, 8)]:
@@ -839,8 +1033,8 @@ def _deep_coverage(out: list) -> None:
     out.append(_cast("from_int", s, "deep", "w4m5i7", 4, 5, 7, "exhaustive", 0, 0, so=1))
     # Identity widen (FRAC_PAD=0, BIAS_OFFSET=0): registered s_y has no structurally-zero padding, so every bit
     # toggles; a padding-bearing widen would leave low s_y bits permanently 0.
-    out.append(_resize(s, "deep", "w4m5_to_w4m5", 4, 5, 4, 5, "exhaustive", 0, 0, so=1))   # widen-only -> g_owr
-    out.append(_resize(s, "deep", "w5m6_to_w3m4", 5, 6, 3, 4, "exhaustive", 0, 0, so=1))   # narrow -> g_out_reg
+    out.append(_resize(s, "deep", "w4m5_to_w4m5", 4, 5, 4, 5, "exhaustive", 0, 0, so=1))  # widen-only -> g_owr
+    out.append(_resize(s, "deep", "w5m6_to_w3m4", 5, 6, 3, 4, "exhaustive", 0, 0, so=1))  # narrow -> g_out_reg
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, so=1))
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, eb=1))
     # ASSUME_NO_OVERFLOW=1 prunes the overflow detector (exp_overflow forced to 0): the case generator drops
@@ -855,12 +1049,24 @@ def _properties(out: list) -> None:
         for sd in (0, 1):
             for sa in (0, 1):
                 for cfg, w, m, k, c in BINARY:
-                    out.append(_binary(op, s, "properties", cfg, w, m, k, c, sd=sd, sa=sa,
-                                       target=tgt, root_module=op))
+                    out.append(_binary(op, s, "properties", cfg, w, m, k, c, sd=sd, sa=sa, target=tgt, root_module=op))
     for sp in (0, 1):
         for cfg, w, m, k, c in BINARY:
-            out.append(_binary("mul", s, "properties", cfg, w, m, k, c, sp=sp,
-                               target="sim_properties_mul_icarus", root_module="mul"))
+            out.append(
+                _binary(
+                    "mul",
+                    s,
+                    "properties",
+                    cfg,
+                    w,
+                    m,
+                    k,
+                    c,
+                    sp=sp,
+                    target="sim_properties_mul_icarus",
+                    root_module="mul",
+                )
+            )
 
 
 # Smoke set: (name, module, extra-vlog).
@@ -902,8 +1108,11 @@ def _fast(out: list) -> None:
     for name, module, vlog in _FAST:
         out.append(_run(module, "icarus", "fast", name, vlog, kind="exhaustive", count=0))
     # zkf_atan2 is two-input (joint-exhaustive infeasible): the smoke uses the directed special/axis/diagonal pairs.
-    out.append(_run("atan2", "icarus", "fast", "atan2",
-                    [("WEXP", 5), ("WMAN", 16), ("UNROLL100", 50)], kind="directed", count=0))
+    out.append(
+        _run(
+            "atan2", "icarus", "fast", "atan2", [("WEXP", 5), ("WMAN", 16), ("UNROLL100", 50)], kind="directed", count=0
+        )
+    )
 
 
 def build_matrix() -> list:

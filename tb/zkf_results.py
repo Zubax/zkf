@@ -26,9 +26,13 @@ def check_results(root: Path) -> int:
         if failures:
             print(f"[float-results] {result_file}: {len(failures)} failure(s)", file=sys.stderr)
             for failure in failures:
-                message = failure.attrib.get("error_msg") or failure.attrib.get("message") or ET.tostring(
-                    failure,
-                    encoding="unicode",
+                message = (
+                    failure.attrib.get("error_msg")
+                    or failure.attrib.get("message")
+                    or ET.tostring(
+                        failure,
+                        encoding="unicode",
+                    )
                 )
                 print(f"  {message}", file=sys.stderr)
             rc = 1

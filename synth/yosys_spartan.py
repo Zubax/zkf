@@ -32,7 +32,6 @@ import yosys
 from common import REPO, find_executable, find_file, format_mhz, metric_cell, run, table_cell
 from modules import ModuleSpec, flow_modules
 
-
 BUILD_DIR = REPO / "build" / "float_synth_yosys_spartan7"
 CHIPDB_DIR = BUILD_DIR / "chipdb"
 DEVICE = "xc7s50csga324-1"
@@ -59,8 +58,7 @@ IMPORTANT_UTILIZATION_RESOURCES = (
 
 # Device-specific resource columns shown in the table, between Status and Schematic.
 _RESOURCE_HEADERS = (
-    "<th>Yosys LUT</th><th>FF</th><th>CARRY4</th><th>MUXF7/8</th>"
-    "<th>DSP48E1</th><th>BRAM</th><th>IO</th>"
+    "<th>Yosys LUT</th><th>FF</th><th>CARRY4</th><th>MUXF7/8</th>" "<th>DSP48E1</th><th>BRAM</th><th>IO</th>"
 )
 
 
@@ -69,11 +67,7 @@ def _synth_command(spec: ModuleSpec, netlist) -> str:
     # the line works regardless of whether this Yosys build accepts synth_xilinx -json. The engine
     # joins script lines with newlines, so returning a multi-line string is fine.
     # delete t:$scopeinfo strips Yosys scope-metadata cells that nextpnr-xilinx cannot place.
-    return (
-        f"synth_xilinx -flatten -family xc7 -top {spec.top}\n"
-        "delete t:$scopeinfo\n"
-        f"write_json {netlist}"
-    )
+    return f"synth_xilinx -flatten -family xc7 -top {spec.top}\n" "delete t:$scopeinfo\n" f"write_json {netlist}"
 
 
 def _sum_cells(cells: dict, keys: tuple[str, ...]) -> int:

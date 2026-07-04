@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Drive every .sby flow under float/proof/sby/ and aggregate the results.
+Drive every .sby flow under proof/sby/ and aggregate the results.
 
 For each .sby file (skipping *_cover.sby and *_explore.sby which are run separately when needed),
 this script:
@@ -12,7 +12,7 @@ this script:
 A FAIL with a counterexample propagates to the script's exit code as 2; any other failure mode
 (TIMEOUT, ERROR) exits with 1. PASS-only runs exit 0.
 
-`make formal-float` invokes this driver. The HTML report is rendered by float/proof/report.py.
+`nox -s formal` invokes this driver. The HTML report is rendered by proof/report.py.
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from pathlib import Path
 class ProofResult:
     name: str
     sby_path: str
-    status: str            # PASS, FAIL, TIMEOUT, ERROR
+    status: str  # PASS, FAIL, TIMEOUT, ERROR
     wall_seconds: float
     engine: str = ""
     parameters: str = ""
@@ -44,20 +44,29 @@ class ProofResult:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--sby-dir", type=Path, default=Path("float/proof/sby"))
+    parser.add_argument("--sby-dir", type=Path, default=Path("proof/sby"))
     parser.add_argument("--build-dir", type=Path, default=Path("build/float/formal"))
     parser.add_argument("--report", type=Path, default=Path("build/float/formal/report.html"))
-    parser.add_argument("--jobs", type=int, default=0,
-                        help="run this many proofs in parallel (0 = os.cpu_count()); each sby runs in its own "
-                             "build subdir, so they are independent")
-    parser.add_argument("--summary-json", type=Path, default=None,
-                        help="Optional JSON summary path; defaults to <build-dir>/summary.json")
-    parser.add_argument("--timeout-seconds", type=int, default=3 * 60 * 60,
-                        help="Per-proof wall-clock soft timeout (default 3 hours)")
-    parser.add_argument("--include-explore", action="store_true",
-                        help="Also run *_explore.sby flows after the primary set")
-    parser.add_argument("--include-cover", action="store_true",
-                        help="Also run *_cover.sby flows")
+    parser.add_argument(
+        "--jobs",
+        type=int,
+        default=0,
+        help="run this many proofs in parallel (0 = os.cpu_count()); each sby runs in its own "
+        "build subdir, so they are independent",
+    )
+    parser.add_argument(
+        "--summary-json",
+        type=Path,
+        default=None,
+        help="Optional JSON summary path; defaults to <build-dir>/summary.json",
+    )
+    parser.add_argument(
+        "--timeout-seconds", type=int, default=3 * 60 * 60, help="Per-proof wall-clock soft timeout (default 3 hours)"
+    )
+    parser.add_argument(
+        "--include-explore", action="store_true", help="Also run *_explore.sby flows after the primary set"
+    )
+    parser.add_argument("--include-cover", action="store_true", help="Also run *_cover.sby flows")
     return parser.parse_args()
 
 
@@ -214,9 +223,14 @@ def main() -> int:
     # Render HTML report.
     try:
         subprocess.run(
-            [sys.executable, "float/proof/report.py",
-             "--summary", str(summary_path),
-             "--output", str(args.report)],
+            [
+                sys.executable,
+                str(Path(__file__).resolve().parent / "report.py"),
+                "--summary",
+                str(summary_path),
+                "--output",
+                str(args.report),
+            ],
             check=False,
         )
     except FileNotFoundError:

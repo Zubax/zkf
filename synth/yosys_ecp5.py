@@ -16,7 +16,6 @@ import yosys
 from common import REPO, format_mhz, metric_cell, table_cell
 from modules import ModuleSpec, flow_modules
 
-
 BUILD_DIR = REPO / "build" / "float_synth_yosys_ecp5"
 DEVICE_SPEED_GRADE = "6"
 DEVICE_PACKAGE = "CABGA381"
@@ -99,7 +98,9 @@ def _extract_resources(cells: dict, report_data: dict, nextpnr_text: str) -> dic
 def _resource_row(result: dict, bounds_by_key: dict) -> str:
     return (
         table_cell(result["lut"], "resource")
-        + metric_cell(result["lut_placed"], bounds_by_key.get("lut_placed"), higher_is_better=False, class_name="resource")
+        + metric_cell(
+            result["lut_placed"], bounds_by_key.get("lut_placed"), higher_is_better=False, class_name="resource"
+        )
         + table_cell(result["ff"], "resource")
         + table_cell(result["comb"], "resource")
         + table_cell(result["carry"], "resource")

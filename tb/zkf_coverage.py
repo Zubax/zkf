@@ -36,9 +36,9 @@ import shutil
 import subprocess
 import sys
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-RTL_DIR = REPO_ROOT / "float" / "hdl"
-TB_DIR = REPO_ROOT / "float" / "tb"
+REPO_ROOT = Path(__file__).resolve().parents[1]
+RTL_DIR = REPO_ROOT / "hdl"
+TB_DIR = REPO_ROOT / "tb"
 
 _RECORD = re.compile(r"^C '(.*)' (\d+)\s*$")
 
@@ -107,12 +107,13 @@ def merge_coverage(build_dir: Path, output_dir: Path) -> Path:
 
 # Raw coverage.dat parsing for branch and toggle points.
 
+
 @dataclass(frozen=True)
 class Point:
     file: str
-    ptype: str       # "v_line" | "v_branch" | "v_toggle"
+    ptype: str  # "v_line" | "v_branch" | "v_toggle"
     line: int
-    net: str         # the 'o' field: parameter- and instance-independent
+    net: str  # the 'o' field: parameter- and instance-independent
 
 
 def _parse_fields(key: str) -> dict[str, str]:
@@ -188,9 +189,11 @@ def write_report(output_dir: Path, summary: dict[str, dict[str, Stats]], genhtml
         pct = 100.0 * st.covered / denom
         color = "#86efac" if not st.uncovered else "#fca5a5"
         n_un = len(st.uncovered)
-        return (f"<div class='cell'><div class='barwrap'><div class='bar' style='width:{pct:.1f}%;"
-                f"background:{color}'></div></div><span class='pctn'>{pct:.1f}% "
-                f"({st.covered}/{st.total}){' · ' + str(n_un) + ' UNCOVERED' if n_un else ''}</span></div>")
+        return (
+            f"<div class='cell'><div class='barwrap'><div class='bar' style='width:{pct:.1f}%;"
+            f"background:{color}'></div></div><span class='pctn'>{pct:.1f}% "
+            f"({st.covered}/{st.total}){' · ' + str(n_un) + ' UNCOVERED' if n_un else ''}</span></div>"
+        )
 
     rows = []
     for fname in sorted(summary):
@@ -211,13 +214,17 @@ def write_report(output_dir: Path, summary: dict[str, dict[str, Stats]], genhtml
     detail = (
         "<h2>Uncovered points</h2><table><thead><tr><th>Source</th><th>Kind</th><th>Line</th>"
         "<th>Net / block</th></tr></thead><tbody>" + "\n".join(detail_rows) + "</tbody></table>"
-        if detail_rows else "<h2>Uncovered points</h2><p class='good'>None — every line and branch covered (toggle advisory).</p>"
+        if detail_rows
+        else "<h2>Uncovered points</h2><p class='good'>None — every line and branch covered (toggle advisory).</p>"
     )
 
-    genhtml_link = ("<p><a href='lcov/index.html'>Detailed line drill-down (genhtml) &rarr;</a></p>"
-                    if genhtml_ok else "")
-    note = ("<p class='sub'>Genuinely-unreachable points are suppressed in the RTL with "
-            "<code>// verilator coverage_off</code> / <code>coverage_on</code> and so never appear here.</p>")
+    genhtml_link = (
+        "<p><a href='lcov/index.html'>Detailed line drill-down (genhtml) &rarr;</a></p>" if genhtml_ok else ""
+    )
+    note = (
+        "<p class='sub'>Genuinely-unreachable points are suppressed in the RTL with "
+        "<code>// verilator coverage_off</code> / <code>coverage_on</code> and so never appear here.</p>"
+    )
 
     (output_dir / "index.html").write_text(
         f"""<!doctype html>
@@ -262,9 +269,18 @@ def run_genhtml(info_path: Path, output_dir: Path) -> bool:
         return False
     lcov_dir = output_dir / "lcov"
     subprocess.run(
-        [tool, "--legend", "--show-details", "--title", "Kulibin Float Line Coverage",
-         "--output-directory", str(lcov_dir), str(info_path)],
-        check=True, stdout=subprocess.DEVNULL,
+        [
+            tool,
+            "--legend",
+            "--show-details",
+            "--title",
+            "Kulibin Float Line Coverage",
+            "--output-directory",
+            str(lcov_dir),
+            str(info_path),
+        ],
+        check=True,
+        stdout=subprocess.DEVNULL,
     )
     return True
 
@@ -273,11 +289,16 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--build-dir", type=Path, default=Path("build/float/verilator"))
     parser.add_argument("--output-dir", type=Path, default=Path("build/float/coverage"))
-    parser.add_argument("--gate", action="store_true",
-                        help="per-PR tier: fail on uncovered LINE points only (branch is gated by --full; "
-                             "toggle is advisory)")
-    parser.add_argument("--full", action="store_true",
-                        help="deep tier: fail on uncovered LINE or BRANCH points; report toggle as advisory")
+    parser.add_argument(
+        "--gate",
+        action="store_true",
+        help="per-PR tier: fail on uncovered LINE points only (branch is gated by --full; " "toggle is advisory)",
+    )
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="deep tier: fail on uncovered LINE or BRANCH points; report toggle as advisory",
+    )
     return parser.parse_args()
 
 
@@ -312,13 +333,18 @@ def main() -> int:
             if uncovered[pt]:
                 report(PTYPE_LABEL[pt] + (" [advisory]" if pt == "v_toggle" else ""), uncovered[pt])
         if any(uncovered[pt] for pt in gated):
-            print("[float-coverage] To close: add a config/vector that exercises the uncovered line/branch, or "
-                  "suppress a genuinely-unreachable line/branch in the RTL with // verilator coverage_off/"
-                  "coverage_on.", file=sys.stderr)
+            print(
+                "[float-coverage] To close: add a config/vector that exercises the uncovered line/branch, or "
+                "suppress a genuinely-unreachable line/branch in the RTL with // verilator coverage_off/"
+                "coverage_on.",
+                file=sys.stderr,
+            )
             return 1
         ntog = len(uncovered["v_toggle"])
-        print(f"[float-coverage] PASS: line+branch covered ({ntog} toggle point(s) uncovered -- advisory, "
-              f"non-fatal). Report: {args.output_dir / 'index.html'}")
+        print(
+            f"[float-coverage] PASS: line+branch covered ({ntog} toggle point(s) uncovered -- advisory, "
+            f"non-fatal). Report: {args.output_dir / 'index.html'}"
+        )
         return 0
 
     # Default / --gate (per-PR): gate on uncovered LINE points only, ptype-aware. Branch is enforced by --full; toggle
@@ -328,15 +354,19 @@ def main() -> int:
     if line_uncovered:
         report("line", line_uncovered)
         if args.gate:
-            print("[float-coverage] To close: add a config/vector that exercises the uncovered line, or suppress a "
-                  "genuinely-unreachable line in the RTL with // verilator coverage_off/coverage_on.",
-                  file=sys.stderr)
+            print(
+                "[float-coverage] To close: add a config/vector that exercises the uncovered line, or suppress a "
+                "genuinely-unreachable line in the RTL with // verilator coverage_off/coverage_on.",
+                file=sys.stderr,
+            )
         return 1 if args.gate else 0
 
     nbr = len(uncovered["v_branch"])
     ntog = len(uncovered["v_toggle"])
-    print(f"[float-coverage] PASS: line covered ({nbr} branch + {ntog} toggle point(s) uncovered -- not gated at "
-          f"this tier; run --full for the branch gate). Report: {args.output_dir / 'index.html'}")
+    print(
+        f"[float-coverage] PASS: line covered ({nbr} branch + {ntog} toggle point(s) uncovered -- not gated at "
+        f"this tier; run --full for the branch gate). Report: {args.output_dir / 'index.html'}"
+    )
     return 0
 
 

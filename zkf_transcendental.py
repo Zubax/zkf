@@ -41,7 +41,7 @@ FUNCS = ("exp2", "log2")
 # coefficient/result scale (CF = WMAN+GUARD). GUARD = ERR_GUARD + 4 = 12 puts the round bit ~7 bits clear of the fit +
 # truncating-Horner error floor, keeping the operators faithfully rounded; shrinking it breaks the --check assertion.
 GUARD = 12
-ERR_GUARD = 8   # helper relative-error budget exponent: target < 2**-(WMAN + ERR_GUARD)
+ERR_GUARD = 8  # helper relative-error budget exponent: target < 2**-(WMAN + ERR_GUARD)
 
 # Max segment-index bits. choose_spec() picks the smallest K <= K_CAP meeting accuracy; K_CAP also sets the closed-form
 # degree scale (larger cap -> lower Horner degree/shorter pipeline, wider ROM).
@@ -69,7 +69,7 @@ def cf_bits(wman: int) -> int:
 # the unit-interval top-K-bits segmenting is reused); per segment we fit C(f) = C(v - 1/2). RTL builds v exactly from
 # the stored fraction (no irrational subtraction; model<->RTL identical): m < sqrt(2) -> v = 2**WFRAC + 2*frac, else
 # v = frac; the signed combine operand is F = v - 2**WFRAC (= f at scale 2**-(WFRAC+1)).
-LOG2_V_OFFSET = mp.mpf(1) / 2   # v = f + LOG2_V_OFFSET maps the signed reduced fraction f into [0,1) for indexing
+LOG2_V_OFFSET = mp.mpf(1) / 2  # v = f + LOG2_V_OFFSET maps the signed reduced fraction f into [0,1) for indexing
 
 
 def log2_sqrt2_threshold(wfrac: int) -> int:
@@ -100,15 +100,15 @@ def table_module(func: str, wman: int) -> str:
 
 @dataclass
 class Spec:
-    func: str            # "exp2" | "log2"
+    func: str  # "exp2" | "log2"
     wman: int
-    k: int               # segment-index bits
-    seg_base: int        # first ROM segment represented by coeffs; zero for exp2, compacted for log2
-    d: int               # polynomial degree
-    cf: int              # coefficient fractional bits (scale 2**-cf)
-    rw: int              # reduced-argument bits (wn = w / 2**rw); the total argument width is k + rw
-    cw: int              # signed coefficient width
-    accw: int            # signed Horner accumulator width
+    k: int  # segment-index bits
+    seg_base: int  # first ROM segment represented by coeffs; zero for exp2, compacted for log2
+    d: int  # polynomial degree
+    cf: int  # coefficient fractional bits (scale 2**-cf)
+    rw: int  # reduced-argument bits (wn = w / 2**rw); the total argument width is k + rw
+    cw: int  # signed coefficient width
+    accw: int  # signed Horner accumulator width
     coeffs: list = field(default_factory=list)  # [2**k][d+1] signed ints, low degree first
 
     @property
@@ -238,21 +238,23 @@ def choose_spec(func: str, wman: int) -> Spec:
         rel, max_acc = measure(func, wman, k, seg_base, cf, width, coeffs)
         if rel < target:
             maxabs = max(abs(c) for seg in coeffs for c in seg)
-            cw = maxabs.bit_length() + 2                          # +1 sign, +1 margin
+            cw = maxabs.bit_length() + 2  # +1 sign, +1 margin
             accw = max(max_acc, maxabs).bit_length() + 1 + ACC_MARGIN
             if func == "log2":
                 # The final multiply trims the Horner acc to ACCM = CF+2 bits, lossless only because C(f) < 2 (acc <
                 # 2**(CF+1)). Assert here so a kernel/range change that broke the bound fails at generation, not silently.
                 assert max_acc < (1 << (cf + 2)), (
                     f"log2 WMAN={wman}: max Horner acc {max_acc} >= 2**ACCM (2**{cf + 2}); "
-                    f"the CF+2 final-multiply trim would lose bits -- widen ACCM in _emit_table")
+                    f"the CF+2 final-multiply trim would lose bits -- widen ACCM in _emit_table"
+                )
             if func == "exp2":
                 # exp2's Horner is emitted UNSIGNED (ACC_SIGNED=0), valid only if every coefficient is >= 0 (then acc
                 # stays >= 0 by induction). chebyfit is minimax, not Taylor, so it COULD emit a negative coefficient --
                 # prove the premise here; a fired assert means this format needs the signed grid.
                 assert all(c >= 0 for seg in coeffs for c in seg), (
                     f"exp2 WMAN={wman}: a fitted coefficient is negative; the unsigned Horner grid "
-                    f"(ACC_SIGNED=0) would produce wrong bits -- make _zkf_horner signed for exp2 again")
+                    f"(ACC_SIGNED=0) would produce wrong bits -- make _zkf_horner signed for exp2 again"
+                )
             return Spec(func, wman, k, seg_base, d, cf, width - k, cw, accw, coeffs)
     raise RuntimeError(f"degree {d} needs K>K_CAP={K_CAP} for {func} WMAN={wman}: raise K_CAP")
 
@@ -296,9 +298,7 @@ class _Writer:
 
 def _rom_word(s: Spec, coeffs: list[int]) -> str:
     """Return one packed coefficient word {c[D], ..., c[0]} as a Verilog concatenation."""
-    return "{" + ", ".join(
-        f"{s.cw}'h{c & ((1 << s.cw) - 1):0{(s.cw + 3) // 4}x}" for c in reversed(coeffs)
-    ) + "}"
+    return "{" + ", ".join(f"{s.cw}'h{c & ((1 << s.cw) - 1):0{(s.cw + 3) // 4}x}" for c in reversed(coeffs)) + "}"
 
 
 def _rom_read_pipeline(
@@ -326,7 +326,7 @@ def _rom_read_pipeline(
     # multiply maps to the cheaper fully-unsigned DSP grid; log2 keeps the signed accumulator (sign-alternating coeffs).
     acc_signed = 0 if s.func == "exp2" else 1
 
-    w('`ZKF_ATTRIBUTE_ROM_PRE reg [(D+1)*CW-1:0] rom [0:NSEG-1] `ZKF_ATTRIBUTE_ROM_POST;')
+    w("`ZKF_ATTRIBUTE_ROM_PRE reg [(D+1)*CW-1:0] rom [0:NSEG-1] `ZKF_ATTRIBUTE_ROM_POST;")
     w("initial begin")
     w.push()
     for row, coeffs in enumerate(s.coeffs):
@@ -376,15 +376,19 @@ def _emit_table(s: Spec) -> str:
     w = _Writer()
     w("/// GENERATED by zkf_transcendental.py -- DO NOT EDIT.")
     if s.func == "exp2":
-        w(f"/// Table+polynomial core for zkf_exp2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
-          "/// Evaluates the significand 2**f in [1,2) from the reduced fractional argument f (FF = WMAN + 12 bits).",
-          "/// Register stages: two-stage ROM read + D*(2+STAGE_PRODUCT) (Horner).")
+        w(
+            f"/// Table+polynomial core for zkf_exp2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
+            "/// Evaluates the significand 2**f in [1,2) from the reduced fractional argument f (FF = WMAN + 12 bits).",
+            "/// Register stages: two-stage ROM read + D*(2+STAGE_PRODUCT) (Horner).",
+        )
     else:
-        w(f"/// Table+polynomial core for zkf_log2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
-          "/// Symmetric reduction: indexes C(f)=log2(1+f)/f by unsigned v (WFRAC+1 bits) and returns log2(m')=f*C(f) as",
-          "/// the unsigned magnitude l_mag = |f|*C(f) plus the sign l_neg (set when m>=sqrt(2)), at scale 2**-F2,",
-          "/// F2 = WFRAC+1+CF. The final f*C(f) multiply is fully unsigned (|f|*C(f)); the caller folds l_neg into its",
-          "/// reconstruction add/subtract. Register stages: two-stage ROM read + Horner + final multiply.")
+        w(
+            f"/// Table+polynomial core for zkf_log2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
+            "/// Symmetric reduction: indexes C(f)=log2(1+f)/f by unsigned v (WFRAC+1 bits) and returns log2(m')=f*C(f) as",
+            "/// the unsigned magnitude l_mag = |f|*C(f) plus the sign l_neg (set when m>=sqrt(2)), at scale 2**-F2,",
+            "/// F2 = WFRAC+1+CF. The final f*C(f) multiply is fully unsigned (|f|*C(f)); the caller folds l_neg into its",
+            "/// reconstruction add/subtract. Register stages: two-stage ROM read + Horner + final multiply.",
+        )
     w("")
     w("// verilog_lint: waive-start line-length  (the ROM rows are wide one-liners)")
     w("")
@@ -403,19 +407,19 @@ def _emit_table(s: Spec) -> str:
         w(f"module {mod} #(")
         w.push()
         w(f"parameter D             = {s.d},")
-        w( "parameter WSB           = 1,")
-        w( "parameter WMULTIPLIER   = 0,")
-        w( "parameter STAGE_PRODUCT = 0")
+        w("parameter WSB           = 1,")
+        w("parameter WMULTIPLIER   = 0,")
+        w("parameter STAGE_PRODUCT = 0")
         w.pop()
         w(") (")
     else:
         w(f"module {mod} #(")
         w.push()
         w(f"parameter D                   = {s.d},")
-        w( "parameter WSB                 = 1,")
-        w( "parameter WMULTIPLIER         = 0,")
-        w( "parameter STAGE_PRODUCT       = 0,")
-        w( "parameter STAGE_PRODUCT_FINAL = STAGE_PRODUCT")
+        w("parameter WSB                 = 1,")
+        w("parameter WMULTIPLIER         = 0,")
+        w("parameter STAGE_PRODUCT       = 0,")
+        w("parameter STAGE_PRODUCT_FINAL = STAGE_PRODUCT")
         w.pop()
         w(") (")
     w.push()
@@ -457,12 +461,14 @@ def _emit_table(s: Spec) -> str:
     if s.func == "exp2":
         w("localparam integer FF   = WMAN + 12;")
     else:
-        w("localparam integer WFRAC = WMAN - 1;",
-          "localparam integer CF    = WMAN + 12;",
-          "localparam integer F2    = WFRAC + 1 + CF;   // f is at scale 2**-(WFRAC+1): one bit wider than WFRAC+CF",
-          "localparam integer WF    = WMAN;             // signed reduced-argument width = WFRAC + 1",
-          "localparam integer ACCM  = CF + 2;           // C(f) < 2 -> acc < 2**(CF+1); trim the Horner guard bits so")
-        w( "                                            // the final multiply's acc operand fits a smaller DSP grid")
+        w(
+            "localparam integer WFRAC = WMAN - 1;",
+            "localparam integer CF    = WMAN + 12;",
+            "localparam integer F2    = WFRAC + 1 + CF;   // f is at scale 2**-(WFRAC+1): one bit wider than WFRAC+CF",
+            "localparam integer WF    = WMAN;             // signed reduced-argument width = WFRAC + 1",
+            "localparam integer ACCM  = CF + 2;           // C(f) < 2 -> acc < 2**(CF+1); trim the Horner guard bits so",
+        )
+        w("                                            // the final multiply's acc operand fits a smaller DSP grid")
     w(f"localparam integer K    = {s.k};")
     if s.func == "exp2":
         w(f"localparam integer CF   = {s.cf};")
@@ -559,12 +565,12 @@ def _emit_table(s: Spec) -> str:
 
 def _emit_python(all_specs: dict[tuple[str, int], Spec]) -> str:
     w = _Writer()
-    w("# GENERATED by float/zkf_transcendental.py -- DO NOT EDIT.")
+    w("# GENERATED by zkf_transcendental.py -- DO NOT EDIT.")
     w('"""Bit-exact table+polynomial data for zkf_log2 / zkf_exp2, consumed by the zkf package (zkf._core)."""')
     w("")
     w("SPECS = {")
     w.push()
-    for (func, wman) in sorted(all_specs):
+    for func, wman in sorted(all_specs):
         s = all_specs[(func, wman)]
         w(f"({func!r}, {wman}): dict(")
         w.push()
@@ -592,28 +598,36 @@ def emit(all_specs: dict[tuple[str, int], Spec]) -> None:
 # Reporting and accuracy check
 # --------------------------------------------------------------------------------------------------
 def _report(all_specs: dict[tuple[str, int], Spec]) -> None:
-    print(f"{'func':5} {'WMAN':>4} {'K':>3} {'base':>5} {'rows':>5} {'D':>3} {'CF':>4} {'RW':>4} "
-          f"{'CW':>4} {'ACCW':>5} {'entries':>8} {'ROM_kbit':>9}")
+    print(
+        f"{'func':5} {'WMAN':>4} {'K':>3} {'base':>5} {'rows':>5} {'D':>3} {'CF':>4} {'RW':>4} "
+        f"{'CW':>4} {'ACCW':>5} {'entries':>8} {'ROM_kbit':>9}"
+    )
     for (func, wman), s in sorted(all_specs.items()):
         entries = s.nseg * (s.d + 1)
-        print(f"{func:5} {wman:>4} {s.k:>3} {s.seg_base:>5} {s.nseg:>5} {s.d:>3} {s.cf:>4} "
-              f"{s.rw:>4} {s.cw:>4} {s.accw:>5} {entries:>8} {entries * s.cw / 1024.0:>9.1f}")
+        print(
+            f"{func:5} {wman:>4} {s.k:>3} {s.seg_base:>5} {s.nseg:>5} {s.d:>3} {s.cf:>4} "
+            f"{s.rw:>4} {s.cw:>4} {s.accw:>5} {entries:>8} {entries * s.cw / 1024.0:>9.1f}"
+        )
 
     # zkf_<func>.v derives D = (WMAN+18)/11 - 1 closed-form at elaboration (matching degree()); this map cross-checks it,
     # identical for both operators.
     d_map = " ".join(f"{wman}:{degree(wman)}" for wman in range(WMAN_MIN, WMAN_MAX + 1))
-    print(f"\nclosed-form degree D = (WMAN+18)/11 - 1 derived in zkf_<func>.v "
-          f"({WMAN_MAX - WMAN_MIN + 1} values, same for both):\n  {d_map}")
+    print(
+        f"\nclosed-form degree D = (WMAN+18)/11 - 1 derived in zkf_<func>.v "
+        f"({WMAN_MAX - WMAN_MIN + 1} values, same for both):\n  {d_map}"
+    )
 
 
 def _check() -> None:
     """End-to-end accuracy check vs mpmath via the bit-exact model (imports only the public zkf package)."""
     import sys
+
     sys.path.insert(0, str(REPO))
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
     import numpy as np
+
     # zkf is first-imported here, after --emit has written the tables, so the freshly-emitted data is picked up
     # without reaching into package internals to reload/clear caches.
 
@@ -640,8 +654,11 @@ def _check() -> None:
         fmt = ZkfFormat(wexp, wman)
         n = 1 << fmt.wfull
         exhaustive = n <= (1 << 22)
-        inputs = list(range(n)) if exhaustive else \
-            [int(x) for x in np.random.default_rng().integers(0, n, RANDOM_CHECK_SAMPLES)]
+        inputs = (
+            list(range(n))
+            if exhaustive
+            else [int(x) for x in np.random.default_rng().integers(0, n, RANDOM_CHECK_SAMPLES)]
+        )
         for func, ref, true in (("exp2", exp2_reference, exp2_true), ("log2", log2_reference, log2_true)):
             worst = ne = 0
             for b in inputs:
@@ -667,7 +684,7 @@ def _check() -> None:
         span = min(near1, 1 << fmt.wfrac)
         fmax = (1 << fmt.wfrac) - 1
         inputs = [((fmt.bias - 1) << fmt.wfrac) | f for f in range(fmax - span + 1, fmax + 1)]  # x -> 1 from below
-        inputs += [(fmt.bias << fmt.wfrac) | f for f in range(span)]                             # x -> 1 from above
+        inputs += [(fmt.bias << fmt.wfrac) | f for f in range(span)]  # x -> 1 from above
         worst = ne = 0
         for b in inputs:
             got, want = log2_reference(fmt, b), log2_true(fmt, b)
@@ -696,15 +713,19 @@ def _check() -> None:
             for s in (0, 1):
                 for fr in set(list(range(eb)) + list(range(max(0, nf - eb), nf))):
                     ins.add((s << fmt.sign_shift) | (e << fmt.wfrac) | fr)
-        for N in range(-(1 << (fmt.wexp - 1)) + 1, 1 << (fmt.wexp - 1)):   # band straddling every integer x
+        for N in range(-(1 << (fmt.wexp - 1)) + 1, 1 << (fmt.wexp - 1)):  # band straddling every integer x
             if N == 0:
                 base = 0
             else:
-                a = abs(N); ee = a.bit_length() - 1
+                a = abs(N)
+                ee = a.bit_length() - 1
                 if ee > fmt.wfrac:
                     continue
-                base = ((1 if N < 0 else 0) << fmt.sign_shift) | ((fmt.bias + ee) << fmt.wfrac) \
-                       | (((a - (1 << ee)) << (fmt.wfrac - ee)) & (nf - 1))
+                base = (
+                    ((1 if N < 0 else 0) << fmt.sign_shift)
+                    | ((fmt.bias + ee) << fmt.wfrac)
+                    | (((a - (1 << ee)) << (fmt.wfrac - ee)) & (nf - 1))
+                )
             for dk in range(-eb, eb + 1):
                 ins.add((base + dk) & wfull_mask)
         worst = ne = 0
@@ -728,6 +749,7 @@ def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
 def _ordered_index(fmt, bits: int) -> int:
     """Monotonic integer index of a canonical ZKF value (sign-magnitude -> ordered)."""
     from zkf import Zkf
+
     bits = Zkf(fmt, bits).canonicalize().bits
     sign = (bits >> fmt.sign_shift) & 1
     mag = bits & ((1 << fmt.sign_shift) - 1)

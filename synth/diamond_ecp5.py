@@ -44,7 +44,6 @@ from modules import (
 )
 from wrappers import write_wrapper
 
-
 DIAMOND_BUILD = REPO / "build" / "float_synth_diamond_ecp5"
 DIAMOND_DEVICE = "LFE5U-12F-6BG381C"
 DIAMOND_TARGET_FREQ_MHZ = float(os.environ.get("DIAMOND_TARGET_FREQ_MHZ", "100"))
@@ -90,22 +89,15 @@ def path_for_xml(path: Path, base: Path) -> str:
 
 
 def xml_attr(text: str) -> str:
-    return (
-        text.replace("&", "&amp;")
-        .replace('"', "&quot;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-    )
+    return text.replace("&", "&amp;").replace('"', "&quot;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def write_diamond_lpf(path: Path) -> None:
-    path.write_text(
-        f"""BLOCK RESETPATHS ;
+    path.write_text(f"""BLOCK RESETPATHS ;
 BLOCK ASYNCPATHS ;
 USE PRIMARY NET "clk_c" ;
 FREQUENCY NET "clk_c" {DIAMOND_TARGET_FREQ_MHZ:.6f} MHz ;
-"""
-    )
+""")
 
 
 def write_diamond_strategy(path: Path) -> None:
@@ -246,8 +238,7 @@ def write_diamond_ldf(
 
 def write_diamond_tcl(project_file: Path, tcl: Path) -> None:
     project = str(project_file).replace("\\", "/")
-    tcl.write_text(
-        f"""proc fail {{message}} {{
+    tcl.write_text(f"""proc fail {{message}} {{
     puts stderr $message
     exit 1
 }}
@@ -262,14 +253,13 @@ if {{[catch {{prj_project close}} result]}} {{
     fail $result
 }}
 exit 0
-"""
-    )
+""")
 
 
 def run_diamond_console(tools: DiamondTools, tcl: Path, log_path: Path) -> None:
     bindir = shlex.quote(str(tools.diamond.parent))
     env_path = shlex.quote(str(tools.diamond_env)) if tools.diamond_env is not None else ""
-    source_env = f'source {env_path}' if env_path else ':'
+    source_env = f"source {env_path}" if env_path else ":"
     script = f"""
 set -euo pipefail
 bindir={bindir}
@@ -383,10 +373,7 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
     bram_counts = parse_diamond_resource_counts(r"Number of block RAMs:\s+([0-9]+) out of ([0-9]+)", mrp_text)
     route_clean = unrouted in {None, 0} and par_errors in {None, 0}
     timing_clean = (
-        fmax is not None
-        and fmax >= DIAMOND_TARGET_FREQ_MHZ
-        and setup_errors in {None, 0}
-        and hold_errors in {None, 0}
+        fmax is not None and fmax >= DIAMOND_TARGET_FREQ_MHZ and setup_errors in {None, 0} and hold_errors in {None, 0}
     )
 
     return {

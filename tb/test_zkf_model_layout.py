@@ -17,8 +17,8 @@ import unittest
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))          # float/tb (harness siblings)
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))      # float/ (the zkf package)
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # tb/ (harness siblings)
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root (the zkf package)
 
 from zkf import Zkf, ZkfFormat  # noqa: E402
 from zkf.oracle import add, div, mul  # noqa: E402
@@ -205,22 +205,23 @@ class ZkfModelLayoutTest(unittest.TestCase):
         rng = random.Random(seed)
         ops = [
             zero(fmt),
-            normal(fmt, 0, 1, 0), normal(fmt, 1, 1, 0),                                  # +/- min_normal
-            normal(fmt, 0, 2, 0),                                                        # 2*min_normal
-            normal(fmt, 0, fmt.bias - 1, 0),                                             # 0.5
-            normal(fmt, 0, fmt.bias, 0), normal(fmt, 1, fmt.bias, 0),                    # +/- 1
-            normal(fmt, 0, fmt.bias + 1, fmt.frac_mask),                                 # ~3.99
+            normal(fmt, 0, 1, 0),
+            normal(fmt, 1, 1, 0),  # +/- min_normal
+            normal(fmt, 0, 2, 0),  # 2*min_normal
+            normal(fmt, 0, fmt.bias - 1, 0),  # 0.5
+            normal(fmt, 0, fmt.bias, 0),
+            normal(fmt, 1, fmt.bias, 0),  # +/- 1
+            normal(fmt, 0, fmt.bias + 1, fmt.frac_mask),  # ~3.99
             normal(fmt, 0, fmt.exp_max_finite, fmt.frac_mask),
-            normal(fmt, 1, fmt.exp_max_finite, fmt.frac_mask),                           # +/- max_finite
-            canonical_inf(fmt, 0), canonical_inf(fmt, 1),
+            normal(fmt, 1, fmt.exp_max_finite, fmt.frac_mask),  # +/- max_finite
+            canonical_inf(fmt, 0),
+            canonical_inf(fmt, 1),
         ]
         for _ in range(n_random):
-            ops.append(normal(fmt, rng.randrange(2), rng.randint(1, fmt.exp_max_finite),
-                              rng.getrandbits(fmt.wfrac)))
+            ops.append(normal(fmt, rng.randrange(2), rng.randint(1, fmt.exp_max_finite), rng.getrandbits(fmt.wfrac)))
         # Small-magnitude operands (exp <= bias) so pairwise products underflow into the flush region.
         for _ in range(n_random):
-            ops.append(normal(fmt, rng.randrange(2), rng.randint(1, fmt.bias),
-                              rng.getrandbits(fmt.wfrac)))
+            ops.append(normal(fmt, rng.randrange(2), rng.randint(1, fmt.bias), rng.getrandbits(fmt.wfrac)))
         return ops
 
     def test_model_operations_match_numpy(self) -> None:
@@ -237,23 +238,29 @@ class ZkfModelLayoutTest(unittest.TestCase):
                     want_mul = mul(za, zb)
                     if want_mul is not None:
                         got = (za * zb).bits
-                        self.assertEqual(got, want_mul.bits,
-                                         f"mul {hex_bits(a, w)}*{hex_bits(b, w)}: "
-                                         f"model={hex_bits(got, w)} numpy={hex_bits(want_mul.bits, w)}")
+                        self.assertEqual(
+                            got,
+                            want_mul.bits,
+                            f"mul {hex_bits(a, w)}*{hex_bits(b, w)}: "
+                            f"model={hex_bits(got, w)} numpy={hex_bits(want_mul.bits, w)}",
+                        )
                     want_add = add(za, zb)
                     if want_add is not None:
                         got = (za + zb).bits
-                        self.assertEqual(got, want_add.bits,
-                                         f"add {hex_bits(a, w)}+{hex_bits(b, w)}: "
-                                         f"model={hex_bits(got, w)} numpy={hex_bits(want_add.bits, w)}")
+                        self.assertEqual(
+                            got,
+                            want_add.bits,
+                            f"add {hex_bits(a, w)}+{hex_bits(b, w)}: "
+                            f"model={hex_bits(got, w)} numpy={hex_bits(want_add.bits, w)}",
+                        )
                     want_div = div(za, zb)
                     if want_div is not None:
                         dr = za.div(zb)
                         got = (dr.quotient.bits, int(dr.div_by_zero))
                         want = (want_div.quotient.bits, int(want_div.div_by_zero))
-                        self.assertEqual(got, want,
-                                         f"div {hex_bits(a, w)}/{hex_bits(b, w)}: "
-                                         f"model={got} numpy={want}")
+                        self.assertEqual(
+                            got, want, f"div {hex_bits(a, w)}/{hex_bits(b, w)}: " f"model={got} numpy={want}"
+                        )
 
     def test_random_binary32_normal_layout(self) -> None:
         self.assert_random_normal_layout(BINARY32, np.float32, count=5000, seed=0x32F17A)

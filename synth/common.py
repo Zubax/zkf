@@ -21,9 +21,8 @@ import shutil
 import subprocess
 import threading
 
-
-# common.py lives at <repo>/float/synth/common.py, so the repo root is three parents up.
-REPO = Path(__file__).resolve().parents[2]
+# common.py lives at <repo>/synth/common.py, so the repo root is two parents up.
+REPO = Path(__file__).resolve().parents[1]
 SYNTH_WORKERS = max(1, int(os.environ.get("SYNTH_WORKERS", str(os.cpu_count() or 1))))
 
 # Attribute applied to the measurement-harness registers so synthesis keeps them as real I/O boundary
@@ -139,11 +138,11 @@ def metric_bounds(results: list[dict[str, str]], key: str) -> tuple[float, float
 # visually distinct without relying on dim pastels, and the hue progression is easy to scan in
 # either direction. Approximate Material-design palette: green / yellow-green / amber / orange / red.
 _PALETTE_STOPS = (
-    (0.00, ( 46, 125,  50)),   # dark green
-    (0.25, (154, 205,  50)),   # yellow-green
-    (0.50, (255, 213,  79)),   # amber yellow
-    (0.75, (251, 140,   0)),   # orange
-    (1.00, (198,  40,  40)),   # dark red
+    (0.00, (46, 125, 50)),  # dark green
+    (0.25, (154, 205, 50)),  # yellow-green
+    (0.50, (255, 213, 79)),  # amber yellow
+    (0.75, (251, 140, 0)),  # orange
+    (1.00, (198, 40, 40)),  # dark red
 )
 
 

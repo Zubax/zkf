@@ -16,8 +16,8 @@ chparam -set WEXP 6 -set WMAN 18 zkf_sort_eq
 prep -top zkf_sort_eq
 
 [files]
-float/hdl/zkf_cmp_comb.v
-float/hdl/zkf_pipe.v
-float/hdl/zkf_sort.v
-float/proof/refs/zkf_cmp_ref.v
-float/proof/harness/zkf_sort_eq.v
+hdl/zkf_cmp_comb.v
+hdl/zkf_pipe.v
+hdl/zkf_sort.v
+proof/refs/zkf_cmp_ref.v
+proof/harness/zkf_sort_eq.v

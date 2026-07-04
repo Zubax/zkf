@@ -74,9 +74,9 @@ async def pipe_runtime_cases(dut) -> None:
     for flush_index in range(stages + 2):
         await scoreboard.tick(None, f"flush={flush_index}")
 
-    assert scoreboard.checked >= sample_count, (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected at least {sample_count}"
-    )
+    assert (
+        scoreboard.checked >= sample_count
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected at least {sample_count}"
 
     for i in range(stages):
         dut.in_valid.value = 1

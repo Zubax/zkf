@@ -45,7 +45,7 @@ def cases_for(width: int, kind: str, seed: int, count: int) -> list[int]:
         # Trailing 0 after the all-ones value so every input bit also toggles 1->0.
         return list(range(1 << width)) + [0]
     xs = {0, 1, 1 << (width - 1), mask(width)}
-    xs.update(1 << i for i in range(width))           # one-hot (each leading-one position)
+    xs.update(1 << i for i in range(width))  # one-hot (each leading-one position)
     xs.update((1 << i) - 1 for i in range(1, width + 1))
     if kind == "directed":
         return sorted(xs)
@@ -94,14 +94,12 @@ async def normshift_runtime_cases(dut) -> None:
         if not exp_zero:
             assert is_resolvable(dut.count), f"{cfg}: count unresolved x={x:#x}"
             obs_count = int(dut.count.value)
-            assert obs_count == exp_count, (
-                f"{cfg}: count mismatch x={x:#x} got={obs_count} exp={exp_count} (W={width} split={split})"
-            )
+            assert (
+                obs_count == exp_count
+            ), f"{cfg}: count mismatch x={x:#x} got={obs_count} exp={exp_count} (W={width} split={split})"
             assert is_resolvable(dut.y), f"{cfg}: y unresolved x={x:#x}"
             obs_y = int(dut.y.value)
-            assert obs_y == exp_y, (
-                f"{cfg}: y mismatch x={x:#x} got={obs_y:#x} exp={exp_y:#x} (W={width} split={split})"
-            )
+            assert obs_y == exp_y, f"{cfg}: y mismatch x={x:#x} got={obs_y:#x} exp={exp_y:#x} (W={width} split={split})"
         checked += 1
     assert checked == len(cases), f"{cfg}: checked {checked} of {len(cases)}"
 
@@ -142,7 +140,9 @@ async def normshift_sideband_stream(dut) -> None:
             assert int(dut.out_valid.value) == int(valid), f"{cfg}: out_valid mismatch i={i}"
             if valid:
                 assert is_resolvable(dut.sb_out), f"{cfg}: sb_out unresolved i={i}"
-                assert int(dut.sb_out.value) == value, f"{cfg}: sb_out mismatch i={i} got={int(dut.sb_out.value)} exp={value}"
+                assert (
+                    int(dut.sb_out.value) == value
+                ), f"{cfg}: sb_out mismatch i={i} got={int(dut.sb_out.value)} exp={value}"
             await RisingEdge(dut.clk)
         return
 

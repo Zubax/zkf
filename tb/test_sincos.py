@@ -42,10 +42,10 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
     sgn = 1 << fmt.sign_shift
     out: list[tuple[str, int]] = [
         ("raw_zero", 0),
-        ("raw_neg_zero", sgn),                                       # canonicalized +0 outputs
-        ("raw_pos_inf", fmt.exp_inf << fmt.wfrac),                   # sin=cos=+inf
-        ("raw_neg_inf", sgn | (fmt.exp_inf << fmt.wfrac)),          # sin=cos=-inf
-        ("raw_all_ones", mask(fmt.wfull)),                          # negative non-canonical
+        ("raw_neg_zero", sgn),  # canonicalized +0 outputs
+        ("raw_pos_inf", fmt.exp_inf << fmt.wfrac),  # sin=cos=+inf
+        ("raw_neg_inf", sgn | (fmt.exp_inf << fmt.wfrac)),  # sin=cos=-inf
+        ("raw_all_ones", mask(fmt.wfull)),  # negative non-canonical
     ]
     if fmt.wexp >= 3:
         for label, value in directed_numbers(fmt).items():
@@ -59,11 +59,11 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
             return normal(fmt, sign, be, frac) if 1 <= be <= fmt.exp_max_finite else (sgn * sign)
 
         for sign in (0, 1):
-            for k in range(1, 8):                                   # 1/4, 1/2, 3/4, 1, 5/4, 3/2, 7/4 turns
+            for k in range(1, 8):  # 1/4, 1/2, 3/4, 1, 5/4, 3/2, 7/4 turns
                 out.append((f"quarter_{'-' if sign else '+'}{k}_4", turns(sign, k)))
             # Just before/after a quarter-turn boundary (x = 1/4 +- 1 ULP) -- exercises the boundary quadrant rule.
-            q = fmt.bias - 2                                        # biased exp for 0.25
-            if 2 <= q <= fmt.exp_max_finite:                       # 0.25 - 1 ULP sits one binade lower (needs exp q-1 >= 1)
+            q = fmt.bias - 2  # biased exp for 0.25
+            if 2 <= q <= fmt.exp_max_finite:  # 0.25 - 1 ULP sits one binade lower (needs exp q-1 >= 1)
                 out.append((f"just_below_quarter_{sign}", normal(fmt, sign, q - 1, fmt.frac_mask)))
             if 1 <= q <= fmt.exp_max_finite:
                 out.append((f"just_above_quarter_{sign}", normal(fmt, sign, q, 1)))
@@ -127,7 +127,7 @@ async def sincos_runtime_cases(dut) -> None:
     start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
-    dut.out_ready.value = 1                                      # latency measurement assumes always-ready
+    dut.out_ready.value = 1  # latency measurement assumes always-ready
     drive_unsigned(dut.x, 0)
     for _ in range(4):
         await RisingEdge(dut.clk)
@@ -135,7 +135,7 @@ async def sincos_runtime_cases(dut) -> None:
     dut.rst.value = 0
     await RisingEdge(dut.clk)
 
-    timeout = 4 * (context.wman + 64)                            # generous upper bound on the iterative latency
+    timeout = 4 * (context.wman + 64)  # generous upper bound on the iterative latency
     checked = 0
     for index, case in enumerate(cases):
         guard = 0
@@ -145,24 +145,22 @@ async def sincos_runtime_cases(dut) -> None:
             assert guard < timeout, f"{context.prefix()}: in_ready stuck low (case {index})"
         dut.in_valid.value = 1
         drive_unsigned(dut.x, case.x)
-        await RisingEdge(dut.clk)                                # this edge accepts the transaction
+        await RisingEdge(dut.clk)  # this edge accepts the transaction
         dut.in_valid.value = 0
-        drive_unsigned(dut.x, mask(fmt.wfull))                  # garbage between transactions
+        drive_unsigned(dut.x, mask(fmt.wfull))  # garbage between transactions
         guard = 0
         while int(dut.out_valid.value) == 0:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
-        assert guard == expected_latency, (                     # II is data-independent; verify the published model
+        assert guard == expected_latency, (  # II is data-independent; verify the published model
             f"{context.prefix()} case={index}: measured latency {guard} != model {expected_latency} "
             f"(unroll100={context.unroll100} parallel={context.parallel} SPROD={context.stage_product} "
             f"SN={context.stage_normalize} SPACK={context.stage_pack})"
         )
         got = {"sin": int(dut.sin.value), "cos": int(dut.cos.value), "quadrant": int(dut.quadrant.value)}
         exp = {"sin": case.sin, "cos": case.cos, "quadrant": case.quadrant}
-        assert got == exp, (
-            f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
-        )
+        assert got == exp, f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
         checked += 1
     assert checked == len(cases), f"{context.prefix()} checked {checked}, expected {len(cases)}"
 
@@ -199,7 +197,7 @@ async def sincos_backpressure(dut) -> None:
         dut.in_valid.value = 0
         drive_unsigned(dut.x, mask(fmt.wfull))
         guard = 0
-        while int(dut.out_valid.value) == 0:                    # out_ready is low; out_valid still arrives on time
+        while int(dut.out_valid.value) == 0:  # out_ready is low; out_valid still arrives on time
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()} bp: out_valid timeout (case {index})"
@@ -207,8 +205,12 @@ async def sincos_backpressure(dut) -> None:
         for hold in range(5):
             got = {"sin": int(dut.sin.value), "cos": int(dut.cos.value), "quadrant": int(dut.quadrant.value)}
             assert int(dut.out_valid.value) == 1, f"{context.prefix()} bp case={index}: out_valid dropped while stalled"
-            assert int(dut.in_ready.value) == 0, f"{context.prefix()} bp case={index}: in_ready high while result unread"
-            assert got == exp, f"{context.prefix()} bp case={index} hold={hold}: result changed while stalled: {got} != {exp}"
+            assert (
+                int(dut.in_ready.value) == 0
+            ), f"{context.prefix()} bp case={index}: in_ready high while result unread"
+            assert (
+                got == exp
+            ), f"{context.prefix()} bp case={index} hold={hold}: result changed while stalled: {got} != {exp}"
             await RisingEdge(dut.clk)
         dut.out_ready.value = 1
         await RisingEdge(dut.clk)

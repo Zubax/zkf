@@ -44,7 +44,7 @@ FUNC = "sincos"
 # sin = y_K + x_K*phi). The dropped phi^2/2 term is < 1 ULP once the residual is <= ~2**-(WMAN/2), so the pipeline is
 # ~WMAN/2 stages instead of ~1.5*WMAN, traded for two correction multiplies. (The correction fixes only the ANGLE
 # residual; the iteration array's truncation still bounds the small sines, so the datapath keeps ~1.5*WMAN frac bits.)
-GUARD_XY = 6     # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-rounding headroom)
+GUARD_XY = 6  # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-rounding headroom)
 # GOTCHA: GUARD_XY is SHARED by both operators (sizes WX/KINV and atan2's divider F / INV_TAU scale). sincos is faithful
 # at 3; atan2's theta is XF-bound (more iterations don't help, only XF does), so it needs the larger value. GUARD_XY=6
 # keeps atan2 faithful across the supported range (WMAN >= 16, which is the smallest trig format -- see SUPPORTED_WMAN
@@ -55,7 +55,7 @@ GUARD_XY = 6     # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-r
 # terminations leave residuals of different order -- sincos's linear rotation drops a QUADRATIC term, atan2's residual
 # divide a CUBIC one; separate guards let them diverge later without silently coupling the shared table's depth.
 GUARD_ITER_SINCOS = 1
-GUARD_ITER_ATAN2  = 1
+GUARD_ITER_ATAN2 = 1
 # Angle accumulator integer headroom above the ZF fractional bits (z stays within +-(1/4 turn) through the rotation).
 GUARD_Z = 3
 # Extra angle fractional bits past the coordinate's (WT+2) turns bits: the rotation sums K LUT entries each rounded to
@@ -108,7 +108,8 @@ def n_iters(wman: int) -> int:
     if ns != na:
         raise ValueError(
             f"per-operator CORDIC depths diverge at WMAN={wman}: n_sincos={ns} n_atan2={na}; the shared "
-            f"_zkf_cordic_m table can no longer carry one LUT/KINV -- split the table per operator before emitting")
+            f"_zkf_cordic_m table can no longer carry one LUT/KINV -- split the table per operator before emitting"
+        )
     return ns
 
 
@@ -127,27 +128,27 @@ def cordic_module(wman: int) -> str:
 @dataclass
 class Spec:
     wman: int
-    n: int                 # shared CORDIC iterations baked into the table (==n_sincos==n_atan2 while table shared)
-    xf: int                # x/y fractional bits baked into the table (scale 2**-xf); == max operator XF (table width)
-    xw: int                # x/y signed width (1 sign + 1 integer + xf)
-    wt: int                # quadrant-local coordinate width (FF - 2); angle in turns is t'/4 at scale 2**-(WT+2)
-    zf: int                # angle accumulator fractional bits (scale 2**-zf) = WT + 2 + GUARD_ZF (finer than WT+2)
-    zw: int                # angle signed width
-    kinv: int              # round(1/gain * 2**xf), gain = prod sqrt(1+2**-2i)
-    n_sincos: int          # zkf_sincos iterations: (WMAN+1)//2 + GUARD_ITER_SINCOS (quadratic-residual termination)
-    n_atan2: int           # zkf_atan2 iterations: (WMAN+1)//2 + GUARD_ITER_ATAN2 (cubic-residual termination)
-    xf_atan2: int          # zkf_atan2 x/y fractional bits (drives the divider F/STEPS); == xf atm (shared engine width)
-    tsa: int = 0           # small-angle handoff: t' < tsa uses the linear path (TSA_BITS = log2)
+    n: int  # shared CORDIC iterations baked into the table (==n_sincos==n_atan2 while table shared)
+    xf: int  # x/y fractional bits baked into the table (scale 2**-xf); == max operator XF (table width)
+    xw: int  # x/y signed width (1 sign + 1 integer + xf)
+    wt: int  # quadrant-local coordinate width (FF - 2); angle in turns is t'/4 at scale 2**-(WT+2)
+    zf: int  # angle accumulator fractional bits (scale 2**-zf) = WT + 2 + GUARD_ZF (finer than WT+2)
+    zw: int  # angle signed width
+    kinv: int  # round(1/gain * 2**xf), gain = prod sqrt(1+2**-2i)
+    n_sincos: int  # zkf_sincos iterations: (WMAN+1)//2 + GUARD_ITER_SINCOS (quadratic-residual termination)
+    n_atan2: int  # zkf_atan2 iterations: (WMAN+1)//2 + GUARD_ITER_ATAN2 (cubic-residual termination)
+    xf_atan2: int  # zkf_atan2 x/y fractional bits (drives the divider F/STEPS); == xf atm (shared engine width)
+    tsa: int = 0  # small-angle handoff: t' < tsa uses the linear path (TSA_BITS = log2)
     lut: list = field(default_factory=list)  # L[i] = round(atan(2**-i)/(2*pi) * 2**zf), i = 0..n-1
-    c2: int = 0            # small-angle 2*pi constant scale (== xf)
+    c2: int = 0  # small-angle 2*pi constant scale (== xf)
     # The multiplier constants are EMITTED PRE-NARROWED to WMAN+5 bits, each at its own native scale 2**-S; every
     # dependent shift/exp-offset derives from that scale, so the datapath needs no DROP correction tokens.
-    const2pi: int = 0      # round(2*pi * 2**CONST2PI_S), narrowed to WMAN+5 bits (sincos small-angle / linear-rotation)
-    const2pi_s: int = 0    # native scale of the narrowed const2pi == WMAN+2
-    inv_tau: int = 0       # round(2**INVTAU_S / (2*pi)), narrowed to WMAN+5 bits (atan2 residual/bypass turns scaling)
-    invtau_s: int = 0      # native scale of the narrowed inv_tau == WMAN+7
-    kinv_mag: int = 0      # round(1/gain * 2**KINV_S), narrowed to WMAN+5 bits (atan2 magnitude descale)
-    kinv_s: int = 0        # native scale of the narrowed kinv_mag == WMAN+5
+    const2pi: int = 0  # round(2*pi * 2**CONST2PI_S), narrowed to WMAN+5 bits (sincos small-angle / linear-rotation)
+    const2pi_s: int = 0  # native scale of the narrowed const2pi == WMAN+2
+    inv_tau: int = 0  # round(2**INVTAU_S / (2*pi)), narrowed to WMAN+5 bits (atan2 residual/bypass turns scaling)
+    invtau_s: int = 0  # native scale of the narrowed inv_tau == WMAN+7
+    kinv_mag: int = 0  # round(1/gain * 2**KINV_S), narrowed to WMAN+5 bits (atan2 magnitude descale)
+    kinv_s: int = 0  # native scale of the narrowed kinv_mag == WMAN+5
 
 
 def cordic_gain(n: int):
@@ -164,25 +165,43 @@ def choose_spec(wman: int) -> Spec:
     """
     if not (WMAN_MIN <= wman <= WMAN_MAX):
         raise ValueError(f"Bad {wman=}")
-    n = n_iters(wman)                          # shared depth (asserts n_sincos == n_atan2)
-    xf = ceil(3 * wman / 2) + GUARD_XY         # shared engine XF
+    n = n_iters(wman)  # shared depth (asserts n_sincos == n_atan2)
+    xf = ceil(3 * wman / 2) + GUARD_XY  # shared engine XF
     zf = wt_bits(wman) + 2 + GUARD_ZF
     xw = xf + 2
     zw = zf + GUARD_Z
-    kinv = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** xf)))   # full-precision inverse gain (the sincos seed)
+    kinv = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** xf)))  # full-precision inverse gain (the sincos seed)
     lut = [int(mp.nint(mp.atan(mp.mpf(2) ** (-i)) / (2 * mp.pi) * (mp.mpf(2) ** zf))) for i in range(n)]
     # Each constant is round-narrowed to its top WMAN+5 bits at its native scale 2**-S; consuming shifts are then plain
     # "product-scale minus target-scale" (no DROP correction).
-    const2pi_s = wman + 2                                            # narrowed 2*pi scale (was XF; XF - DROP == WMAN+2)
-    invtau_s = wman + 7                                             # narrowed 1/(2*pi) scale (XF - DROP_IT   == WMAN+7)
-    kinv_s = wman + 5                                               # narrowed 1/gain scale (XF - DROP_K      == WMAN+5)
-    const2pi = int(mp.nint(2 * mp.pi * (mp.mpf(2) ** const2pi_s)))   # narrowed 2*pi, WMAN+5 bits
+    const2pi_s = wman + 2  # narrowed 2*pi scale (was XF; XF - DROP == WMAN+2)
+    invtau_s = wman + 7  # narrowed 1/(2*pi) scale (XF - DROP_IT   == WMAN+7)
+    kinv_s = wman + 5  # narrowed 1/gain scale (XF - DROP_K      == WMAN+5)
+    const2pi = int(mp.nint(2 * mp.pi * (mp.mpf(2) ** const2pi_s)))  # narrowed 2*pi, WMAN+5 bits
     inv_tau = int(mp.nint((mp.mpf(1) / (2 * mp.pi)) * (mp.mpf(2) ** invtau_s)))  # narrowed 1/(2*pi), WMAN+5 bits
-    kinv_mag = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** kinv_s)))        # narrowed 1/gain, WMAN+5 bits
-    return Spec(wman, n, xf, xw, wt_bits(wman), zf, zw, kinv,
-                n_sincos(wman), n_atan2(wman), xf,
-                1 << tsa_bits(wman), lut, xf,
-                const2pi, const2pi_s, inv_tau, invtau_s, kinv_mag, kinv_s)
+    kinv_mag = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** kinv_s)))  # narrowed 1/gain, WMAN+5 bits
+    return Spec(
+        wman,
+        n,
+        xf,
+        xw,
+        wt_bits(wman),
+        zf,
+        zw,
+        kinv,
+        n_sincos(wman),
+        n_atan2(wman),
+        xf,
+        1 << tsa_bits(wman),
+        lut,
+        xf,
+        const2pi,
+        const2pi_s,
+        inv_tau,
+        invtau_s,
+        kinv_mag,
+        kinv_s,
+    )
 
 
 def generate_all() -> dict[int, Spec]:
@@ -229,13 +248,15 @@ def _emit_consts(s: Spec) -> str:
     and engine -- only the mode differs.
     """
     mod = cordic_module(s.wman)
-    cwb = s.const2pi.bit_length()                        # narrowed 2*pi width == WMAN+5 (scale 2**-CONST2PI_S)
-    itwb = s.inv_tau.bit_length()                        # narrowed 1/(2*pi) width == WMAN+5 (scale 2**-INVTAU_S)
-    kmb = s.kinv_mag.bit_length()                        # narrowed 1/gain width == WMAN+5 (scale 2**-KINV_S)
+    cwb = s.const2pi.bit_length()  # narrowed 2*pi width == WMAN+5 (scale 2**-CONST2PI_S)
+    itwb = s.inv_tau.bit_length()  # narrowed 1/(2*pi) width == WMAN+5 (scale 2**-INVTAU_S)
+    kmb = s.kinv_mag.bit_length()  # narrowed 1/gain width == WMAN+5 (scale 2**-KINV_S)
     w = _Writer()
     w("/// GENERATED by zkf_trig.py -- DO NOT EDIT.")
     w(f"/// Per-WMAN CORDIC constants (WMAN={s.wman}): arctan(2^-i)/2pi LUT in turns, inverse-gain seed, widths.")
-    w("/// Binds the generic engine _zkf_cordic; MODE selects rotation (sin/cos) vs vectoring (atan2). Also exposes the")
+    w(
+        "/// Binds the generic engine _zkf_cordic; MODE selects rotation (sin/cos) vs vectoring (atan2). Also exposes the"
+    )
     w("/// pre-narrowed multiplier constants (each at its own native fixed-point scale): the 2*pi constant for the")
     w("/// sin/cos small-angle/linear-rotation path, and 1/(2*pi) + 1/gain for the atan2 turns-scaling and magnitude")
     w("/// descale. Unused outputs are simply left unconnected per mode.")
@@ -354,7 +375,7 @@ def _emit_consts(s: Spec) -> str:
 
 def _emit_python(all_specs: dict[int, Spec]) -> str:
     w = _Writer()
-    w("# GENERATED by float/zkf_trig.py -- DO NOT EDIT.")
+    w("# GENERATED by zkf_trig.py -- DO NOT EDIT.")
     w('"""Bit-exact CORDIC constants for zkf_sincos (and the shared atan2 engine), consumed by the zkf package."""')
     w("")
     w("SPECS = {")
@@ -363,16 +384,20 @@ def _emit_python(all_specs: dict[int, Spec]) -> str:
         s = all_specs[wman]
         w(f"{wman}: dict(")
         w.push()
-        w(f"n={s.n}, xf={s.xf}, xw={s.xw}, wt={s.wt}, zf={s.zf}, zw={s.zw}, kinv={s.kinv}, tsa={s.tsa}, "
-          f"c2={s.c2}, const2pi={s.const2pi}, const2pi_s={s.const2pi_s}, inv_tau={s.inv_tau}, invtau_s={s.invtau_s},")
-        w(f"kinv_mag={s.kinv_mag}, kinv_s={s.kinv_s}, n_sincos={s.n_sincos}, n_atan2={s.n_atan2}, xf_atan2={s.xf_atan2},")
+        w(
+            f"n={s.n}, xf={s.xf}, xw={s.xw}, wt={s.wt}, zf={s.zf}, zw={s.zw}, kinv={s.kinv}, tsa={s.tsa}, "
+            f"c2={s.c2}, const2pi={s.const2pi}, const2pi_s={s.const2pi_s}, inv_tau={s.inv_tau}, invtau_s={s.invtau_s},"
+        )
+        w(
+            f"kinv_mag={s.kinv_mag}, kinv_s={s.kinv_s}, n_sincos={s.n_sincos}, n_atan2={s.n_atan2}, xf_atan2={s.xf_atan2},"
+        )
         w(f"lut={s.lut!r},")
         w.pop()
         w("),")
     w.pop()
     w("}")
     w("")
-    w(f"GUARD_DIV = {GUARD_DIV}")   # load-bearing: the package derives ZkfFormat.atan2_bypass_shift from it
+    w(f"GUARD_DIV = {GUARD_DIV}")  # load-bearing: the package derives ZkfFormat.atan2_bypass_shift from it
     w("# FF (reduced-fraction width) = WMAN + max(12, WMAN//2 + 2); WT = FF - 2; ZF = WT + 2 + GUARD_ZF.")
     return w.render()
 
@@ -401,10 +426,12 @@ def _report(all_specs: dict[int, Spec]) -> None:
 def _check() -> None:
     """End-to-end faithful-rounding check vs mpmath via the bit-exact model (imports only the public zkf package)."""
     import sys
+
     sys.path.insert(0, str(REPO))
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
+
     # zkf is first-imported here, after --emit has written the tables, so the freshly-emitted data is picked up
     # without reaching into package internals to reload/clear caches.
 
@@ -439,14 +466,17 @@ def _check() -> None:
         tag = "exhaustive" if exhaustive else f"sampled({len(inputs)})"
         ok = worst_sin <= 1 and worst_cos <= 1 and nq == 0
         worst_overall = max(worst_overall, worst_sin, worst_cos)
-        print(f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} sin_ulp={worst_sin} cos_ulp={worst_cos} "
-              f"quad_mismatch={nq} ({tag})")
+        print(
+            f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} sin_ulp={worst_sin} cos_ulp={worst_cos} "
+            f"quad_mismatch={nq} ({tag})"
+        )
         assert ok, f"{wexp}/{wman}: sin_ulp={worst_sin} cos_ulp={worst_cos} quad_mismatch={nq} first_bad={bad}"
 
 
 def _stratified_inputs(fmt) -> list[int]:
     import numpy as np
-    rng = np.random.default_rng()                              # unseeded: true randomness, fresh inputs each run
+
+    rng = np.random.default_rng()  # unseeded: true randomness, fresh inputs each run
 
     def rand_bits() -> int:
         v = 0
@@ -468,18 +498,28 @@ def _stratified_inputs(fmt) -> list[int]:
     # Densely sweep the tiny-angle binades and the +/-K*ULP neighborhoods of every result-zero/octant turn so a future
     # guard reduction that regresses near-zero rounding is caught. (Hardening: sincos is clean today.)
     import math
+
     K, nf = 96, 1 << fmt.wfrac
-    for exp in range(1, min(7, fmt.exp_inf)):                    # z -> 0: tiny angles, dense low/high fracs, both signs
+    for exp in range(1, min(7, fmt.exp_inf)):  # z -> 0: tiny angles, dense low/high fracs, both signs
         for sign in (0, 1):
             for fr in set(list(range(min(K, nf))) + list(range(max(0, nf - K), nf))):
                 out.append(fmt.pack(sign, exp, fr).bits)
-    for T in (0.125, 0.25, 0.375, 0.5, 0.625, 0.75, 0.875, 1.0):  # result-zero (1/4,1/2,3/4,1) + octant (1/8,3/8,...) turns
+    for T in (
+        0.125,
+        0.25,
+        0.375,
+        0.5,
+        0.625,
+        0.75,
+        0.875,
+        1.0,
+    ):  # result-zero (1/4,1/2,3/4,1) + octant (1/8,3/8,...) turns
         eT = math.floor(math.log2(T))
         for e in (eT - 1, eT):
             biased = e + fmt.bias
             if not (1 <= biased < fmt.exp_inf):
                 continue
-            f0 = round((T - 2.0 ** e) / (2.0 ** (e - fmt.wfrac)))    # frac of z = T within binade e
+            f0 = round((T - 2.0**e) / (2.0 ** (e - fmt.wfrac)))  # frac of z = T within binade e
             for f in range(f0 - K, f0 + K + 1):
                 if 0 <= f < nf:
                     for sign in (0, 1):
@@ -496,6 +536,7 @@ def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
 
 def _ordered_index(fmt, bits: int) -> int:
     from zkf import Zkf
+
     bits = Zkf(fmt, bits).canonicalize().bits
     sign = (bits >> fmt.sign_shift) & 1
     mag = bits & ((1 << fmt.sign_shift) - 1)
@@ -513,7 +554,7 @@ def _theta_ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
     if a_bits == b_bits:
         return 0
     d = abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
-    ring = 2 * _ordered_index(fmt, (fmt.bias - 1) << fmt.wfrac)   # 2 * (dense) ordered index of +0.5 turns
+    ring = 2 * _ordered_index(fmt, (fmt.bias - 1) << fmt.wfrac)  # 2 * (dense) ordered index of +0.5 turns
     return min(d, ring - d)
 
 
@@ -525,7 +566,7 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
     """
     import numpy as np
 
-    rng = np.random.default_rng()                              # unseeded: true randomness, fresh pairs each run
+    rng = np.random.default_rng()  # unseeded: true randomness, fresh pairs each run
 
     def rand_bits() -> int:
         v = 0
@@ -548,12 +589,12 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
                 swept.append(fmt.normal(s, e, fr).bits)
     for w in swept:
         for a in anchors:
-            pairs.add((w, a))                                # operand swept on the y side, x anchored
-            pairs.add((a, w))                                # operand swept on the x side, y anchored
+            pairs.add((w, a))  # operand swept on the y side, x anchored
+            pairs.add((a, w))  # operand swept on the x side, y anchored
     for s in (0, 1):
         for e in range(1, fmt.exp_inf):
             base = fmt.normal(s, e, 0).bits
-            pairs.add((base, base))                          # |y| == |x| (octant edge)
+            pairs.add((base, base))  # |y| == |x| (octant edge)
             pairs.add((base, base ^ sgn))
 
     # --- near-axis / bypass-seam regression guard (deterministic, swept every run) ---
@@ -567,12 +608,12 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
         for sy in (0, 1):
             for yf in yfr:
                 y = fmt.normal(sy, ey, yf).bits
-                for dsh in range(fmt.bias - 6, fmt.bias + 3):    # xe-ey across smallest-nonzero theta .. underflow seam
+                for dsh in range(fmt.bias - 6, fmt.bias + 3):  # xe-ey across smallest-nonzero theta .. underflow seam
                     xe = ey + dsh
                     if 1 <= xe < fmt.exp_inf:
                         for xf in (0, nf // 2, nf - 1):
                             pairs.add((y, fmt.normal(0, xe, xf).bits))
-    ts = fmt.atan2_bypass_shift                                  # straddle the small-ratio bypass cutoff
+    ts = fmt.atan2_bypass_shift  # straddle the small-ratio bypass cutoff
     for off in (-1, 0, 1, 2):
         for ey in (1, max(1, fmt.bias // 2), max(1, fmt.bias - 3)):
             xe = ey + ts + off
@@ -587,10 +628,12 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
 def _check_atan2() -> None:
     """End-to-end faithful-rounding check for zkf_atan2 (theta and mag) vs mpmath via the bit-exact model."""
     import sys
+
     sys.path.insert(0, str(REPO))
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
+
     # zkf is first-imported here, after --emit has written the tables, so the freshly-emitted data is picked up
     # without reaching into package internals to reload/clear caches.
 
@@ -619,16 +662,19 @@ def _check_atan2() -> None:
                 bad = (hex(yb), hex(xb), dt, dm)
             worst_t, worst_m = max(worst_t, dt), max(worst_m, dm)
         ok = worst_t <= 1 and worst_m <= 1
-        print(f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} theta_ulp={worst_t} mag_ulp={worst_m} "
-              f"(sampled({len(pairs)}))")
+        print(
+            f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} theta_ulp={worst_t} mag_ulp={worst_m} "
+            f"(sampled({len(pairs)}))"
+        )
         assert ok, f"{wexp}/{wman}: theta_ulp={worst_t} mag_ulp={worst_m} first_bad={bad}"
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--emit", action="store_true", help="write the per-WMAN CORDIC constant cores and Python data")
-    ap.add_argument("--check", action="store_true",
-                    help="verify sincos AND atan2 accuracy vs mpmath (uses the bit-exact model)")
+    ap.add_argument(
+        "--check", action="store_true", help="verify sincos AND atan2 accuracy vs mpmath (uses the bit-exact model)"
+    )
     ap.add_argument("--report", action="store_true", help="print the chosen CORDIC shapes (iterations, widths, LUT)")
     args = ap.parse_args()
     if not (args.emit or args.check or args.report):

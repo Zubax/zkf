@@ -1,7 +1,7 @@
 # Float-HDL Formal Verification
 
-This directory contains the SymbiYosys-driven equivalence proofs for certain modules under `float/hdl/`.
-The proofs run via `make formal-float`, which invokes [`run_proofs.py`](run_proofs.py) and renders the HTML report at
+This directory contains the SymbiYosys-driven equivalence proofs for certain modules under `hdl/`.
+The proofs run via `nox -s formal`, which invokes [`run_proofs.py`](run_proofs.py) and renders the HTML report at
 `build/float/formal/report.html`.
 
 ## How it works
@@ -45,7 +45,7 @@ when emitting models through bitwuzla; on those modules we fall back to yices-on
 
 ## Proof catalogue
 
-Every `.sby` file under `sby/` is a primary proof and is exercised by `make formal-float`.
+Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s formal`.
 
 | Module                  | Parameters      | Engine    | Notes |
 |-------------------------|-----------------|-----------|-------|
@@ -77,11 +77,11 @@ Combinational/sequential and trivial-wrapper consolidation rule applied:
 ## How to run
 
 ```
-make formal-float          # all primary proofs, renders HTML report at the end
-make formal-float-clean    # wipe build/float/formal/
+nox -s formal              # all primary proofs, renders HTML report at the end
+nox -s clean               # wipe build/ (incl. build/float/formal)
 
 # Iterate on one proof:
-sby -f -d build/float/formal/zkf_pack float/proof/sby/zkf_pack.sby
+sby -f -d build/float/formal/zkf_pack proof/sby/zkf_pack.sby
 ```
 
 The report at `build/float/formal/report.html` is regenerated automatically by `run_proofs.py`;

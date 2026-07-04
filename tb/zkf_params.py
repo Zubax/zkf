@@ -9,7 +9,6 @@ from typing import Iterable
 
 import cocotb
 
-
 VALID_KINDS = {"directed", "exhaustive", "random"}
 
 
@@ -30,20 +29,20 @@ class TestContext:
     wman_in: int | None = None
     wexp_out: int | None = None
     wman_out: int | None = None
-    wk: int | None = None    # zkf_mul_ilog2: width of the signed runtime shift k
-    stage_input: int = 0     # input-register knob for sequential float operators
-    stage_reduce: int = 0    # zkf_exp2: register the reduced fixed-point before the evaluator ROM
-    stage_product: int = 0   # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_sincos / zkf_atan2
+    wk: int | None = None  # zkf_mul_ilog2: width of the signed runtime shift k
+    stage_input: int = 0  # input-register knob for sequential float operators
+    stage_reduce: int = 0  # zkf_exp2: register the reduced fixed-point before the evaluator ROM
+    stage_product: int = 0  # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_sincos / zkf_atan2
     stage_product_final: int = 0  # zkf_log2 final f*C(f) multiply; defaults to stage_product in float_context()
-    stage_align: int = 0     # zkf_add / zkf_addsub / zkf_fma
-    stage_decode: int = 0    # zkf_mul_ilog2_const / zkf_fma / zkf_log2
-    stage_normalize: int = 0 # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int
+    stage_align: int = 0  # zkf_add / zkf_addsub / zkf_fma
+    stage_decode: int = 0  # zkf_mul_ilog2_const / zkf_fma / zkf_log2
+    stage_normalize: int = 0  # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int
     stage_normalize_output: int = 0  # zkf_log2: register _zkf_normshift outputs before GRS/exponent combine
-    stage_pack: int = 0      # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
-    stage_output: int = 0    # pack-based ops: 0 = combinational (default), 1 = registered (+1 cycle)
-    unroll100: int = 100     # zkf_sincos: CORDIC iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
-    parallel: int = 0        # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
-    exp_is_biased: int = 0   # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
+    stage_pack: int = 0  # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
+    stage_output: int = 0  # pack-based ops: 0 = combinational (default), 1 = registered (+1 cycle)
+    unroll100: int = 100  # zkf_sincos: CORDIC iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
+    parallel: int = 0  # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
+    exp_is_biased: int = 0  # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees in-range exponent)
 
     @property
@@ -78,10 +77,7 @@ class TestContext:
         if self.wk is not None:
             knob_suffix += f" WK={self.wk}"
         if self.wexp_in is not None and self.wman_in is not None:
-            return (
-                f"{self.config} {self.wexp_in}/{self.wman_in}->"
-                f"{self.wexp_out}/{self.wman_out}{knob_suffix}"
-            )
+            return f"{self.config} {self.wexp_in}/{self.wman_in}->" f"{self.wexp_out}/{self.wman_out}{knob_suffix}"
         if self.wint is not None:
             return f"{self.config} WEXP={self.wexp} WMAN={self.wman} WINT={self.wint}{knob_suffix}"
         if self.wexp is not None and self.wman is not None:
@@ -92,8 +88,7 @@ class TestContext:
 
     def prefix(self) -> str:
         return (
-            f"suite={self.suite} params={self.params} kind={self.kind} "
-            f"count={self.count} seed=0x{self.seed:016x}"
+            f"suite={self.suite} params={self.params} kind={self.kind} " f"count={self.count} seed=0x{self.seed:016x}"
         )
 
 
@@ -164,7 +159,7 @@ def _stage_product() -> int:
 
 def _stage_product_final(stage_product: int) -> int:
     # Defaults to STAGE_PRODUCT when the plusarg is absent (the matrix always passes it; this fallback covers direct
-    # cocotb runs without FuseSoC).
+    # cocotb runs outside the matrix driver).
     return plusarg_int("ZKF_STAGE_PRODUCT_FINAL", stage_product)
 
 
@@ -249,9 +244,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
     if wman < 4:
         raise ValueError(f"ZKF_WMAN must be at least 4, got {wman}")
     if wexp_unbiased is not None and wexp_unbiased < wexp + 1:
-        raise ValueError(
-            f"ZKF_WEXP_UNBIASED={wexp_unbiased} is too narrow for ZKF_WEXP={wexp}"
-        )
+        raise ValueError(f"ZKF_WEXP_UNBIASED={wexp_unbiased} is too narrow for ZKF_WEXP={wexp}")
     stage_product = _stage_product()
     return TestContext(
         suite=suite,
@@ -262,7 +255,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         wexp=wexp,
         wman=wman,
         wexp_unbiased=wexp_unbiased,
-        wk=(plusarg_int("ZKF_WK", 0) or None),   # only zkf_mul_ilog2 sets it; 0/absent -> None (RTL default WEXP+1)
+        wk=(plusarg_int("ZKF_WK", 0) or None),  # only zkf_mul_ilog2 sets it; 0/absent -> None (RTL default WEXP+1)
         stage_input=_stage_input(),
         stage_reduce=_stage_reduce(),
         stage_product=stage_product,
@@ -315,13 +308,9 @@ def resize_context(suite: str) -> TestContext:
     wexp_out = plusarg_int("ZKF_WEXP_OUT")
     wman_out = plusarg_int("ZKF_WMAN_OUT")
     if wexp_in < 2 or wexp_out < 2:
-        raise ValueError(
-            f"ZKF_WEXP_IN/OUT must each be at least 2, got in={wexp_in} out={wexp_out}"
-        )
+        raise ValueError(f"ZKF_WEXP_IN/OUT must each be at least 2, got in={wexp_in} out={wexp_out}")
     if wman_in < 4 or wman_out < 4:
-        raise ValueError(
-            f"ZKF_WMAN_IN/OUT must each be at least 4, got in={wman_in} out={wman_out}"
-        )
+        raise ValueError(f"ZKF_WMAN_IN/OUT must each be at least 4, got in={wman_in} out={wman_out}")
     return TestContext(
         suite=suite,
         config=plusarg_str("ZKF_CONFIG", "default"),
@@ -368,6 +357,4 @@ def signal_width(handle) -> int:
 def check_width(label: str, handle, expected: int, context: TestContext) -> None:
     observed = signal_width(handle)
     if observed != expected:
-        raise AssertionError(
-            f"{context.prefix()} {label} width mismatch expected={expected} observed={observed}"
-        )
+        raise AssertionError(f"{context.prefix()} {label} width mismatch expected={expected} observed={observed}")

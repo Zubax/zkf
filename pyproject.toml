@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zubax-kulibin-float"
+version = "0.1.0"
+requires-python = ">=3.11"
+description = "Simple deterministic FPGA-friendly floating-point HDL operators with a bit-exact Python model."
+readme = { file = "README.md", content-type = "text/markdown" }
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "Zubax Robotics", email = "pavel.kirienko@zubax.com" }]
+keywords = ["fpga", "hdl", "verilog", "floating point", "rtl", "dsp", "hardware design"]
+classifiers = [
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+]
+# The zkf value model is pure standard library; numpy/mpmath are only needed by the zkf.oracle submodule and
+# the transcendental/trig accuracy gates.
+dependencies = [
+    "numpy>=1.24",
+    "mpmath>=1.3",
+]
+
+[project.optional-dependencies]
+test = [
+    "cocotb~=2.0",
+    "pytest>=8",
+    "pytest-xdist>=3", # parallel workers for the verification matrix (-n auto)
+]
+
+[project.urls]
+Repository = "https://github.com/Zubax/zkf"
+
+[tool.setuptools.packages.find]
+include = ["zkf*"]
+
+[tool.pytest.ini_options]
+# Only the float matrix orchestrator is collected here; the cocotb test_*.py modules run inside a simulator,
+# not under pytest, and the model-layout / pmul checks run as standalone scripts from the nox sessions.
+testpaths = ["tb"]
+python_files = ["test_float_matrix.py"]
+# Deselect the deep/properties/fast tiers by default so a bare run (and `nox -s tests`) exercises only the
+# per-PR set; the nox sessions override -m to select the heavier tiers explicitly.
+addopts = ["-v", "-m", "not deep and not properties and not fast", "-p", "no:mypy"]
+markers = [
+    "pr: per-PR verification tier (the default selection)",
+    "deep: full parameter-equivalence sweep (correctness on icarus, coverage on verilator); skipped unless -m deep",
+    "properties: algebraic-property tests on add/addsub/mul; skipped unless -m properties",
+    "fast: smallest-config smoke tier; skipped unless -m fast",
+    "icarus: Icarus Verilog correctness run",
+    "verilator: Verilator coverage-collecting run",
+]
+
+[tool.black]
+line-length = 120
+target-version = ["py311"]
+# The transcendental/trig lookup tables are machine-generated (zkf_transcendental.py / zkf_trig.py --emit);
+# keep them out of the style gate so the generators stay the single source of truth.
+extend-exclude = "zkf/_tables/(trans|trig)\\.py"

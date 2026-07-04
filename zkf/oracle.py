@@ -37,11 +37,11 @@ def exp2(z: Zkf) -> Zkf:
     """Correctly-rounded 2**z."""
     fmt = z.fmt
     if z.is_inf:
-        return fmt.inf(0) if not z.negative else fmt.zero()          # +inf -> +inf, -inf -> +0
+        return fmt.inf(0) if not z.negative else fmt.zero()  # +inf -> +inf, -inf -> +0
     if z.is_zero:
-        return fmt.normal(0, fmt.bias, 0)                          # 2**0 = 1.0
+        return fmt.normal(0, fmt.bias, 0)  # 2**0 = 1.0
     e = z.exp - fmt.bias
-    if e >= fmt.wexp - 1:                                          # mirror the model's out-of-range classification
+    if e >= fmt.wexp - 1:  # mirror the model's out-of-range classification
         return fmt.inf(0) if not z.negative else fmt.zero()
     with _mpmath.workprec(4 * fmt.wman + 80):
         return _round_mpf(fmt, _mpmath.power(2, _to_mpf(z)))
@@ -51,11 +51,11 @@ def log2(z: Zkf) -> Log2Result:
     """Correctly-rounded log2(z), plus the domain-error (z<0) and pole (z==0) flags."""
     fmt = z.fmt
     if z.is_inf and not z.negative:
-        return Log2Result(fmt.inf(0), False, False)               # log2(+inf) = +inf
+        return Log2Result(fmt.inf(0), False, False)  # log2(+inf) = +inf
     if z.is_zero:
-        return Log2Result(fmt.inf(1), False, True)                # log2(+0) = -inf, pole
+        return Log2Result(fmt.inf(1), False, True)  # log2(+0) = -inf, pole
     if z.negative:
-        return Log2Result(fmt.inf(1), True, False)                # log2(x<0) = -inf, domain error
+        return Log2Result(fmt.inf(1), True, False)  # log2(x<0) = -inf, domain error
     with _mpmath.workprec(4 * fmt.wman + 80):
         return Log2Result(_round_mpf(fmt, _mpmath.log(_to_mpf(z), 2)), False, False)
 
@@ -73,15 +73,15 @@ def sincos(z: Zkf) -> SinCos:
         s = fmt.inf(z.negative)
         return SinCos(s, s, 0)
     if z.is_zero:
-        return SinCos(fmt.zero(), fmt.normal(0, fmt.bias, 0), 0)   # sin(0)=+0, cos(0)=+1
+        return SinCos(fmt.zero(), fmt.normal(0, fmt.bias, 0), 0)  # sin(0)=+0, cos(0)=+1
 
     e = z.exp - fmt.bias
-    rsh = fmt.wfrac - e                                            # |x| = sig / 2**rsh
+    rsh = fmt.wfrac - e  # |x| = sig / 2**rsh
     frac_abs = _Fraction(0) if rsh <= 0 else _Fraction(z.significand() % (1 << rsh), 1 << rsh)
-    frac = (1 - frac_abs) if (z.negative and frac_abs != 0) else frac_abs   # frac(x) in [0,1)
+    frac = (1 - frac_abs) if (z.negative and frac_abs != 0) else frac_abs  # frac(x) in [0,1)
     q4 = frac * 4
-    quadrant = int(q4)                                            # floor (q4 in [0,4)); already in {0,1,2,3}
-    t_local = q4 - quadrant                                       # in [0,1)
+    quadrant = int(q4)  # floor (q4 in [0,4)); already in {0,1,2,3}
+    t_local = q4 - quadrant  # in [0,1)
     with _mpmath.workprec(4 * fmt.wman + 80):
         if t_local <= _Fraction(1, 2):
             theta = (_mpmath.pi / 2) * _mpmath.mpf(t_local.numerator) / _mpmath.mpf(t_local.denominator)
@@ -89,7 +89,7 @@ def sincos(z: Zkf) -> SinCos:
         else:
             comp = 1 - t_local
             theta = (_mpmath.pi / 2) * _mpmath.mpf(comp.numerator) / _mpmath.mpf(comp.denominator)
-            s0, c0 = _mpmath.cos(theta), _mpmath.sin(theta)       # sin(pi/2-theta)=cos, cos(pi/2-theta)=sin
+            s0, c0 = _mpmath.cos(theta), _mpmath.sin(theta)  # sin(pi/2-theta)=cos, cos(pi/2-theta)=sin
         sin_mag, cos_mag = (c0, s0) if (quadrant & 1) else (s0, c0)
         sin_v = -sin_mag if (quadrant >> 1) & 1 else sin_mag
         cos_v = -cos_mag if ((quadrant >> 1) ^ quadrant) & 1 else cos_mag
@@ -110,7 +110,7 @@ def atan2(y: Zkf, x: Zkf) -> Atan2Result:
     with _mpmath.workprec(4 * fmt.wman + 80):
         yv = _to_mpf(y)
         xv = _to_mpf(x)
-        theta = _mpmath.atan2(yv, xv) / (2 * _mpmath.pi)          # turns, (-0.5, 0.5]
+        theta = _mpmath.atan2(yv, xv) / (2 * _mpmath.pi)  # turns, (-0.5, 0.5]
         theta_bits = atan2_canon_half(fmt, _round_mpf(fmt, theta).bits)
         return Atan2Result(fmt.wrap(theta_bits), _round_mpf(fmt, _mpmath.hypot(yv, xv)))
 
@@ -124,7 +124,7 @@ def mul(a: Zkf, b: Zkf) -> Zkf | None:
     with _np.errstate(all="ignore"):
         result = _to_np(a.bits, dtype) * _to_np(b.bits, dtype)
     if _np.isnan(result):
-        return None   # 0 * inf is IEEE NaN -> not cross-checkable
+        return None  # 0 * inf is IEEE NaN -> not cross-checkable
     raw = a.fmt.wrap(_from_np(result, dtype))
     return None if _underflowed_to_subnormal(raw) else _canonicalize(raw)
 
@@ -137,7 +137,9 @@ def add(a: Zkf, b: Zkf) -> Zkf | None:
     if dtype is None or not _is_ieee_canonical(a) or not _is_ieee_canonical(b):
         return None
     if a.is_inf and b.is_inf:
-        return fmt.inf(a.negative) if a.negative == b.negative else None   # inf + -inf is IEEE NaN -> not cross-checkable
+        return (
+            fmt.inf(a.negative) if a.negative == b.negative else None
+        )  # inf + -inf is IEEE NaN -> not cross-checkable
     if a.is_inf:
         return fmt.inf(a.negative)
     if b.is_inf:
@@ -157,7 +159,7 @@ def div(a: Zkf, b: Zkf) -> DivResult | None:
         return None
     div0 = b.is_zero
     if (a.is_zero and b.is_zero) or (a.is_inf and b.is_inf):
-        return None   # 0/0 and inf/inf are IEEE NaN -> not cross-checkable
+        return None  # 0/0 and inf/inf are IEEE NaN -> not cross-checkable
     if a.is_zero or b.is_inf:
         return DivResult(fmt.zero(), div0)
     result_sign = a.negative if b.is_zero else (a.negative ^ b.negative)
@@ -178,7 +180,7 @@ def fma(a: Zkf, b: Zkf, c: Zkf) -> Zkf | None:
     overflow cross-checks to signed infinity. Requires Python 3.13+.
     """
     _require_same(a, b, c)
-    if not hasattr(_math, "fma"):                                # math.fma is Python 3.13+
+    if not hasattr(_math, "fma"):  # math.fma is Python 3.13+
         return None
     fmt = a.fmt
     if _dtype(fmt) is not _np.float64:
@@ -194,9 +196,9 @@ def fma(a: Zkf, b: Zkf, c: Zkf) -> Zkf | None:
             float(_to_np(c.bits, _np.float64)),
         )
     except ValueError:
-        return None                                              # invalid operation (NaN domain) -> not cross-checkable
-    except OverflowError:                                        # fused result overflows: signed IEEE infinity
-        exact = a.to_fraction() * b.to_fraction() + c.to_fraction()   # exact operands -> independent of the fma model
+        return None  # invalid operation (NaN domain) -> not cross-checkable
+    except OverflowError:  # fused result overflows: signed IEEE infinity
+        exact = a.to_fraction() * b.to_fraction() + c.to_fraction()  # exact operands -> independent of the fma model
         return fmt.inf(1 if exact < 0 else 0)
     if _math.isnan(result):
         return None

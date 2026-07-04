@@ -39,12 +39,12 @@ def add_unique(cases: list[UnaryCase], seen: set[int], label: str, fmt: ZkfForma
 
 def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
     out: list[tuple[str, int]] = [
-        ("raw_zero", 0),                                  # pole
+        ("raw_zero", 0),  # pole
         ("raw_one_frac", 1),
-        ("raw_neg_zero", 1 << fmt.sign_shift),            # pole (canonicalized +0)
-        ("raw_pos_inf", fmt.exp_inf << fmt.wfrac),        # +inf
+        ("raw_neg_zero", 1 << fmt.sign_shift),  # pole (canonicalized +0)
+        ("raw_pos_inf", fmt.exp_inf << fmt.wfrac),  # +inf
         ("raw_neg_inf", (1 << fmt.sign_shift) | (fmt.exp_inf << fmt.wfrac)),  # domain error
-        ("raw_all_ones", mask(fmt.wfull)),                # negative non-canonical -> domain error
+        ("raw_all_ones", mask(fmt.wfull)),  # negative non-canonical -> domain error
     ]
     if fmt.wexp >= 3:
         for label, value in directed_numbers(fmt).items():
@@ -54,7 +54,7 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
             exp = fmt.bias + k
             if 1 <= exp <= fmt.exp_max_finite:
                 out.append((f"pow2_{k}", normal(fmt, 0, exp, 0)))
-                out.append((f"neg_pow2_{k}", normal(fmt, 1, exp, 0)))   # negative -> domain error
+                out.append((f"neg_pow2_{k}", normal(fmt, 1, exp, 0)))  # negative -> domain error
         # Top finite exp/frac exercise the reduced WNORM upper range: the re-center branch may carry e to 2^(WEXP-1),
         # but log2(m') is then negative so the finite result stays just below that bound.
         for frac in sorted({0, 1, fmt.frac_mask >> 1, fmt.frac_mask - 1, fmt.frac_mask}):
@@ -150,6 +150,6 @@ async def log2_runtime_cases(dut) -> None:
 
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
-    assert scoreboard.checked == len(cases), (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"
-    )
+    assert scoreboard.checked == len(
+        cases
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

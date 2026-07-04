@@ -51,7 +51,7 @@ def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:
         for frac in frac_bits:
             cases.append((f"zero_s{sign}_f{frac:x}", (sign << fmt.sign_shift) | frac))
             inf_bits = (sign << fmt.sign_shift) | (fmt.exp_inf << fmt.wfrac) | frac
-            cases.append((f"inf_s{sign}_f{frac:x}",  inf_bits))
+            cases.append((f"inf_s{sign}_f{frac:x}", inf_bits))
     return cases
 
 
@@ -190,6 +190,6 @@ async def cmp_runtime_cases(dut) -> None:
 
     await scoreboard.reset(3, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
-    assert scoreboard.checked == len(cases), (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"
-    )
+    assert scoreboard.checked == len(
+        cases
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

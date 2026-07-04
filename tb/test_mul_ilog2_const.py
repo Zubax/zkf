@@ -19,9 +19,9 @@ from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases
 def k_for_port(fmt: ZkfFormat) -> dict[str, int]:
     emax_minus_one = fmt.exp_max_finite - 1
     return {
-        "y_k0":     0,
-        "y_kp1":    1,
-        "y_kn1":   -1,
+        "y_k0": 0,
+        "y_kp1": 1,
+        "y_kn1": -1,
         "y_kp_mid": emax_minus_one // 2,
         "y_kn_mid": -(emax_minus_one // 2),
         "y_kp_max": emax_minus_one,
@@ -65,28 +65,28 @@ def binary32_manual_cases() -> list[tuple[str, int]]:
     input class too.
     """
     return [
-        ("manual_zero",                    0x00000000),
-        ("manual_neg_zero",                0x80000000),
-        ("manual_neg_zero_payload",        0x80000001),
-        ("manual_zero_max_payload",        0x007FFFFF),
-        ("manual_one",                     0x3F800000),
-        ("manual_neg_one",                 0xBF800000),
-        ("manual_two",                     0x40000000),
-        ("manual_half",                    0x3F000000),
-        ("manual_min_normal",              0x00800000),
-        ("manual_neg_min_normal",          0x80800000),
+        ("manual_zero", 0x00000000),
+        ("manual_neg_zero", 0x80000000),
+        ("manual_neg_zero_payload", 0x80000001),
+        ("manual_zero_max_payload", 0x007FFFFF),
+        ("manual_one", 0x3F800000),
+        ("manual_neg_one", 0xBF800000),
+        ("manual_two", 0x40000000),
+        ("manual_half", 0x3F000000),
+        ("manual_min_normal", 0x00800000),
+        ("manual_neg_min_normal", 0x80800000),
         ("manual_one_and_half_min_normal", 0x00C00000),
         ("manual_neg_one_and_half_min_normal", 0x80C00000),
-        ("manual_just_above_min_normal",   0x00800001),
-        ("manual_max_finite",              0x7F7FFFFF),
-        ("manual_neg_max_finite",          0xFF7FFFFF),
-        ("manual_just_below_max_finite",   0x7F7FFFFE),
-        ("manual_pos_inf",                 0x7F800000),
-        ("manual_neg_inf",                 0xFF800000),
-        ("manual_noncanonical_pos_inf",    0x7F800001),
-        ("manual_noncanonical_neg_inf",    0xFFC00001),
-        ("manual_inf_max_payload",         0x7FFFFFFF),
-        ("manual_neg_inf_max_payload",     0xFFFFFFFF),
+        ("manual_just_above_min_normal", 0x00800001),
+        ("manual_max_finite", 0x7F7FFFFF),
+        ("manual_neg_max_finite", 0xFF7FFFFF),
+        ("manual_just_below_max_finite", 0x7F7FFFFE),
+        ("manual_pos_inf", 0x7F800000),
+        ("manual_neg_inf", 0xFF800000),
+        ("manual_noncanonical_pos_inf", 0x7F800001),
+        ("manual_noncanonical_neg_inf", 0xFFC00001),
+        ("manual_inf_max_payload", 0x7FFFFFFF),
+        ("manual_neg_inf_max_payload", 0xFFFFFFFF),
     ]
 
 
@@ -169,6 +169,6 @@ async def mul_ilog2_const_runtime_cases(dut) -> None:
 
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
-    assert scoreboard.checked == len(cases), (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"
-    )
+    assert scoreboard.checked == len(
+        cases
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

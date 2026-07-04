@@ -42,7 +42,11 @@ def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     sgn = 1 << fmt.sign_shift
     inf = fmt.exp_inf << fmt.wfrac
     raw: list[tuple[str, int]] = [
-        ("z+", 0), ("z-", sgn), ("inf+", inf), ("inf-", sgn | inf), ("ones", mask(fmt.wfull)),
+        ("z+", 0),
+        ("z-", sgn),
+        ("inf+", inf),
+        ("inf-", sgn | inf),
+        ("ones", mask(fmt.wfull)),
     ]
     out: list[tuple[str, int, int]] = []
     # Full cross of the raw specials (both zero, inf combos, signed-zero corners, non-canonical).
@@ -160,7 +164,7 @@ async def atan2_runtime_cases(dut) -> None:
     start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
-    dut.out_ready.value = 1                                      # latency measurement assumes always-ready
+    dut.out_ready.value = 1  # latency measurement assumes always-ready
     drive_unsigned(dut.y, 0)
     drive_unsigned(dut.x, 0)
     for _ in range(4):
@@ -169,7 +173,7 @@ async def atan2_runtime_cases(dut) -> None:
     dut.rst.value = 0
     await RisingEdge(dut.clk)
 
-    timeout = 8 * (context.wman + 64)                            # generous upper bound on the iterative latency
+    timeout = 8 * (context.wman + 64)  # generous upper bound on the iterative latency
     checked = 0
     for index, case in enumerate(cases):
         guard = 0
@@ -180,16 +184,16 @@ async def atan2_runtime_cases(dut) -> None:
         dut.in_valid.value = 1
         drive_unsigned(dut.y, case.y)
         drive_unsigned(dut.x, case.x)
-        await RisingEdge(dut.clk)                                # this edge accepts the transaction
+        await RisingEdge(dut.clk)  # this edge accepts the transaction
         dut.in_valid.value = 0
-        drive_unsigned(dut.y, mask(fmt.wfull))                  # garbage between transactions
+        drive_unsigned(dut.y, mask(fmt.wfull))  # garbage between transactions
         drive_unsigned(dut.x, mask(fmt.wfull))
         guard = 0
         while int(dut.out_valid.value) == 0:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
-        assert guard == expected_latency, (                     # II is data-independent; verify the published model
+        assert guard == expected_latency, (  # II is data-independent; verify the published model
             f"{context.prefix()} case={index}: measured latency {guard} != model {expected_latency} "
             f"(unroll100={context.unroll100} SI={context.stage_input} SP={context.stage_product} "
             f"SN={context.stage_normalize} PA={context.stage_pack} "
@@ -202,9 +206,7 @@ async def atan2_runtime_cases(dut) -> None:
                 f"negative-y x=-inf endpoint returned a negative theta"
             )
         exp = {"theta": case.theta, "mag": case.mag}
-        assert got == exp, (
-            f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
-        )
+        assert got == exp, f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
         checked += 1
     assert checked == len(cases), f"{context.prefix()} checked {checked}, expected {len(cases)}"
 
@@ -244,7 +246,7 @@ async def atan2_backpressure(dut) -> None:
         drive_unsigned(dut.y, mask(fmt.wfull))
         drive_unsigned(dut.x, mask(fmt.wfull))
         guard = 0
-        while int(dut.out_valid.value) == 0:                    # out_ready is low; out_valid still arrives on time
+        while int(dut.out_valid.value) == 0:  # out_ready is low; out_valid still arrives on time
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()} bp: out_valid timeout (case {index})"
@@ -252,7 +254,9 @@ async def atan2_backpressure(dut) -> None:
         for hold in range(5):
             got = {"theta": int(dut.theta.value), "mag": int(dut.mag.value)}
             assert int(dut.out_valid.value) == 1, f"{context.prefix()} bp case={index}: out_valid dropped while stalled"
-            assert int(dut.in_ready.value) == 0, f"{context.prefix()} bp case={index}: in_ready high while result unread"
+            assert (
+                int(dut.in_ready.value) == 0
+            ), f"{context.prefix()} bp case={index}: in_ready high while result unread"
             assert got == exp, f"{context.prefix()} bp case={index} hold={hold}: result changed: {got} != {exp}"
             await RisingEdge(dut.clk)
         dut.out_ready.value = 1

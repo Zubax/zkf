@@ -34,16 +34,28 @@ def directed_shifts(fmt: ZkfFormat, wk: int) -> list[int]:
     """Shifts crossing every input-class boundary, plus the saturating WK extremes."""
     kmin, kmax = k_range(wk)
     candidates = {
-        0, 1, -1, 2, -2,
-        fmt.bias, -fmt.bias,                 # one -> {min-normal boundary, overflow-ish}
-        -(fmt.bias - 1), -(fmt.bias + 1),    # one -> min-normal value / underflow-to-zero
-        fmt.exp_max_finite, -fmt.exp_max_finite,
-        kmin, kmax, kmin + 1, kmax - 1,
+        0,
+        1,
+        -1,
+        2,
+        -2,
+        fmt.bias,
+        -fmt.bias,  # one -> {min-normal boundary, overflow-ish}
+        -(fmt.bias - 1),
+        -(fmt.bias + 1),  # one -> min-normal value / underflow-to-zero
+        fmt.exp_max_finite,
+        -fmt.exp_max_finite,
+        kmin,
+        kmax,
+        kmin + 1,
+        kmax - 1,
     }
     return sorted(k for k in candidates if kmin <= k <= kmax)
 
 
-def add_unique(cases: list[Case], seen: set[tuple[int, int]], label: str, fmt: ZkfFormat, a: int, k: int, wk: int) -> None:
+def add_unique(
+    cases: list[Case], seen: set[tuple[int, int]], label: str, fmt: ZkfFormat, a: int, k: int, wk: int
+) -> None:
     key = (a & mask(fmt.wfull), k & mask(wk))
     if key in seen:
         return
@@ -132,6 +144,6 @@ async def mul_ilog2_runtime_cases(dut) -> None:
 
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
-    assert scoreboard.checked == len(cases), (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"
-    )
+    assert scoreboard.checked == len(
+        cases
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

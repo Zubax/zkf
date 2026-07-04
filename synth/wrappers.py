@@ -17,8 +17,7 @@ from modules import MUL_ILOG2_CONST_K, ModuleSpec, effective_parallel, effective
 def write_pack_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     wexp_unbiased = spec.wexp_unbiased or (spec.wexp + 2)
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                     clk,
@@ -109,14 +108,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_mul_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -182,14 +179,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_add_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -256,14 +251,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_addsub_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -335,14 +328,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_fma_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -416,15 +407,13 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_div_core_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     wexp_unbiased = spec.wexp + 2
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                     clk,
@@ -547,14 +536,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_div_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -625,14 +612,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_cmp_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -708,14 +693,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_sort_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -784,14 +767,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_mul_ilog2_const_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -850,15 +831,13 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_mul_ilog2_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     wk = spec.wk or (spec.wexp + 1)
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -921,15 +900,13 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_from_int_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     wint = spec.wint
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                          clk,
@@ -989,15 +966,13 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_to_int_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     wint = spec.wint
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                          clk,
@@ -1054,15 +1029,13 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_resize_wrapper(spec: ModuleSpec, path: Path) -> None:
-    in_wfull  = spec.wexp_in  + spec.wman_in
+    in_wfull = spec.wexp_in + spec.wman_in
     out_wfull = spec.wexp_out + spec.wman_out
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                       clk,
@@ -1121,14 +1094,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_round_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -1192,14 +1163,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_exp2_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -1260,14 +1229,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_log2_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -1345,14 +1312,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_sincos_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -1443,14 +1408,12 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_atan2_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
-    path.write_text(
-        f"""`default_nettype none
+    path.write_text(f"""`default_nettype none
 
 module {spec.top} (
     input  wire                 clk,
@@ -1538,8 +1501,7 @@ module {spec.top} (
 endmodule
 
 `default_nettype wire
-"""
-    )
+""")
 
 
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:

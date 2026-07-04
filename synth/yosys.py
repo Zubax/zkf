@@ -38,7 +38,6 @@ from common import (
 from modules import ModuleSpec, format_register_stages, module_group, params, register_stages, rtl_sources
 from wrappers import write_wrapper
 
-
 # Per-invocation wall-clock limits. nextpnr place-and-route runtime is workload- and seed-dependent and
 # can occasionally diverge (especially the openXC7 nextpnr-xilinx router); yosys synthesis is usually
 # quick. Bounding each means one stuck module fails fast - a non-fatal FAIL row in the optional flow -
@@ -51,33 +50,33 @@ YOSYS_TIMEOUT_S = float(os.environ.get("YOSYS_SYNTH_TIMEOUT_S", "900"))
 class NextpnrPaths:
     """The per-module file paths a nextpnr command line needs, handed to YosysTarget.nextpnr_args."""
 
-    name: str                                 # module name, e.g. "zkf_mul"; used to name device output files
-    module_dir: Path                          # per-module artifact directory (where outputs may be written)
-    netlist: Path                             # Yosys JSON netlist fed to nextpnr via --json
-    report: Path                              # JSON utilization/timing report nextpnr writes via --report
-    target_freq_mhz: float                    # clock target passed via --freq
+    name: str  # module name, e.g. "zkf_mul"; used to name device output files
+    module_dir: Path  # per-module artifact directory (where outputs may be written)
+    netlist: Path  # Yosys JSON netlist fed to nextpnr via --json
+    report: Path  # JSON utilization/timing report nextpnr writes via --report
+    target_freq_mhz: float  # clock target passed via --freq
 
 
 @dataclass(frozen=True)
 class YosysTarget:
     """Everything that distinguishes one nextpnr device from another within the shared flow."""
 
-    name: str                                 # short label used in console progress, e.g. "ecp5"
-    build_dir: Path                           # report + per-module artifact root
-    nextpnr_tool: str                         # nextpnr executable name to locate (PATH, then /opt, /usr)
+    name: str  # short label used in console progress, e.g. "ecp5"
+    build_dir: Path  # report + per-module artifact root
+    nextpnr_tool: str  # nextpnr executable name to locate (PATH, then /opt, /usr)
     nextpnr_args: Callable[["YosysTarget", NextpnrPaths], list]  # full post-binary nextpnr argv for one module
     target_freq_mhz: float
-    report_title: str                         # HTML <title>/<h1>
-    flow_description_html: str                # "Flow: ..." sentence for the report header
-    notes_html: str                           # extra device-specific <p> notes; may be empty
-    util_resources: tuple[str, ...]           # utilization keys always shown in the details section
-    synth_command: Callable[[ModuleSpec, Path], str]               # the `synth_*` Yosys line
-    extract_resources: Callable[[dict, dict, str], dict[str, str]] # cells, report, nextpnr_log -> resource columns
-    resource_headers: str                     # device resource <th> cells (placed after Status)
+    report_title: str  # HTML <title>/<h1>
+    flow_description_html: str  # "Flow: ..." sentence for the report header
+    notes_html: str  # extra device-specific <p> notes; may be empty
+    util_resources: tuple[str, ...]  # utilization keys always shown in the details section
+    synth_command: Callable[[ModuleSpec, Path], str]  # the `synth_*` Yosys line
+    extract_resources: Callable[[dict, dict, str], dict[str, str]]  # cells, report, nextpnr_log -> resource columns
+    resource_headers: str  # device resource <th> cells (placed after Status)
     resource_row: Callable[[dict, "dict[str, tuple[float, float] | None]"], str]  # result, bounds -> <td> cells
     metric_keys: tuple[tuple[str, bool], ...]  # (result_key, higher_is_better) device columns that get a heatmap
-    area_key: str                             # result key ranked in the console area summary (e.g. "lut_placed")
-    area_label: str                           # human label for that area metric (e.g. "placed LUT4")
+    area_key: str  # result key ranked in the console area summary (e.g. "lut_placed")
+    area_label: str  # human label for that area metric (e.g. "placed LUT4")
 
 
 def write_yosys_script(
@@ -93,10 +92,7 @@ def write_yosys_script(
     # show their internals instead of opaque boxes. The original design is then popped back for the actual
     # synthesis pass, leaving its results unaffected.
     defines = script.parent / "zkf_yosys_defines.vh"
-    defines.write_text(
-        '`define ZKF_ATTRIBUTE_ROM_PRE (* rom_style = "block" *)\n'
-        "`define ZKF_ATTRIBUTE_ROM_POST\n"
-    )
+    defines.write_text('`define ZKF_ATTRIBUTE_ROM_PRE (* rom_style = "block" *)\n' "`define ZKF_ATTRIBUTE_ROM_POST\n")
     rtl = [str(defines)] + [str(path) for path in rtl_sources(spec)] + [str(wrapper)]
     schematic_commands = []
     if spec.emit_schematic:
@@ -123,6 +119,7 @@ def write_yosys_script(
             ]
         )
     )
+
 
 def parse_cell_counts(yosys_log: str) -> dict[str, int]:
     counts: dict[str, int] = {}
@@ -210,9 +207,7 @@ def yosys_timing_met(nextpnr_log: str, report: dict[str, object]) -> bool:
     # "Max frequency for clock 'X': ... (PASS|FAIL at Y MHz)" after placement and again after routing.
     # Keep the post-route (last) verdict per clock and require every clock to pass.
     per_clock: dict[str, str] = {}
-    for clock_name, verdict in re.findall(
-        r"Max frequency for clock\s+'([^']+)':[^()]*\((PASS|FAIL) at", nextpnr_log
-    ):
+    for clock_name, verdict in re.findall(r"Max frequency for clock\s+'([^']+)':[^()]*\((PASS|FAIL) at", nextpnr_log):
         per_clock[clock_name] = verdict
     if per_clock:
         return all(verdict == "PASS" for verdict in per_clock.values())
@@ -297,13 +292,7 @@ def format_yosys_cell_counts(cells: dict[str, int]) -> str:
         "ALU54B",
         "DP16KD",
     ]
-    keys.extend(
-        sorted(
-            key
-            for key, value in cells.items()
-            if value and key not in keys and not key.startswith("$")
-        )
-    )
+    keys.extend(sorted(key for key, value in cells.items() if value and key not in keys and not key.startswith("$")))
     lines = [f"{key}: {cells[key]}" for key in keys if cells.get(key, 0)]
     return "\n".join(lines) if lines else "not reported"
 
@@ -517,6 +506,7 @@ def failed_result(spec: ModuleSpec, target: YosysTarget, note: str, module_dir: 
     Used only by the optional (non-gating) path; it links whatever logs were written before the crash and
     fills the device resource columns with the extractor's empty-input defaults so write_html stays happy.
     """
+
     def rel(name: str) -> str:
         path = module_dir / name
         return str(path.relative_to(target.build_dir)) if path.is_file() else ""
@@ -572,7 +562,9 @@ def run_flow(target: YosysTarget, modules: list[ModuleSpec], *, gate: bool = Tru
             note = f"toolchain command failed (exit {exc.returncode}); see logs"
             return failed_result(spec, target, note, target.build_dir / spec.name)
         except Exception as exc:  # noqa: BLE001 -- optional flow must survive any single-module failure
-            return failed_result(spec, target, f"synthesis raised {type(exc).__name__}: {exc}", target.build_dir / spec.name)
+            return failed_result(
+                spec, target, f"synthesis raised {type(exc).__name__}: {exc}", target.build_dir / spec.name
+            )
 
     target.build_dir.mkdir(parents=True, exist_ok=True)
     results = synthesize_with_progress("yosys", modules, synthesize_module)

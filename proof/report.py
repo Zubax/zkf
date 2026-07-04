@@ -2,7 +2,7 @@
 """
 Render a colourful HTML report from the JSON summary produced by run_proofs.py.
 
-Style matches float/tb/zkf_coverage.py's dark-theme fallback for visual consistency.
+Style matches tb/zkf_coverage.py's dark-theme fallback for visual consistency.
 """
 
 from __future__ import annotations

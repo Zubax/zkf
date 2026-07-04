@@ -217,9 +217,14 @@ def sincos_latency(
         pmul_l = 1 + _count(stage_product)
         saved = min(pmul_l, zgap)
     return (
-        11 + 2 * _count(stage_product) + iter_cycles - saved
-        + _count(stage_input) + _count(stage_output)
-        + _count(stage_normalize) + _count(stage_pack)
+        11
+        + 2 * _count(stage_product)
+        + iter_cycles
+        - saved
+        + _count(stage_input)
+        + _count(stage_output)
+        + _count(stage_normalize)
+        + _count(stage_pack)
     )
 
 
@@ -247,20 +252,25 @@ def atan2_latency(
         raise ValueError(f"unroll100 must be 50 or a positive multiple of 100, got {unroll100}")
     n, xf = fmt.atan2_iterations, fmt.atan2_divider_width
     iter_cycles = (n * 100 + unroll100 - 1) // unroll100
-    steps = (xf + 1) // 2                                  # folded radix-4 divider: 2 quotient bits per cycle
+    steps = (xf + 1) // 2  # folded radix-4 divider: 2 quotient bits per cycle
     # STEPS divider digit-cycles + a one-cycle setup that forms 3*den. Mirrors ZKF_ATAN2_DIVCYC = STEPS + 1.
     div_cycles = steps + 1
     return (
-        8 + iter_cycles + div_cycles + _count(stage_product)
-        + _count(stage_input) + _count(stage_normalize)
-        + _count(stage_pack) + _count(stage_output)
+        8
+        + iter_cycles
+        + div_cycles
+        + _count(stage_product)
+        + _count(stage_input)
+        + _count(stage_normalize)
+        + _count(stage_pack)
+        + _count(stage_output)
     )
 
 
 def module_latency(
     kind: str,
     *,
-    wexp: int = 2,   # valid minimum; transcendental latencies depend only on WMAN
+    wexp: int = 2,  # valid minimum; transcendental latencies depend only on WMAN
     wman: int = 0,
     unroll100: int = 100,
     parallel: int = 0,
@@ -325,8 +335,9 @@ def module_latency(
     if kind == "resize":
         return resize_latency(stage_input=stage_input, stage_output=stage_output)
     if kind == "round":
-        return round_latency(stage_input=stage_input, stage_decode=stage_decode,
-                             stage_pack=stage_pack, stage_output=stage_output)
+        return round_latency(
+            stage_input=stage_input, stage_decode=stage_decode, stage_pack=stage_pack, stage_output=stage_output
+        )
     if kind == "exp2":
         return exp2_latency(
             ZkfFormat(wexp, wman),

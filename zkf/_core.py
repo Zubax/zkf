@@ -106,6 +106,7 @@ class ZkfFormat:
         (i.e. shift_dn = e_x - e_y exceeding this, for x > 0 with |y| < |x|).
         """
         from ._tables import trig
+
         return _trig_spec(self.wman)["zf"] - self.wman - trig.GUARD_DIV
 
     def wrap(self, bits: int) -> Zkf:
@@ -305,17 +306,20 @@ class Zkf:
             round_bit = (product >> (fmt.wman - 3)) & 1
             sticky = _sticky_below(product, fmt.wman - 4)
 
-        return Zkf(fmt, _pack_reference(
+        return Zkf(
             fmt,
-            a.negative ^ b.negative,
-            int(result_zero),
-            int(result_inf),
-            exp_unbiased,
-            significand_value,
-            guard,
-            round_bit,
-            sticky,
-        ))
+            _pack_reference(
+                fmt,
+                a.negative ^ b.negative,
+                int(result_zero),
+                int(result_inf),
+                exp_unbiased,
+                significand_value,
+                guard,
+                round_bit,
+                sticky,
+            ),
+        )
 
     def __add__(self, other: "Zkf") -> "Zkf":
         if not isinstance(other, Zkf):
@@ -350,7 +354,7 @@ class Zkf:
         return self.div(other).quotient
 
     def __neg__(self) -> "Zkf":
-        return Zkf(self.fmt, self.bits ^ (1 << self.fmt.sign_shift))   # Zkf.__post_init__ masks to WFULL
+        return Zkf(self.fmt, self.bits ^ (1 << self.fmt.sign_shift))  # Zkf.__post_init__ masks to WFULL
 
     def __abs__(self) -> "Zkf":
         return Zkf(self.fmt, self.bits & _mask(self.fmt.sign_shift))
@@ -484,9 +488,9 @@ class Zkf:
         fmt, bits = self.fmt, self.bits
         d = self
         if d.is_inf:
-            return Zkf(fmt, _canonical_inf(fmt, 0) if not d.negative else _zero(fmt))   # +inf -> +inf, -inf -> +0
+            return Zkf(fmt, _canonical_inf(fmt, 0) if not d.negative else _zero(fmt))  # +inf -> +inf, -inf -> +0
         if d.is_zero:
-            return Zkf(fmt, _normal(fmt, 0, fmt.bias, 0))                            # 2**0 = 1.0
+            return Zkf(fmt, _normal(fmt, 0, fmt.bias, 0))  # 2**0 = 1.0
         e = d.exp - fmt.bias
         # |x| >= 2^(WEXP-1) is always out of range: overflow (x>0) or underflow (x<0).
         if e >= fmt.wexp - 1:
@@ -494,7 +498,7 @@ class Zkf:
 
         spec = _trans_spec("exp2", fmt.wman)
         cf, rw = spec["cf"], spec["rw"]
-        ff = spec["k"] + rw                          # full reduced-argument width FF = K + RW
+        ff = spec["k"] + rw  # full reduced-argument width FF = K + RW
         sig = _significand(fmt, bits)
         shift = e - fmt.wfrac + ff
         if shift >= 0:
@@ -505,8 +509,8 @@ class Zkf:
             mfix = sig >> rs
             lost_sticky = 1 if (sig & _mask(rs)) else 0
         v = -mfix if d.negative else mfix
-        i = v >> ff                              # arithmetic floor -> integer part of x
-        f = v & _mask(ff)                         # fractional part in [0, 2^FF)
+        i = v >> ff  # arithmetic floor -> integer part of x
+        f = v & _mask(ff)  # fractional part in [0, 2^FF)
 
         acc = _horner_eval(spec["coeffs"][(f >> rw) - spec.get("seg_base", 0)], f & _mask(rw), rw)
         significand_value = (acc >> (cf - fmt.wfrac)) & _mask(fmt.wman)
@@ -522,9 +526,9 @@ class Zkf:
         if d.is_inf and not d.negative:
             return Log2Result(Zkf(fmt, _canonical_inf(fmt, 0)), False, False)  # log2(+inf) = +inf
         if d.is_zero:
-            return Log2Result(Zkf(fmt, _canonical_inf(fmt, 1)), False, True)   # log2(+0) = -inf, pole
+            return Log2Result(Zkf(fmt, _canonical_inf(fmt, 1)), False, True)  # log2(+0) = -inf, pole
         if d.negative:
-            return Log2Result(Zkf(fmt, _canonical_inf(fmt, 1)), True, False)   # log2(x<0) = -inf, domain error
+            return Log2Result(Zkf(fmt, _canonical_inf(fmt, 1)), True, False)  # log2(x<0) = -inf, domain error
 
         e = d.exp - fmt.bias
         spec = _trans_spec("log2", fmt.wman)
@@ -533,19 +537,19 @@ class Zkf:
         # Symmetric argument reduction (mirrors the phase-2 RTL re-center; defines the bit-exact contract). x = m*2^e,
         # m = sig/2^WFRAC in [1,2). If m >= sqrt(2), halve m and increment e so m' in [sqrt(1/2), sqrt(2)). At scale
         # 2^-(WFRAC+1): v = f + 1/2 is the unsigned segment index, f_signed = m'-1 (= f) the signed combine operand.
-        sig = _significand(fmt, bits)                 # WMAN-bit significand, m = sig / 2^WFRAC in [1,2)
+        sig = _significand(fmt, bits)  # WMAN-bit significand, m = sig / 2^WFRAC in [1,2)
         if sig >= _trans_sqrt2_threshold(fmt.wfrac):  # m >= sqrt(2): re-center into [sqrt(1/2), sqrt(2))
             e += 1
-            v = d.frac                               # = sig - 2^WFRAC
-            f_signed = d.frac - (1 << fmt.wfrac)     # < 0
+            v = d.frac  # = sig - 2^WFRAC
+            f_signed = d.frac - (1 << fmt.wfrac)  # < 0
         else:
-            v = (1 << fmt.wfrac) + (d.frac << 1)     # = 2*sig - 2^WFRAC
-            f_signed = d.frac << 1                   # = 2*frac, >= 0
+            v = (1 << fmt.wfrac) + (d.frac << 1)  # = 2*sig - 2^WFRAC
+            f_signed = d.frac << 1  # = 2*frac, >= 0
 
         acc = _horner_eval(spec["coeffs"][(v >> rw) - spec.get("seg_base", 0)], v & _mask(rw), rw)
-        f2 = fmt.wfrac + 1 + cf                       # f is at scale 2^-(WFRAC+1)
-        l_signed = f_signed * acc                     # log2(m') = f * C(f), signed, at scale 2^-f2
-        r = (e << f2) + l_signed                       # signed fixed point e + log2(m')
+        f2 = fmt.wfrac + 1 + cf  # f is at scale 2^-(WFRAC+1)
+        l_signed = f_signed * acc  # log2(m') = f * C(f), signed, at scale 2^-f2
+        r = (e << f2) + l_signed  # signed fixed point e + log2(m')
         sign_out = 1 if r < 0 else 0
         magnitude = -r if r < 0 else r
         w_norm = fmt.wexp + f2 + 1
@@ -564,7 +568,7 @@ class Zkf:
         d = self
         if d.is_inf:
             s = _canonical_inf(fmt, d.negative)
-            return SinCos(Zkf(fmt, s), Zkf(fmt, s), 0)       # +inf -> (+inf,+inf,0); -inf -> (-inf,-inf,0)
+            return SinCos(Zkf(fmt, s), Zkf(fmt, s), 0)  # +inf -> (+inf,+inf,0); -inf -> (-inf,-inf,0)
         if d.is_zero:
             return SinCos(Zkf(fmt, _zero(fmt)), Zkf(fmt, _normal(fmt, 0, fmt.bias, 0)), 0)  # sin(0)=+0, cos(0)=+1
 
@@ -573,17 +577,17 @@ class Zkf:
         # const2pi arrives PRE-NARROWED from the table (top WMAN+5 bits == round(2*pi * 2**const2pi_s)); const2pi_s is
         # the single source of scale for every consuming shift / exp-offset. Mirrors hdl/zkf_sincos.v.
         const2pi, const2pi_s = spec["const2pi"], spec["const2pi_s"]
-        n_sincos = spec["n_sincos"]                      # sincos iterations (linear-rotation termination); == table n
-        wt = spec["wt"]                                  # quadrant-local coordinate width (FF - 2)
+        n_sincos = spec["n_sincos"]  # sincos iterations (linear-rotation termination); == table n
+        wt = spec["wt"]  # quadrant-local coordinate width (FF - 2)
         ff = wt + 2
-        zg = zf - (wt + 2)                               # extra angle-accumulator fractional bits (GUARD_ZF)
+        zg = zf - (wt + 2)  # extra angle-accumulator fractional bits (GUARD_ZF)
         # Uniform magnitude width wmag sized for the widest product (const2pi * t'). CORDIC magnitudes are at scale
         # 2**-xf (exp offset eone_xf); const2pi products at 2**-const2pi_s (eone_s). Mirrors RTL width+exp.
-        cwb = const2pi.bit_length()                      # narrowed 2*pi width == WMAN+5
+        cwb = const2pi.bit_length()  # narrowed 2*pi width == WMAN+5
         wmag = cwb + wt + 1
-        eone_xf = wmag - 1 - xf                          # exp_offset for a magnitude at scale 2**-xf (corr / +1 path)
-        eone_s = wmag - 1 - const2pi_s                   # exp_offset for a const2pi product at scale 2**-const2pi_s
-        one = (1 << xf, eone_xf)                         # value +1.0
+        eone_xf = wmag - 1 - xf  # exp_offset for a magnitude at scale 2**-xf (corr / +1 path)
+        eone_s = wmag - 1 - const2pi_s  # exp_offset for a const2pi product at scale 2**-const2pi_s
+        one = (1 << xf, eone_xf)  # value +1.0
         tsa = spec["tsa"]
         sig = _significand(fmt, bits)
         e = d.exp - fmt.bias
@@ -591,16 +595,16 @@ class Zkf:
         # -- Reduce |x| mod 1 to the FF-bit fraction; SH = e - WFRAC + FF places |sig| at scale 2**-FF. Using
         # sin(2*pi*x) = sign*sin(2*pi*|x|), cos(2*pi*x) = cos(2*pi*|x|) collapses the x<0 negate to a sin sign flip.
         sh = e - fmt.wfrac + ff
-        tiny = sh < 0                                    # below the reducer's resolution -> small-angle path on |x|
+        tiny = sh < 0  # below the reducer's resolution -> small-angle path on |x|
         lshamt = 0 if tiny else min(sh, ff)
         frac_pos = (sig << lshamt) & _mask(ff)
-        quadrant_abs = 0 if tiny else (frac_pos >> wt) & 3   # |x| quadrant (0 for tiny: |x| < 1/4)
-        t = sig if tiny else (frac_pos & _mask(wt))       # quadrant-local coordinate, scale 2**-WT
-        tzero = (not tiny) and t == 0                    # frac(|x|)*4 integer: a quadrant boundary / exact magnitude
+        quadrant_abs = 0 if tiny else (frac_pos >> wt) & 3  # |x| quadrant (0 for tiny: |x| < 1/4)
+        t = sig if tiny else (frac_pos & _mask(wt))  # quadrant-local coordinate, scale 2**-WT
+        tzero = (not tiny) and t == 0  # frac(|x|)*4 integer: a quadrant boundary / exact magnitude
 
         # -- Octant fold: bring the local angle into [0, pi/4] (t' <= 1/2). theta' in turns at scale 2**-zf is just t'.
         half = 1 << (wt - 1)
-        oct_flip = (not tiny) and t > half               # theta in (pi/4, pi/2): use the pi/2 - theta complement
+        oct_flip = (not tiny) and t > half  # theta in (pi/4, pi/2): use the pi/2 - theta complement
         tp = ((1 << wt) - t) if oct_flip else t
 
         # -- Octant-local (sin theta', cos theta') as (magnitude, exp_offset) pairs at the uniform WMAG scale.
@@ -610,7 +614,7 @@ class Zkf:
             sin_tp = (const2pi * sig, eone_s + e - fmt.wfrac)
             cos_tp = one
         elif tzero:
-            sin_tp, cos_tp = (0, eone_xf), one           # exact quadrant boundary: sin theta' = 0, cos theta' = 1
+            sin_tp, cos_tp = (0, eone_xf), one  # exact quadrant boundary: sin theta' = 0, cos theta' = 1
         elif tp < tsa:
             # Small octant-local angle (cos=1): sin theta' ~= 2*pi*tp (tp at scale 2**-(WT+2)); const2pi*tp is at
             # 2**-const2pi_s, so exp_offset = eone_s - (wt + 2).
@@ -622,16 +626,16 @@ class Zkf:
             xk, yk, zk = _cordic_rotate(spec, tp << zg, n_sincos)  # seed z0 = t' shifted into the finer 2**-zf scale
             # phi and x_K/y_K are narrowed to ~18-bit operands (one 18x18 DSP each); dropping the low bits of this small
             # fix-up stays < 1 ULP (--check confirms).
-            n = n_sincos                                 # phi's natural width XF-N+2 uses the sincos iteration count
-            phiw = min(fmt.wman + 6, max(2, xf - n + 2))     # phi top bits (natural width XF-N+2, capped at WMAN+6)
+            n = n_sincos  # phi's natural width XF-N+2 uses the sincos iteration count
+            phiw = min(fmt.wman + 6, max(2, xf - n + 2))  # phi top bits (natural width XF-N+2, capped at WMAN+6)
             phi_trunc = max(0, (xf - n + 2) - phiw)
-            phi_s = xf - phi_trunc                       # scale of the narrowed phi (== 2*pi*z_K at 2**-phi_s)
-            xcw = fmt.wman + 6                           # x_K/y_K correction-operand top bits
-            xk_trunc = (xf + 2) - xcw                    # XW = XF+2; keep the top XCW bits
+            phi_s = xf - phi_trunc  # scale of the narrowed phi (== 2*pi*z_K at 2**-phi_s)
+            xcw = fmt.wman + 6  # x_K/y_K correction-operand top bits
+            xk_trunc = (xf + 2) - xcw  # XW = XF+2; keep the top XCW bits
             # phi = const2pi*z_K (scale 2**-(const2pi_s + zf)) narrowed to PHIW bits at scale 2**-phi_s by a single
             # right-shift (const2pi_s + zf) - phi_s. const2pi is the pre-narrowed operand, so no correction token.
             phi = (const2pi * zk) >> ((const2pi_s + zf) - phi_s)  # signed, PHIW bits, scale 2**-phi_s
-            corr_s = ((xk >> xk_trunc) * phi) >> (xf - xk_trunc - phi_trunc)   # x_K*phi at scale 2**-xf
+            corr_s = ((xk >> xk_trunc) * phi) >> (xf - xk_trunc - phi_trunc)  # x_K*phi at scale 2**-xf
             corr_c = ((yk >> xk_trunc) * phi) >> (xf - xk_trunc - phi_trunc)
             sin_tp = (yk + corr_s, eone_xf)
             cos_tp = (xk - corr_c, eone_xf)
@@ -639,7 +643,7 @@ class Zkf:
         # -- Unmap the octant (sin theta = cos theta', cos theta = sin theta' when folded), then the |x| quadrant.
         sin_loc, cos_loc = (cos_tp, sin_tp) if oct_flip else (sin_tp, cos_tp)
         sin_m, cos_m = (cos_loc, sin_loc) if (quadrant_abs & 1) else (sin_loc, cos_loc)
-        sin_sign = ((quadrant_abs >> 1) & 1) ^ d.negative    # sin is odd: negative x flips it
+        sin_sign = ((quadrant_abs >> 1) & 1) ^ d.negative  # sin is odd: negative x flips it
         cos_sign = ((quadrant_abs >> 1) ^ quadrant_abs) & 1  # cos is even: unchanged by the sign of x
         # Output quadrant = floor(frac(x)*4): for x >= 0 the |x| quadrant; for x < 0 it reflects about a turn.
         if not d.negative:
@@ -669,14 +673,14 @@ class Zkf:
         # xf is the SHARED engine width (table WX/KINV/INV_TAU and the returned x_K/y_K all at 2**-xf). xf_atan2 is
         # atan2's own x/y width, driving only the divider quotient budget F; equal today, read separately to decouple.
         xf, zf = spec["xf"], spec["zf"]
-        n = spec["n_atan2"]                                    # atan2 iterations (residual-divide termination)
-        xf_div = spec["xf_atan2"]                              # divider x/y fractional width (== xf today)
+        n = spec["n_atan2"]  # atan2 iterations (residual-divide termination)
+        xf_div = spec["xf_atan2"]  # divider x/y fractional width (== xf today)
         wfrac = fmt.wfrac
 
         # The shared _zkf_pmul multiplies x_K*kinv_mag (magnitude) and Q*inv_tau (residual + bypass theta). Both
         # constants are PRE-NARROWED to WMAN+5 bits at their native scales (kinv_s, invtau_s), so every dependent shift
         # is "product-scale minus target-scale" with no fold-back. Mirrors hdl/zkf_atan2.v.
-        kinv_mag, kinv_s = spec["kinv_mag"], spec["kinv_s"]    # narrowed 1/gain (MAG product) + its native scale
+        kinv_mag, kinv_s = spec["kinv_mag"], spec["kinv_s"]  # narrowed 1/gain (MAG product) + its native scale
         inv_tau, invtau_s = spec["inv_tau"], spec["invtau_s"]  # narrowed 1/(2*pi) (residual + bypass) + native scale
 
         dy = self
@@ -688,45 +692,45 @@ class Zkf:
         ey = dy.exp - fmt.bias
 
         # Order by magnitude: den = max(|x|,|y|), num = min. The reduced octant angle a0 = atan(num/den) in [0, 1/8].
-        swap = (ey > ex) or (ey == ex and sig_y > sig_x)      # |y| > |x|
+        swap = (ey > ex) or (ey == ex and sig_y > sig_x)  # |y| > |x|
         if swap:
             den_sig, e_den, num_sig, e_num = sig_y, ey, sig_x, ex
         else:
             den_sig, e_den, num_sig, e_num = sig_x, ex, sig_y, ey
-        shift_dn = e_den - e_num                               # >= 0 (den >= num)
+        shift_dn = e_den - e_num  # >= 0 (den >= num)
         # Pre-scale the vector by 1/4 (den_fixed in [0.25, 0.5)*2**xf) so x_K = gain*hypot stays inside the engine's
         # signed width WX=xf+2; the 1/4 is folded into the magnitude exponent (+2) and the angle is invariant.
-        den_fixed = den_sig << (xf - wfrac - 2)               # in [0.25, 0.5) * 2**xf
+        den_fixed = den_sig << (xf - wfrac - 2)  # in [0.25, 0.5) * 2**xf
         num_fixed = (num_sig << (xf - wfrac - 2)) >> shift_dn  # num aligned to den's scale 2**-xf
 
         # Magnitude (always via the engine): x_K = gain*hypot(num_fixed, den_fixed); descale by 1/gain == KINV (scale
         # 2**-xf each), so M = x_K*KINV is hypot at scale 2**-2xf, then carry the den binade e_den plus the +2 of 1/4.
         x_k, y_k, z_k = _cordic_vector(spec, den_fixed, num_fixed, n)
-        mag_prod = x_k * kinv_mag                              # x_K * kinv_mag -> M at 2**-(xf+kinv_s)
-        wmag_m = 2 * xf + 4                                    # holds M for normshift (value-invariant to field width)
-        exp_off_m = (wmag_m - 1) - (xf + kinv_s) + e_den + 2   # read M back; den binade + 1/4 pre-scale undone
+        mag_prod = x_k * kinv_mag  # x_K * kinv_mag -> M at 2**-(xf+kinv_s)
+        wmag_m = 2 * xf + 4  # holds M for normshift (value-invariant to field width)
+        exp_off_m = (wmag_m - 1) - (xf + kinv_s) + e_den + 2  # read M back; den binade + 1/4 pre-scale undone
         mag_bits = _fixed_to_float_ref(fmt, 0, mag_prod, exp_off_m, wmag_m)
 
         # Quotient fractional budget F = 2*ceil(xf/2): q = floor(|y_K|*2**F/x_K) must carry >= wman significant bits.
         # The divide is truncating floor division (radix-independent), so Python //,% match the radix-4 divider exactly.
-        f_bits = 2 * ((xf_div + 1) // 2)                      # divider F from atan2's OWN xf (== xf today)
+        f_bits = 2 * ((xf_div + 1) // 2)  # divider F from atan2's OWN xf (== xf today)
 
         # theta. Bypass only the near-+x-axis tiny-theta corner; everywhere else theta sits near a boundary
         # (+-1/4, +-1/2) and the fixed-turns path (scale 2**-zf, zf >> wman) has ample relative precision.
-        tiny_shift = fmt.atan2_bypass_shift                   # single source of truth (also what the checks/sweeps use)
+        tiny_shift = fmt.atan2_bypass_shift  # single source of truth (also what the checks/sweeps use)
         if (not swap) and (sx == 0) and (shift_dn > tiny_shift):
             # theta ~= (|y|/|x|)*INV_TAU (atan(r) ~= r): one truncating divide (F frac bits + sticky), *INV_TAU, then a
             # single RTNE pack consuming the sticky. F >= wman+GUARD_DIV keeps the truncation below the round bit.
-            r = (num_sig << f_bits) // den_sig                 # floor((|y|/|x|)*2**F), F frac bits (+ possible int bit)
+            r = (num_sig << f_bits) // den_sig  # floor((|y|/|x|)*2**F), F frac bits (+ possible int bit)
             sticky = 1 if ((num_sig << f_bits) % den_sig) else 0
-            prod_j = (r * inv_tau) | sticky                    # r * inv_tau; sticky in bit 0 (RTNE)
-            wmag_b = 2 * xf + 4                                # same renormalize field as residual / magnitude paths
+            prod_j = (r * inv_tau) | sticky  # r * inv_tau; sticky in bit 0 (RTNE)
+            wmag_b = 2 * xf + 4  # same renormalize field as residual / magnitude paths
             exp_off_b = (wmag_b - 1) + (e_num - e_den) - f_bits - invtau_s  # read r*inv_tau back at 2**-(F+invtau_s)
             return Atan2Result(Zkf(fmt, _fixed_to_float_ref(fmt, sy, prod_j, exp_off_b, wmag_b)), Zkf(fmt, mag_bits))
 
         # Residual correction: a0 = z_K + (y_K/x_K)*INV_TAU at the angle scale 2**-zf. The divide is truncating (matches
         # the folded radix-4 fixed-point divider); x_K > 0 always, y_K is signed (vectoring drives y through 0).
-        qf = f_bits                                            # quotient fractional bits (>= wman+GUARD_DIV)
+        qf = f_bits  # quotient fractional bits (>= wman+GUARD_DIV)
         aq = -y_k if y_k < 0 else y_k
         q = (aq << qf) // x_k
         # q*inv_tau is at scale 2**-(qf + invtau_s); the right-shift to the angle scale 2**-zf is the difference
@@ -742,7 +746,7 @@ class Zkf:
         phi1 = (quarter - a0) if swap else a0
         theta_mag = (half - phi1) if sx else phi1
         wmag_t = zf + 2
-        exp_off_t = wmag_t - 1 - zf                            # reads theta_mag at scale 2**-zf back as itself
+        exp_off_t = wmag_t - 1 - zf  # reads theta_mag at scale 2**-zf back as itself
         theta_bits = _fixed_to_float_ref(fmt, sy, theta_mag, exp_off_t, wmag_t)
         # fold the generic negative-x-axis limit -1/2 -> +1/2
         return Atan2Result(Zkf(fmt, atan2_canon_half(fmt, theta_bits)), Zkf(fmt, mag_bits))
@@ -774,20 +778,20 @@ def atan2_special(fmt: ZkfFormat, y_bits: int, x_bits: int) -> tuple[int, int] |
     dy = Zkf(fmt, y_bits)
     dx = Zkf(fmt, x_bits)
     if dx.is_inf or dy.is_inf:
-        mag = _canonical_inf(fmt, 0)                       # hypot with any inf operand is +inf
-        if dx.is_inf and dy.is_inf:                       # diagonals: +-pi/4 (x>0) / +-3pi/4 (x<0) -> +-1/8 / +-3/8
+        mag = _canonical_inf(fmt, 0)  # hypot with any inf operand is +inf
+        if dx.is_inf and dy.is_inf:  # diagonals: +-pi/4 (x>0) / +-3pi/4 (x<0) -> +-1/8 / +-3/8
             return _atan2_turn(fmt, dy.negative, Fraction(3, 8) if dx.negative else Fraction(1, 8)), mag
-        if dy.is_inf:                                     # |y|=inf, x finite -> +-1/4 (vertical)
+        if dy.is_inf:  # |y|=inf, x finite -> +-1/4 (vertical)
             return _atan2_turn(fmt, dy.negative, Fraction(1, 4)), mag
-        if dx.negative:                                       # x=-inf -> half-turn endpoint, canonicalized to +1/2
+        if dx.negative:  # x=-inf -> half-turn endpoint, canonicalized to +1/2
             return _atan2_turn(fmt, 0 if dy.is_zero else dy.negative, Fraction(1, 2)), mag
-        return _zero(fmt), mag                             # x=+inf, y finite -> +-0 -> +0 (no -0)
+        return _zero(fmt), mag  # x=+inf, y finite -> +-0 -> +0 (no -0)
     if dx.is_zero and dy.is_zero:
-        return _zero(fmt), _zero(fmt)                       # atan2(0,0)=+0, hypot=+0
-    if dy.is_zero:                                        # y=0, x finite nonzero: +0 (x>0) / 1/2 (x<0); mag=|x|
+        return _zero(fmt), _zero(fmt)  # atan2(0,0)=+0, hypot=+0
+    if dy.is_zero:  # y=0, x finite nonzero: +0 (x>0) / 1/2 (x<0); mag=|x|
         theta = _atan2_turn(fmt, 0, Fraction(1, 2)) if dx.negative else _zero(fmt)
         return theta, (x_bits & _mask(fmt.sign_shift))
-    if dx.is_zero:                                        # x=0, y finite nonzero -> +-1/4; mag=|y|
+    if dx.is_zero:  # x=0, y finite nonzero -> +-1/4; mag=|y|
         return _atan2_turn(fmt, dy.negative, Fraction(1, 4)), (y_bits & _mask(fmt.sign_shift))
     return None
 
@@ -949,10 +953,10 @@ def _round_fraction_to_int_ties_even(value: Fraction) -> int:
 class _RoundMode(enum.IntEnum):
     """Private round-to-integer modes; the integer values match hdl/zkf_round.v and its 2-bit round_mode port."""
 
-    NEAREST_EVEN = 0   # round to nearest integer, ties to even (the IEEE default)
-    FLOOR = 1          # round toward -inf
-    CEIL = 2           # round toward +inf
-    TRUNC = 3          # round toward zero (truncate)
+    NEAREST_EVEN = 0  # round to nearest integer, ties to even (the IEEE default)
+    FLOOR = 1  # round toward -inf
+    CEIL = 2  # round toward +inf
+    TRUNC = 3  # round toward zero (truncate)
 
 
 def _round_signed_fraction_to_int(value: Fraction, mode: int) -> int:
@@ -971,6 +975,7 @@ def _round_signed_fraction_to_int(value: Fraction, mode: int) -> int:
 @functools.cache
 def _trans_specs() -> dict:
     from ._tables import trans
+
     return trans.SPECS
 
 
@@ -978,7 +983,7 @@ def _trans_spec(func: str, wman: int) -> dict:
     try:
         return _trans_specs()[(func, wman)]
     except KeyError:
-        raise KeyError(f"no {func} table for WMAN={wman}; run float/zkf_transcendental.py --emit")
+        raise KeyError(f"no {func} table for WMAN={wman}; run zkf_transcendental.py --emit")
 
 
 def _trans_sqrt2_threshold(wfrac: int) -> int:
@@ -1002,6 +1007,7 @@ def _horner_eval(coeffs_idx: list[int], w: int, rw: int) -> int:
 @functools.cache
 def _trig_specs() -> dict:
     from ._tables import trig
+
     return trig.SPECS
 
 
@@ -1009,12 +1015,10 @@ def _trig_spec(wman: int) -> dict:
     try:
         return _trig_specs()[wman]
     except KeyError:
-        raise KeyError(f"no sincos table for WMAN={wman}; run float/zkf_trig.py --emit")
+        raise KeyError(f"no sincos table for WMAN={wman}; run zkf_trig.py --emit")
 
 
-def _fixed_to_float_ref(
-    fmt: ZkfFormat, sign: int, mag: int, exp_offset: int, wmag: int, *, force_inf: int = 0
-) -> int:
+def _fixed_to_float_ref(fmt: ZkfFormat, sign: int, mag: int, exp_offset: int, wmag: int, *, force_inf: int = 0) -> int:
     """
     Mirror hdl/_zkf_fixed_to_float.v: normalize the unsigned magnitude, extract G/R/S, exp = exp_offset - count,
     and pack (RTNE). mag == 0 forces +0 unless force_inf is set.
@@ -1039,9 +1043,9 @@ def _cordic_rotate(spec: dict, z0: int, n: int) -> tuple[int, int, int]:
     kinv, lut = spec["kinv"], spec["lut"]
     x, y, z = kinv, 0, z0
     for i in range(n):
-        if z < 0:                                        # sigma = -1
+        if z < 0:  # sigma = -1
             x, y, z = x + (y >> i), y - (x >> i), z + lut[i]
-        else:                                            # sigma = +1
+        else:  # sigma = +1
             x, y, z = x - (y >> i), y + (x >> i), z - lut[i]
     return x, y, z
 
@@ -1059,9 +1063,9 @@ def _cordic_vector(spec: dict, x0: int, y0: int, n: int) -> tuple[int, int, int]
     y = bits_to_signed(y0 & _mask(xw), xw)
     z = 0
     for i in range(n):
-        if y >= 0:                                       # sigma = -1 (drive y down): mirrors neg = ~y[msb]
+        if y >= 0:  # sigma = -1 (drive y down): mirrors neg = ~y[msb]
             nx, ny, nz = x + (y >> i), y - (x >> i), z + lut[i]
-        else:                                            # sigma = +1
+        else:  # sigma = +1
             nx, ny, nz = x - (y >> i), y + (x >> i), z - lut[i]
         x = bits_to_signed(nx & _mask(xw), xw)
         y = bits_to_signed(ny & _mask(xw), xw)

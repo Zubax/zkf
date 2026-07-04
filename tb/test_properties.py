@@ -72,8 +72,9 @@ async def drive_and_capture(dut, a: int, b: int, stages: int, op_sub: int = 0) -
     return int(dut.y.value)
 
 
-def infer_stages(dut, stage_product: int = 0, stage_decode: int = 0, stage_align: int = 0,
-                 stage_output: int = 0) -> int:
+def infer_stages(
+    dut, stage_product: int = 0, stage_decode: int = 0, stage_align: int = 0, stage_output: int = 0
+) -> int:
     """
     Pipeline depth per toplevel (knobs hardcoded): zkf_mul has STAGE_PRODUCT; zkf_add/zkf_addsub have
     STAGE_DECODE and STAGE_ALIGN; all carry STAGE_OUTPUT (0=combinational, 1=registered).
@@ -93,8 +94,7 @@ async def commutativity(dut) -> None:
     check_width("a", dut.a, fmt.wfull, context)
     check_width("b", dut.b, fmt.wfull, context)
     check_width("y", dut.y, fmt.wfull, context)
-    stages = infer_stages(dut, context.stage_product, context.stage_decode, context.stage_align,
-                          context.stage_output)
+    stages = infer_stages(dut, context.stage_product, context.stage_decode, context.stage_align, context.stage_output)
 
     start_clock(dut)
     await reset_dut(dut, stages)
@@ -112,31 +112,29 @@ async def commutativity(dut) -> None:
                     f"a={hex_bits(a, fmt.wfull)} b={hex_bits(b, fmt.wfull)} "
                     f"y_ab={hex_bits(y_ab, fmt.wfull)} y_ba={hex_bits(y_ba, fmt.wfull)}"
                 )
-    assert failures == 0, (
-        f"{context.prefix()} found {failures} commutativity violation(s); first five logged above"
-    )
+    assert failures == 0, f"{context.prefix()} found {failures} commutativity violation(s); first five logged above"
 
 
 def special_operands(fmt: ZkfFormat) -> list[int]:
     """Corner operands valid for any WEXP >= 2 (directed_numbers needs WEXP >= 3)."""
     ops = [
-        zero(fmt),                                              # +0
-        pack_bits(fmt, 1, 0, 0),                                # -0 (non-canonical)
-        pack_bits(fmt, 0, 0, min(fmt.frac_mask, 1)),            # +0 with stray fraction
-        normal(fmt, 0, fmt.bias, 0),                            # +1
-        normal(fmt, 1, fmt.bias, 0),                            # -1
-        normal(fmt, 0, 1, 0),                                   # +min_normal
-        normal(fmt, 1, 1, 0),                                   # -min_normal
-        normal(fmt, 0, fmt.exp_max_finite, fmt.frac_mask),      # +max_finite
-        normal(fmt, 1, fmt.exp_max_finite, fmt.frac_mask),      # -max_finite
-        canonical_inf(fmt, 0),                                  # +inf
-        canonical_inf(fmt, 1),                                  # -inf
+        zero(fmt),  # +0
+        pack_bits(fmt, 1, 0, 0),  # -0 (non-canonical)
+        pack_bits(fmt, 0, 0, min(fmt.frac_mask, 1)),  # +0 with stray fraction
+        normal(fmt, 0, fmt.bias, 0),  # +1
+        normal(fmt, 1, fmt.bias, 0),  # -1
+        normal(fmt, 0, 1, 0),  # +min_normal
+        normal(fmt, 1, 1, 0),  # -min_normal
+        normal(fmt, 0, fmt.exp_max_finite, fmt.frac_mask),  # +max_finite
+        normal(fmt, 1, fmt.exp_max_finite, fmt.frac_mask),  # -max_finite
+        canonical_inf(fmt, 0),  # +inf
+        canonical_inf(fmt, 1),  # -inf
         pack_bits(fmt, 0, fmt.exp_inf, min(fmt.frac_mask, 1)),  # +inf (non-canonical)
-        pack_bits(fmt, 1, fmt.exp_inf, fmt.frac_mask),          # -inf (non-canonical)
+        pack_bits(fmt, 1, fmt.exp_inf, fmt.frac_mask),  # -inf (non-canonical)
     ]
     if fmt.wfrac >= 2:
         ops.append(normal(fmt, 0, fmt.bias, 1 << (fmt.wfrac - 1)))  # +1.5
-        ops.append(normal(fmt, 1, fmt.bias + 1, 1))                # ~-2
+        ops.append(normal(fmt, 1, fmt.bias + 1, 1))  # ~-2
     return ops
 
 
@@ -151,8 +149,7 @@ async def algebraic_identities(dut) -> None:
     check_width("a", dut.a, fmt.wfull, context)
     check_width("b", dut.b, fmt.wfull, context)
     check_width("y", dut.y, fmt.wfull, context)
-    stages = infer_stages(dut, context.stage_product, context.stage_decode, context.stage_align,
-                          context.stage_output)
+    stages = infer_stages(dut, context.stage_product, context.stage_decode, context.stage_align, context.stage_output)
 
     name = str(dut._name)
     is_mul = "mul" in name
@@ -203,8 +200,7 @@ async def algebraic_identities(dut) -> None:
             await expect("mul_sign (-a)*b==-(a*b)", (-fmt.wrap(a)).bits, b, 0, neg_or_zero(y_ab))
         if is_add or is_addsub:
             y_ab = await drive_and_capture(dut, a, b, stages, 0)
-            await expect("add_neg (-a)+(-b)==-(a+b)", (-fmt.wrap(a)).bits, (-fmt.wrap(b)).bits, 0,
-                         neg_or_zero(y_ab))
+            await expect("add_neg (-a)+(-b)==-(a+b)", (-fmt.wrap(a)).bits, (-fmt.wrap(b)).bits, 0, neg_or_zero(y_ab))
         if is_addsub and has_sub:
             y_addnegb = await drive_and_capture(dut, a, (-fmt.wrap(b)).bits, stages, 0)
             await expect("sub_via_neg a-b==a+(-b)", a, b, 1, y_addnegb)

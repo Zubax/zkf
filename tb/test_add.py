@@ -107,7 +107,9 @@ def focused_directed(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     if exp_max > 2 and sat_diff >= 1:
         small_exp = max(1, exp_max - sat_diff)
         if small_exp < exp_max:
-            cases.append(("far_saturating_align_same", normal(fmt, 0, exp_max, 0), normal(fmt, 0, small_exp, frac_mask)))
+            cases.append(
+                ("far_saturating_align_same", normal(fmt, 0, exp_max, 0), normal(fmt, 0, small_exp, frac_mask))
+            )
             cases.append(
                 ("far_saturating_align_opposite", normal(fmt, 0, exp_max, 0), normal(fmt, 1, small_exp, frac_mask))
             )
@@ -391,6 +393,6 @@ async def add_runtime_cases(dut) -> None:
 
     await scoreboard.reset(4, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
-    assert scoreboard.checked == len(cases), (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"
-    )
+    assert scoreboard.checked == len(
+        cases
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

@@ -43,3 +43,10 @@ hdr_log
 *.history
 *.lock
 .claude/worktrees
+
+# Python / nox tooling
+.nox/
+.venv/
+venv/
+*.egg-info/
+.idea/

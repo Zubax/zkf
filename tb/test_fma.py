@@ -164,8 +164,11 @@ def random_case(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int, int
         # Addend near the product exponent with an independent fraction/sign.
         a = random_normal(fmt, rng)
         b = random_normal(fmt, rng)
-        pe = int(np.clip(((a >> fmt.wfrac) & fmt.exp_inf) + ((b >> fmt.wfrac) & fmt.exp_inf) - fmt.bias,
-                         1, fmt.exp_max_finite))
+        pe = int(
+            np.clip(
+                ((a >> fmt.wfrac) & fmt.exp_inf) + ((b >> fmt.wfrac) & fmt.exp_inf) - fmt.bias, 1, fmt.exp_max_finite
+            )
+        )
         c = normal(fmt, int(rng.integers(0, 2)), pe, int(rng.integers(0, fmt.frac_mask + 1)))
         return a, b, c
     if mode == 8:
@@ -261,6 +264,6 @@ async def fma_runtime_cases(dut) -> None:
 
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
-    assert scoreboard.checked == len(cases), (
-        f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"
-    )
+    assert scoreboard.checked == len(
+        cases
+    ), f"{context.prefix()} checked {scoreboard.checked} outputs, expected {len(cases)}"

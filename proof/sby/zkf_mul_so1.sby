@@ -18,10 +18,10 @@ chparam -set WEXP 5 -set WMAN 10 -set STAGE_OUTPUT 1 zkf_mul_eq
 prep -top zkf_mul_eq
 
 [files]
-float/hdl/_zkf_pack.v
-float/hdl/zkf_pipe.v
-float/hdl/_zkf_pmul.v
-float/hdl/zkf_mul.v
-float/proof/refs/zkf_pack_ref.v
-float/proof/refs/zkf_mul_ref.v
-float/proof/harness/zkf_mul_eq.v
+hdl/_zkf_pack.v
+hdl/zkf_pipe.v
+hdl/_zkf_pmul.v
+hdl/zkf_mul.v
+proof/refs/zkf_pack_ref.v
+proof/refs/zkf_mul_ref.v
+proof/harness/zkf_mul_eq.v

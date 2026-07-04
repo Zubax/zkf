@@ -13,5 +13,5 @@ chparam -set WEXP 6 -set WMAN 18 zkf_abs_eq
 prep -top zkf_abs_eq
 
 [files]
-float/hdl/zkf_abs.v
-float/proof/harness/zkf_abs_eq.v
+hdl/zkf_abs.v
+proof/harness/zkf_abs_eq.v
