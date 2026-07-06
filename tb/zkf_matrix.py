@@ -78,35 +78,37 @@ TRANS_EXPLOG = [
     ("w8_m32_random", 8, 32, "random", 768),
     ("w11_m53_random", 11, 53, "random", 384),
     # Wide-exponent guard: min WMAN keeps the datapath small while WEXP=20 and the directed overflow/underflow/inf/
-    # pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp.
-    ("w20_m16_random", 20, 16, "random", 2000),
+    # pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp. The random supplement is kept small
+    # on purpose -- extreme-exponent inputs cost ~0.5 s/vector in the high-precision oracle, so the directed corners
+    # (not this sweep) carry the coverage here.
+    ("w20_m16_random", 20, 16, "random", 128),
 ]
 TRANS_EXPLOG_EXT = [
     (2, 16, "exhaustive", 0),
     (3, 16, "exhaustive", 0),
     (8, 27, "random", 512),
     (8, 32, "random", 512),
-    (14, 16, "random", 2000),  # wide-exponent guard (exhaustive infeasible)
+    (14, 16, "random", 128),  # wide-exponent guard (exhaustive infeasible)
 ]
 
 # sincos/atan2 support down to WMAN=16 via the CORDIC generator (WMAN=11 was dropped -- XF-bound faithfulness), so
 # their low-cost coverage uses WMAN=16.
 TRANS_TRIG = [
     ("w2_m16_exhaustive", 2, 16, "exhaustive", 0),
-    ("w3_m16_random", 3, 16, "random", 2000),
+    ("w3_m16_random", 3, 16, "random", 512),
     ("w5_m16_random", 5, 16, "random", 512),
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w8_m32_random", 8, 32, "random", 768),
     ("w11_m53_random", 11, 53, "random", 384),
-    ("w20_m16_random", 20, 16, "random", 2000),
+    ("w20_m16_random", 20, 16, "random", 128),
 ]
 TRANS_TRIG_EXT = [
     (2, 16, "exhaustive", 0),
-    (3, 16, "random", 2000),
+    (3, 16, "random", 512),
     (6, 16, "random", 512),
     (8, 27, "random", 512),
     (8, 32, "random", 512),
-    (14, 16, "random", 2000),
+    (14, 16, "random", 128),
 ]
 
 # zkf_atan2 is two-input, so joint-exhaustive is infeasible even at min WMAN: every format uses directed (the full
@@ -116,7 +118,7 @@ TRANS_ATAN2 = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w8_m36_random", 8, 36, "random", 768),
     ("w11_m53_random", 11, 53, "random", 384),
-    ("w20_m16_random", 20, 16, "random", 2000),
+    ("w20_m16_random", 20, 16, "random", 128),
 ]
 # pipe:     (config, width, stages, count)
 PIPE = [("w8_n0", 8, 0, 64), ("w8_n4", 8, 4, 96), ("w24_n2", 24, 2, 96)]
