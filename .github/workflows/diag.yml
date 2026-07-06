@@ -1,6 +1,9 @@
 name: diag
 on: [push]
 
+env:
+  COCOTB_IGNORE_PYTHON_REQUIRES: "1"
+
 concurrency:
   group: diag-${{ github.ref }}
   cancel-in-progress: true
