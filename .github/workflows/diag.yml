@@ -21,13 +21,13 @@ jobs:
       - uses: actions/checkout@v7
       - run: |
           set +e
-          echo "===== VERSIONS ====="
-          iverilog -V 2>&1 | head -1
-          python3 -m pip install --break-system-packages -q -e '.[test]' >/tmp/pip.log 2>&1; echo "pip rc=$? $(tail -1 /tmp/pip.log)"
-          python3 -c "import numpy,mpmath,cocotb; import mpmath.libmp as L; print('numpy',numpy.__version__,'| mpmath',mpmath.__version__,'backend',L.BACKEND,'| cocotb',cocotb.__version__)"
-          python3 -c "import gmpy2;print('gmpy2',gmpy2.version())" 2>&1 | head -1
-          echo "===== atan2-icarus-w2_m16_random (build vs sim) ====="
-          timeout 500 python3 - <<'PY'
+          echo "===== nox-style venv (matches the real tests job) ====="
+          python3 -m virtualenv /tmp/v 2>/dev/null || virtualenv /tmp/v 2>/dev/null || python3 -m venv /tmp/v
+          source /tmp/v/bin/activate
+          pip install -q -e '.[test]' >/tmp/pip.log 2>&1; echo "pip rc=$? $(tail -1 /tmp/pip.log)"
+          python -c "import mpmath,numpy,cocotb; import mpmath.libmp as L; print('VENV: mpmath',mpmath.__version__,'backend',L.BACKEND,'| numpy',numpy.__version__,'| cocotb',cocotb.__version__)"
+          echo "===== atan2-icarus-w2_m16_random in the venv (build vs sim vs case-gen) ====="
+          timeout 500 python - <<'PY'
           import time, sys, shutil
           sys.path[:0] = ["tb", "."]
           import test_float_matrix as T
@@ -36,12 +36,16 @@ jobs:
           from cocotb_tools.runner import get_runner
           m = next(r for r in build_matrix() if r.sim=="icarus" and "atan2" in r.target and r.id.endswith("w2_m16_random"))
           print("CASE", m.id, "count", dict(m.plus).get("ZKF_COUNT"), flush=True)
+          # time the pure-python case generation (oracle) alone
+          import test_atan2, zkf_params
+          from zkf import ZkfFormat
+          fmt = ZkfFormat(*[int(v) for n,v in m.vlog if n in ("WEXP","WMAN")][:2]) if False else ZkfFormat(2,16)
+          seed = int(dict(m.plus)["ZKF_SEED"], 0) if isinstance(dict(m.plus)["ZKF_SEED"], str) else int(dict(m.plus)["ZKF_SEED"])
+          t=time.time(); cases = test_atan2.cases_for(fmt, "random", seed, int(dict(m.plus)["ZKF_COUNT"])); print("CASEGEN_s=", round(time.time()-t,1), "ncases", len(cases), flush=True)
           spec = TARGETS[T._target_base(m)]
           bd = T.REPO_ROOT/"build"/"mon"; shutil.rmtree(bd, ignore_errors=True)
           r = get_runner("icarus")
-          t=time.time(); r.build(sources=[T.REPO_ROOT/s for s in spec.sources()], hdl_toplevel=spec.toplevel, defines={"SIMULATION":1,**dict(m.defines)}, parameters=dict(m.vlog), build_args=T.ICARUS_BUILD_ARGS, build_dir=str(bd), clean=True, timescale=("1ns","1ps"))
-          print("BUILD_s=", round(time.time()-t,1), flush=True)
-          t=time.time(); r.test(test_module=spec.cocotb_module, hdl_toplevel=spec.toplevel, test_dir=str(T.TB_DIR), plusargs=[f"+{n}={v}" for n,v in m.plus], extra_env=T.SIM_ENV, build_dir=str(bd), results_xml=str(bd/"results.xml"))
-          print("TEST_s=", round(time.time()-t,1), flush=True)
+          t=time.time(); r.build(sources=[T.REPO_ROOT/s for s in spec.sources()], hdl_toplevel=spec.toplevel, defines={"SIMULATION":1,**dict(m.defines)}, parameters=dict(m.vlog), build_args=T.ICARUS_BUILD_ARGS, build_dir=str(bd), clean=True, timescale=("1ns","1ps")); print("BUILD_s=", round(time.time()-t,1), flush=True)
+          t=time.time(); r.test(test_module=spec.cocotb_module, hdl_toplevel=spec.toplevel, test_dir=str(T.TB_DIR), plusargs=[f"+{n}={v}" for n,v in m.plus], extra_env=T.SIM_ENV, build_dir=str(bd), results_xml=str(bd/"results.xml")); print("TEST_s=", round(time.time()-t,1), flush=True)
           PY
           echo "exit=$? (124=timeout)"
