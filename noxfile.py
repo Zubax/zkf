@@ -3,6 +3,7 @@ Central verification entry point for the Zubax Kulibin Float (ZKF) engine.
 """
 
 from pathlib import Path
+import os
 import shutil
 
 import nox
@@ -11,8 +12,11 @@ nox.options.reuse_existing_virtualenvs = True
 
 BLACK_TARGETS = ("zkf", "tb", "synth", "proof", "noxfile.py", "tools")
 
-# worksteal load-balances the heterogeneous-duration cocotb matrix across the xdist workers.
-PYTEST_DIST = ("-n", "auto", "--dist", "worksteal")
+# Each cocotb case runs the simulator and its Python driver as two tight-handoff threads that busy-wait on each other,
+# so a single case pins ~2 cores. `-n auto` (workers == cores) therefore double-books every core; the contended
+# handoffs then thrash and a few cases spin for hours (the ~6h tail). Cap workers near half the CPU count so each case
+# gets its two cores. worksteal load-balances the heterogeneous-duration matrix across them.
+PYTEST_DIST = ("-n", str(max(1, (os.cpu_count() or 2) // 2)), "--dist", "worksteal")
 
 
 @nox.session(python=False, default=False)
