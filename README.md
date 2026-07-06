@@ -1,5 +1,8 @@
 # Zubax Kulibin floating point
 
+[![PyPI](https://img.shields.io/pypi/v/zkf?logo=pypi&color=ffff00)](https://pypi.org/project/zkf/)
+[![Forum](https://img.shields.io/discourse/https/forum.zubax.com/users.svg?logo=discourse&color=ff0000)](https://forum.zubax.com)
+
 A small and FPGA-friendly floating point format that is similar to IEEE 754 but intentionally omits support for NaN,
 subnormals, exceptions, and rounding modes other than round-to-nearest, ties-to-even (RNTE).
 Only one canonical positive zero representation exists.
@@ -10,17 +13,13 @@ See how ZKF beats other floating-point libraries in <https://zubax.github.io/fpg
 
 ## Usage
 
-`zkf` ships on PyPI and is equally usable by direct RTL copy-paste; both paths are first-class.
+`zkf` ships on PyPI and by direct RTL copy-paste; both are first-class.
 
-- **As a Python dependency** (the main use case for projects that generate RTL): `pip install zkf`, then
-  `zkf.get_rtl()` returns every Verilog module as a `{path: source}` mapping, keyed by path relative to `zkf/rtl/`
-  (e.g. `zkf_add.v`, `_tables/_zkf_exp2_m18.v`). `import zkf` is pure standard library; the bit-exact value model
-  (`ZkfFormat`, `Zkf`, …) is re-exported from the package root and equals the RTL output bit-for-bit, so it doubles
-  as a golden emulator. The optional oracles in `zkf.oracle` need `pip install zkf[oracle]` (numpy/mpmath).
-- **By copy-paste / submodule**: the `zkf_*` modules under `zkf/rtl/` implement the operators; drop the directory
-  into your project tree. Private helpers are named `_zkf_*`.
+- As Python dependency: `pip install zkf`, then `zkf.get_rtl()` returns `{path: source}` for every module,
+  keyed relative to `zkf/rtl/`.
+- Copy-paste/submodule: add the Verilog modules under `zkf/rtl/` to your project.
 
-Everything else in the repo is verification scaffolding and is not a shippable artifact.
+Everything else is verification scaffolding, not a shippable artifact.
 
 Most modules are zero-bubble throughput-1 pipelines; only those that implement computationally heavy functions
 are FSM-based and offer limited throughput.

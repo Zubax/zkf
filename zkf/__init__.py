@@ -19,12 +19,26 @@ from ._core import (
     ZkfFormat as ZkfFormat,
 )
 
+__all__ = [
+    "Atan2Result",
+    "CmpResult",
+    "DivResult",
+    "Log2Result",
+    "SinCos",
+    "Zkf",
+    "ZkfFormat",
+    "get_rtl",
+    "__version__",
+]
+
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
 __version__ = "0.1.0"
 
 
 @cache
-def _load_rtl() -> Mapping[str, str]:
+def get_rtl() -> Mapping[str, str]:
+    """Every packaged RTL module as a read-only mapping from POSIX path relative to ``zkf/rtl``
+    (e.g. ``zkf_add.v``, ``_tables/_zkf_exp2_m18.v``) to its Verilog source text."""
     out: dict[str, str] = {}
 
     def walk(node: Traversable, prefix: str) -> None:
@@ -37,9 +51,3 @@ def _load_rtl() -> Mapping[str, str]:
 
     walk(files(__name__) / "rtl", "")
     return MappingProxyType(dict(sorted(out.items())))
-
-
-def get_rtl() -> Mapping[str, str]:
-    """Every packaged RTL module as a read-only mapping from POSIX path relative to ``zkf/rtl``
-    (e.g. ``zkf_add.v``, ``_tables/_zkf_exp2_m18.v``) to its Verilog source text."""
-    return _load_rtl()

@@ -20,6 +20,7 @@ Python data table; ``--check`` verifies both against an ``mpmath`` ground truth 
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 from dataclasses import dataclass, field
 from math import ceil
@@ -618,6 +619,10 @@ def _report(all_specs: dict[tuple[str, int], Spec]) -> None:
     )
 
 
+# fork lets the pool inherit the freshly-emitted tables; fall back to the default context where fork is unavailable.
+_MP_CONTEXT = multiprocessing.get_context("fork" if "fork" in multiprocessing.get_all_start_methods() else None)
+
+
 # The --check sweeps below run one worker process per (format[/operator]) case over a fork pool, so the ~14M mpmath
 # evaluations spread across all cores. Each unit regenerates its own inputs (random draws are unseeded either way) and
 # returns only its summary, keeping IPC tiny; _ulp_diff and the freshly-emitted tables come from the forked parent.
@@ -718,7 +723,6 @@ def _check() -> None:
     """End-to-end accuracy check vs mpmath via the bit-exact model (imports only the public zkf package)."""
     import sys
     from concurrent.futures import ProcessPoolExecutor
-    from multiprocessing import get_context
 
     sys.path.insert(0, str(REPO))
     # zkf is first-imported here, after --emit has written the tables, so the fork pool below inherits the
@@ -726,8 +730,7 @@ def _check() -> None:
     import zkf  # noqa: F401
     import zkf.oracle  # noqa: F401
 
-    ctx = get_context("fork")
-    with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=ctx) as ex:
+    with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=_MP_CONTEXT) as ex:
         print("end-to-end correct-rounding check (model vs mpmath):")
         # 2/16 and 3/16 run exhaustive; wider formats random. Covers all of SUPPORTED_WMAN.
         cases = [(2, 16), (3, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53)]

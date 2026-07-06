@@ -17,10 +17,10 @@ classifiers = [
     "Intended Audience :: Science/Research",
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
+    "Typing :: Typed",
 ]
 
 [project.optional-dependencies]
-# The zkf value model and get_rtl() are pure standard library; numpy/mpmath are only needed by the zkf.oracle submodule.
 oracle = ["numpy~=2.4", "mpmath~=1.4"]
 test = [
     "zkf[oracle]",
@@ -32,19 +32,17 @@ test = [
 [project.urls]
 Repository = "https://github.com/Zubax/zkf"
 
-# __version__ in zkf/__init__.py is the single source of truth; setuptools reads the literal statically (no import).
 [tool.setuptools.dynamic]
 version = { attr = "zkf.__version__" }
 
-# namespaces=false keeps zkf/rtl (no __init__.py) as package DATA rather than a PEP 420 namespace package.
+# namespaces=false keeps zkf/rtl (no __init__.py) as data, not a PEP 420 namespace package.
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["zkf", "zkf.*"]
 namespaces = false
 
-# Ship the RTL Verilog as package data so get_rtl() and consumers can reach it from an installed wheel.
 [tool.setuptools.package-data]
-zkf = ["rtl/*.v", "rtl/_tables/*.v", "py.typed"]
+zkf = ["rtl/**/*.v", "py.typed"]
 
 [tool.pytest.ini_options]
 # Only the float matrix orchestrator is collected here; the cocotb test_*.py modules run inside a simulator,

@@ -2,7 +2,7 @@ name: Release
 
 on:
   workflow_run:
-    workflows: ["CI"]
+    workflows: ["CI"] # must match ci.yml's `name:`; renaming CI silently disables releases
     types: [completed]
     branches: [main]
 

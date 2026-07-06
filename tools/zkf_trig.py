@@ -23,6 +23,7 @@ against an ``mpmath`` ground truth (<= 1 ULP).
 from __future__ import annotations
 
 import argparse
+import multiprocessing
 import os
 from dataclasses import dataclass, field
 from math import ceil
@@ -423,6 +424,10 @@ def _report(all_specs: dict[int, Spec]) -> None:
         print(f"{wman:>4} {s.n:>4} {s.xf:>4} {s.xw:>4} {s.zf:>4} {s.zw:>4} {s.wt:>4} {lut_bits:>8}")
 
 
+# fork lets the pool inherit the freshly-emitted tables; fall back to the default context where fork is unavailable.
+_MP_CONTEXT = multiprocessing.get_context("fork" if "fork" in multiprocessing.get_all_start_methods() else None)
+
+
 # One worker process per (format) case over a fork pool spreads the mpmath sweep across all cores. Each unit
 # regenerates its own inputs (random draws are unseeded either way) and returns only its summary; the helper
 # functions and freshly-emitted tables come from the forked parent.
@@ -455,7 +460,6 @@ def _check() -> None:
     """End-to-end faithful-rounding check vs mpmath via the bit-exact model (imports only the public zkf package)."""
     import sys
     from concurrent.futures import ProcessPoolExecutor
-    from multiprocessing import get_context
 
     sys.path.insert(0, str(REPO))
     # zkf is first-imported here, after --emit has written the tables, so the fork pool inherits the freshly-emitted
@@ -466,7 +470,7 @@ def _check() -> None:
     print("end-to-end faithful-rounding check (model vs mpmath):")
     cases = [(6, 16), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
     sincos_cases = [(we, wm) for we, wm in cases if wm in SUPPORTED_WMAN]
-    with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=get_context("fork")) as ex:
+    with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=_MP_CONTEXT) as ex:
         for (wexp, wman), (worst_sin, worst_cos, nq, count, tag, bad) in zip(
             sincos_cases, ex.map(_sincos_unit, sincos_cases)
         ):
@@ -655,7 +659,6 @@ def _check_atan2() -> None:
     """End-to-end faithful-rounding check for zkf_atan2 (theta and mag) vs mpmath via the bit-exact model."""
     import sys
     from concurrent.futures import ProcessPoolExecutor
-    from multiprocessing import get_context
 
     sys.path.insert(0, str(REPO))
     # zkf is first-imported here, after --emit has written the tables, so the fork pool inherits the freshly-emitted
@@ -666,7 +669,7 @@ def _check_atan2() -> None:
     print("atan2 end-to-end faithful-rounding check (model vs mpmath):")
     cases = [(6, 16), (6, 18), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
     atan2_cases = [(we, wm) for we, wm in cases if wm in SUPPORTED_WMAN]
-    with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=get_context("fork")) as ex:
+    with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=_MP_CONTEXT) as ex:
         for (wexp, wman), (worst_t, worst_m, count, bad) in zip(atan2_cases, ex.map(_atan2_unit, atan2_cases)):
             ok = worst_t <= 1 and worst_m <= 1
             print(
