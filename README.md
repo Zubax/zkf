@@ -154,7 +154,7 @@ representation.
     asin(x)             = atan2(x, sqrt(1 − x⋅x))      ; x ∈ [-1,+1]
     acos(x)             = atan2(sqrt(1 − x⋅x), x)      ; x ∈ [-1,+1]
     h                   = max(abs(x), abs(y))
-    hypot(x,y)          = h=0 ? 0 : !is_finite(h) ? +∞ : h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))
+    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))
 
     min(a,b), max(a,b)  = sort(a,b)
     clamp(x, lo, hi)    = min(max(x, lo), hi)
