@@ -11,6 +11,9 @@ nox.options.reuse_existing_virtualenvs = True
 
 BLACK_TARGETS = ("zkf", "tb", "synth", "proof", "noxfile.py", "tools")
 
+# worksteal load-balances the heterogeneous-duration cocotb matrix across the xdist workers.
+PYTEST_DIST = ("-n", "auto", "--dist", "worksteal")
+
 
 @nox.session(python=False, default=False)
 def clean(session):
@@ -42,7 +45,7 @@ def tests(session: nox.Session) -> None:
     session.install("-e", ".[test]")
     session.run("python", "tb/test_zkf_model_layout.py")
     session.run("python", "tb/zkf_pmul_check.py")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-n", "auto", *session.posargs)
+    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", *PYTEST_DIST, *session.posargs)
     session.run(
         "python",
         "tb/zkf_coverage.py",
@@ -58,19 +61,19 @@ def tests(session: nox.Session) -> None:
 def fast(session: nox.Session) -> None:
     session.install("-e", ".[test]")
     session.run("python", "tb/test_zkf_model_layout.py")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "fast", "-n", "auto", *session.posargs)
+    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "fast", *PYTEST_DIST, *session.posargs)
 
 
 @nox.session
 def properties(session: nox.Session) -> None:
     session.install("-e", ".[test]")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "properties", "-n", "auto", *session.posargs)
+    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "properties", *PYTEST_DIST, *session.posargs)
 
 
 @nox.session
 def deep(session: nox.Session) -> None:
     session.install("-e", ".[test]")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "deep", "-n", "auto", *session.posargs)
+    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "deep", *PYTEST_DIST, *session.posargs)
     session.run(
         "python",
         "tb/zkf_coverage.py",

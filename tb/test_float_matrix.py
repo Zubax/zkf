@@ -20,7 +20,12 @@ import sys
 from pathlib import Path
 
 import pytest
+import cocotb_tools.runner as _cocotb_runner
 from cocotb_tools.runner import get_runner
+
+# xdist provides case-level parallelism; keep each Verilator build single-threaded so workers*make-j does not
+# oversubscribe the runner -- the dominant cause of CFS-throttled, worse-than-serial CI wall time.
+_cocotb_runner.MAX_PARALLEL_BUILD_JOBS = 1
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 TB_DIR = REPO_ROOT / "tb"

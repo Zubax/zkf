@@ -26,7 +26,7 @@ test = [
     "zkf[oracle]",
     "cocotb~=2.0",
     "pytest>=8",
-    "pytest-xdist>=3", # parallel workers for the verification matrix (-n auto)
+    "pytest-xdist>=3.2", # 3.2: worksteal dist mode
 ]
 
 [project.urls]
