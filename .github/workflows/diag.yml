@@ -18,40 +18,23 @@ jobs:
       - uses: actions/checkout@v7
       - run: |
           set +e
-          echo "===== ENV ====="
-          nproc
-          python3 -c "import os;print('affinity',len(os.sched_getaffinity(0)))"
-          echo "----- hostname resolution (SLIRP DNS hypothesis) -----"
-          hostname
-          time getent hosts "$(hostname)"; echo "getent_exit=$?"
-          time python3 -c "import socket,time;t=time.time();print('fqdn=',socket.getfqdn());print('getfqdn_s=',round(time.time()-t,3))"
-          echo "===== VENV + INSTALL (like nox) ====="
-          python3 -m virtualenv /tmp/venv 2>/dev/null || virtualenv /tmp/venv 2>/dev/null || python3 -m venv /tmp/venv
-          source /tmp/venv/bin/activate
-          python -V
-          pip install -q -e '.[test]' >/tmp/pip.log 2>&1; echo "pip: rc=$? $(tail -1 /tmp/pip.log)"
-          pip install -q py-spy >/tmp/pyspy.log 2>&1; echo "py-spy: $(command -v py-spy || echo MISSING)"
-          echo "===== SINGLE VERILATOR CASE (build+run wall) ====="
-          python - <<'PY'
-          import time, sys
-          sys.path[:0] = ["tb", "."]
-          import test_float_matrix as T
-          from zkf_matrix import build_matrix
-          m = next(r for r in build_matrix() if r.sim == "verilator")
-          t = time.time(); T._run_cocotb(m); print("SINGLE verilator wall_s=", round(time.time() - t, 2), m.id)
-          PY
-          echo "===== PARALLEL SLICE (-n 16) + STACK SAMPLER ====="
-          ( for i in $(seq 1 15); do
-              echo "=== sample $i t=$(date +%T) load1=$(cut -d' ' -f1 /proc/loadavg) ==="
+          echo "== env =="; nproc; python3 -c "import os;print('affinity',len(os.sched_getaffinity(0)))"
+          python3 -m pip install --break-system-packages -q py-spy 2>/dev/null
+          echo "py-spy: $(command -v py-spy || echo none)"
+          echo "== background sampler =="
+          ( for i in $(seq 1 60); do
+              echo "=== sample $i t=$(date +%T) load1=$(cut -d' ' -f1 /proc/loadavg) R_threads=$(ps -eL -o stat= | grep -c '^R') ==="
               echo "active: cc1plus=$(pgrep -xc cc1plus) verilator_bin=$(pgrep -xc verilator_bin) vvp=$(pgrep -xc vvp) iverilog=$(pgrep -xc iverilog)"
-              for p in $(ps -eo pid,stat,comm | awk '$2 ~ /^S/ && $3=="python"{print $1}' | head -4); do
-                echo "--- worker $p (stat=$(ps -o stat= -p $p)) kstack ---"
-                cat /proc/$p/stack 2>/dev/null | head -5
-                if command -v py-spy >/dev/null; then echo "--- $p pystack ---"; py-spy dump --pid $p 2>&1 | sed -n '1,18p'; fi
+              for p in $(ps -eo pid,stat,comm | awk '$2 ~ /^[SD]/ && $3 ~ /python/ {print $1}' | head -6); do
+                echo "--- py $p stat=$(ps -o stat= -p $p 2>/dev/null) wchan=$(cat /proc/$p/wchan 2>/dev/null) ---"
+                cat /proc/$p/stack 2>/dev/null | head -4
+                if command -v py-spy >/dev/null; then py-spy dump --pid $p --nonblocking 2>&1 | grep -aE 'Thread 0x|\.py:|in ' | sed -n '1,12p'; fi
               done
               sleep 4
-            done ) &
+            done ) > /tmp/sampler.log 2>&1 &
           SAMP=$!
-          FLOAT_SHARD=1/20 timeout 80 python -m pytest tb/test_float_matrix.py -n 16 --dist worksteal -p no:cacheprovider -q >/tmp/slice.log 2>&1
+          echo "== nox tests (sharded 1/20, timeboxed) =="
+          FLOAT_SHARD=1/20 timeout 245 nox -s tests > /tmp/nox.log 2>&1; echo "nox rc=$?"
           kill $SAMP 2>/dev/null; wait 2>/dev/null
-          echo "===== SLICE TAIL ====="; tail -15 /tmp/slice.log
+          echo "===== SAMPLER (tail) ====="; tail -140 /tmp/sampler.log
+          echo "===== NOX TAIL ====="; tail -25 /tmp/nox.log
