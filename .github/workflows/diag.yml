@@ -23,13 +23,12 @@ jobs:
           set +e
           echo "===== VERSIONS ====="
           iverilog -V 2>&1 | head -1
-          python3 -m venv /tmp/v && source /tmp/v/bin/activate
-          pip install -q -e '.[test]' >/tmp/pip.log 2>&1; echo "pip rc=$? $(tail -1 /tmp/pip.log)"
-          python -c "import numpy,mpmath,cocotb; import mpmath.libmp as L; print('numpy',numpy.__version__,'| mpmath',mpmath.__version__,'backend',L.BACKEND,'| cocotb',cocotb.__version__)"
-          python -c "import gmpy2;print('gmpy2',gmpy2.version())" 2>&1 | head -1
-          echo "===== RUN ONLY atan2-icarus-w2_m16_random (the monster) ====="
-          timeout 500 python - <<'PY'
-          import time, sys
+          python3 -m pip install --break-system-packages -q -e '.[test]' >/tmp/pip.log 2>&1; echo "pip rc=$? $(tail -1 /tmp/pip.log)"
+          python3 -c "import numpy,mpmath,cocotb; import mpmath.libmp as L; print('numpy',numpy.__version__,'| mpmath',mpmath.__version__,'backend',L.BACKEND,'| cocotb',cocotb.__version__)"
+          python3 -c "import gmpy2;print('gmpy2',gmpy2.version())" 2>&1 | head -1
+          echo "===== atan2-icarus-w2_m16_random (build vs sim) ====="
+          timeout 500 python3 - <<'PY'
+          import time, sys, shutil
           sys.path[:0] = ["tb", "."]
           import test_float_matrix as T
           from zkf_matrix import build_matrix
@@ -37,12 +36,12 @@ jobs:
           from cocotb_tools.runner import get_runner
           m = next(r for r in build_matrix() if r.sim=="icarus" and "atan2" in r.target and r.id.endswith("w2_m16_random"))
           print("CASE", m.id, "count", dict(m.plus).get("ZKF_COUNT"), flush=True)
-          # split: case generation (oracle) vs build vs sim
           spec = TARGETS[T._target_base(m)]
-          import zkf_targets
-          bd = T.REPO_ROOT/"build"/"mon"; import shutil; shutil.rmtree(bd, ignore_errors=True)
+          bd = T.REPO_ROOT/"build"/"mon"; shutil.rmtree(bd, ignore_errors=True)
           r = get_runner("icarus")
-          t=time.time(); r.build(sources=[T.REPO_ROOT/s for s in spec.sources()], hdl_toplevel=spec.toplevel, defines={"SIMULATION":1,**dict(m.defines)}, parameters=dict(m.vlog), build_args=T.ICARUS_BUILD_ARGS, build_dir=str(bd), clean=True, timescale=("1ns","1ps")); print("BUILD_s=",round(time.time()-t,1),flush=True)
-          t=time.time(); r.test(test_module=spec.cocotb_module, hdl_toplevel=spec.toplevel, test_dir=str(T.TB_DIR), plusargs=[f"+{n}={v}" for n,v in m.plus], extra_env=T.SIM_ENV, build_dir=str(bd), results_xml=str(bd/"results.xml")); print("TEST_s=",round(time.time()-t,1),flush=True)
+          t=time.time(); r.build(sources=[T.REPO_ROOT/s for s in spec.sources()], hdl_toplevel=spec.toplevel, defines={"SIMULATION":1,**dict(m.defines)}, parameters=dict(m.vlog), build_args=T.ICARUS_BUILD_ARGS, build_dir=str(bd), clean=True, timescale=("1ns","1ps"))
+          print("BUILD_s=", round(time.time()-t,1), flush=True)
+          t=time.time(); r.test(test_module=spec.cocotb_module, hdl_toplevel=spec.toplevel, test_dir=str(T.TB_DIR), plusargs=[f"+{n}={v}" for n,v in m.plus], extra_env=T.SIM_ENV, build_dir=str(bd), results_xml=str(bd/"results.xml"))
+          print("TEST_s=", round(time.time()-t,1), flush=True)
           PY
           echo "exit=$? (124=timeout)"
