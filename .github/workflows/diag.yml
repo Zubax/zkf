@@ -11,6 +11,9 @@ jobs:
     container:
       image: containers.zubax.com/zubax-fpga-toolchain-mega:latest
       options: --user root --cap-add NET_ADMIN --cap-add SYS_PTRACE --shm-size 8g --volume /run/udev:/run/udev:ro
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v7
       - run: |
@@ -22,34 +25,33 @@ jobs:
           hostname
           time getent hosts "$(hostname)"; echo "getent_exit=$?"
           time python3 -c "import socket,time;t=time.time();print('fqdn=',socket.getfqdn());print('getfqdn_s=',round(time.time()-t,3))"
-          time python3 -c "import socket,time;t=time.time();
-          try: print('gethostbyname=', socket.gethostbyname(socket.gethostname()))
-          except Exception as e: print('err', e)
-          print('gethostbyname_s=', round(time.time()-t,3))"
-          echo "===== INSTALL ====="
-          python -m pip install -e '.[test]' >/tmp/pip.log 2>&1; echo "pip: $(tail -1 /tmp/pip.log)"
-          python -m pip install py-spy >/tmp/pyspy.log 2>&1; echo "py-spy: $(command -v py-spy || echo MISSING)"
-          echo "===== SINGLE VERILATOR CASE TIMING (build vs run) ====="
+          echo "===== VENV + INSTALL (like nox) ====="
+          python3 -m virtualenv /tmp/venv 2>/dev/null || virtualenv /tmp/venv 2>/dev/null || python3 -m venv /tmp/venv
+          source /tmp/venv/bin/activate
+          python -V
+          pip install -q -e '.[test]' >/tmp/pip.log 2>&1; echo "pip: rc=$? $(tail -1 /tmp/pip.log)"
+          pip install -q py-spy >/tmp/pyspy.log 2>&1; echo "py-spy: $(command -v py-spy || echo MISSING)"
+          echo "===== SINGLE VERILATOR CASE (build+run wall) ====="
           python - <<'PY'
           import time, sys
           sys.path[:0] = ["tb", "."]
           import test_float_matrix as T
           from zkf_matrix import build_matrix
           m = next(r for r in build_matrix() if r.sim == "verilator")
-          t = time.time(); T._run_cocotb(m); print("SINGLE verilator case wall_s=", round(time.time()-t, 2), m.id)
+          t = time.time(); T._run_cocotb(m); print("SINGLE verilator wall_s=", round(time.time() - t, 2), m.id)
           PY
           echo "===== PARALLEL SLICE (-n 16) + STACK SAMPLER ====="
-          ( for i in $(seq 1 14); do
+          ( for i in $(seq 1 15); do
               echo "=== sample $i t=$(date +%T) load1=$(cut -d' ' -f1 /proc/loadavg) ==="
-              echo "active builds/sims: cc1plus=$(pgrep -xc cc1plus) verilator_bin=$(pgrep -xc verilator_bin) vvp=$(pgrep -xc vvp) iverilog=$(pgrep -xc iverilog)"
+              echo "active: cc1plus=$(pgrep -xc cc1plus) verilator_bin=$(pgrep -xc verilator_bin) vvp=$(pgrep -xc vvp) iverilog=$(pgrep -xc iverilog)"
               for p in $(ps -eo pid,stat,comm | awk '$2 ~ /^S/ && $3=="python"{print $1}' | head -4); do
-                echo "--- python worker $p (stat=$(ps -o stat= -p $p 2>/dev/null)) kstack ---"
+                echo "--- worker $p (stat=$(ps -o stat= -p $p)) kstack ---"
                 cat /proc/$p/stack 2>/dev/null | head -5
-                if command -v py-spy >/dev/null; then echo "--- $p pystack ---"; py-spy dump --pid $p 2>&1 | sed -n '1,16p'; fi
+                if command -v py-spy >/dev/null; then echo "--- $p pystack ---"; py-spy dump --pid $p 2>&1 | sed -n '1,18p'; fi
               done
               sleep 4
             done ) &
           SAMP=$!
-          FLOAT_SHARD=1/20 timeout 75 python -m pytest tb/test_float_matrix.py -n 16 --dist worksteal -p no:cacheprovider -q >/tmp/slice.log 2>&1
+          FLOAT_SHARD=1/20 timeout 80 python -m pytest tb/test_float_matrix.py -n 16 --dist worksteal -p no:cacheprovider -q >/tmp/slice.log 2>&1
           kill $SAMP 2>/dev/null; wait 2>/dev/null
-          echo "===== SLICE TAIL ====="; tail -12 /tmp/slice.log
+          echo "===== SLICE TAIL ====="; tail -15 /tmp/slice.log
