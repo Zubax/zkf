@@ -10,10 +10,17 @@ See how ZKF beats other floating-point libraries in <https://zubax.github.io/fpg
 
 ## Usage
 
-The `zkf_*` modules located under `hdl/` implement various operators.
-Normally they should be submoduled or copy-pasted into the project tree.
-The Python reference model is contained in an adjacent directory, it can be used for bit-exact emulation.
-Everything else is just verification scaffolding and is not considered a shippable artifact.
+`zkf` ships on PyPI and is equally usable by direct RTL copy-paste; both paths are first-class.
+
+- **As a Python dependency** (the main use case for projects that generate RTL): `pip install zkf`, then
+  `zkf.get_rtl()` returns every Verilog module as a `{path: source}` mapping, keyed by path relative to `zkf/rtl/`
+  (e.g. `zkf_add.v`, `_tables/_zkf_exp2_m18.v`). `import zkf` is pure standard library; the bit-exact value model
+  (`ZkfFormat`, `Zkf`, …) is re-exported from the package root and equals the RTL output bit-for-bit, so it doubles
+  as a golden emulator. The optional oracles in `zkf.oracle` need `pip install zkf[oracle]` (numpy/mpmath).
+- **By copy-paste / submodule**: the `zkf_*` modules under `zkf/rtl/` implement the operators; drop the directory
+  into your project tree. Private helpers are named `_zkf_*`.
+
+Everything else in the repo is verification scaffolding and is not a shippable artifact.
 
 Most modules are zero-bubble throughput-1 pipelines; only those that implement computationally heavy functions
 are FSM-based and offer limited throughput.
@@ -234,7 +241,7 @@ ZKF only has a single canonical zero representation -- the positive zero. Howeve
 negative zero as an operand; the sign bit of a zero operand is simply ignored. This relaxation enables simplification
 of certain basic operators.
 
-<img src="zkf_underflow_rounding.svg">
+<img src="docs/zkf_underflow_rounding.svg">
 
 ### Accuracy of the transcendental functions
 
@@ -260,7 +267,7 @@ truncating arithmetic; widening it further has no accuracy benefit and just pays
 The trigonometric modules (sincos, atan2) carry the same ≤1 ULP contract and are built on a shared CORDIC core instead
 of polynomials, with post-refinement to achieve the accuracy target trading a few DSP tiles for a lower cycle latency.
 
-<img src="zkf_transcendental_accuracy.svg">
+<img src="docs/zkf_transcendental_accuracy.svg">
 
 **ATTENTION:** To achieve good results, it is essential to ensure that the look-up tables used by the
 transcendental/trigonometric operators are correctly mapped to ROM. If you see unreasonable fabric usage and bad

@@ -9,13 +9,14 @@ import nox
 
 nox.options.reuse_existing_virtualenvs = True
 
-BLACK_TARGETS = ("model/zkf", "tb", "synth", "proof", "noxfile.py", "zkf_transcendental.py", "zkf_trig.py")
+BLACK_TARGETS = ("zkf", "tb", "synth", "proof", "noxfile.py", "tools")
 
 
 @nox.session(python=False, default=False)
 def clean(session):
     pats = [
         "build",
+        "dist",
         ".nox",
         ".*cache",
         ".coverage*",
@@ -84,8 +85,8 @@ def deep(session: nox.Session) -> None:
 @nox.session
 def accuracy(session: nox.Session) -> None:
     session.install("-e", ".[test]")
-    session.run("python", "zkf_transcendental.py", "--check")
-    session.run("python", "zkf_trig.py", "--check")
+    session.run("python", "tools/zkf_transcendental.py", "--check")
+    session.run("python", "tools/zkf_trig.py", "--check")
 
 
 # Runs in the ambient toolchain environment, not a fresh virtualenv: run_proofs.py/report.py are stdlib-only,

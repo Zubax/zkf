@@ -48,5 +48,6 @@ hdr_log
 .nox/
 .venv/
 venv/
+dist/
 *.egg-info/
 .idea/

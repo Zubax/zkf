@@ -14,6 +14,6 @@ chparam -set WEXP 6 -set WMAN 18 zkf_saturate_eq
 prep -top zkf_saturate_eq
 
 [files]
-hdl/zkf_saturate.v
-hdl/zkf_is_finite.v
+zkf/rtl/zkf_saturate.v
+zkf/rtl/zkf_is_finite.v
 proof/harness/zkf_saturate_eq.v

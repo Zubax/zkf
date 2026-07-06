@@ -15,7 +15,7 @@ from zkf_latency import pack_latency
 from zkf_stream import RegisterStageScoreboard, drive_signed, drive_unsigned, run_stream_cases, start_clock
 
 
-# Independent bench reference for the RTL _zkf_pack primitive (mirrors hdl/zkf_pack.v). Separate from the package's
+# Independent bench reference for the RTL _zkf_pack primitive (mirrors zkf/rtl/zkf_pack.v). Separate from the package's
 # own packing kernel so drift between the two is caught by the DUT comparison.
 def pack_reference(
     fmt: ZkfFormat,

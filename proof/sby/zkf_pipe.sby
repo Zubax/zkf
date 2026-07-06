@@ -13,5 +13,5 @@ chparam -set W 24 -set N 4 zkf_pipe_eq
 prep -top zkf_pipe_eq
 
 [files]
-hdl/zkf_pipe.v
+zkf/rtl/zkf_pipe.v
 proof/harness/zkf_pipe_eq.v

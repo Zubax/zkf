@@ -13,5 +13,5 @@ chparam -set WEXP 6 -set WMAN 18 zkf_neg_eq
 prep -top zkf_neg_eq
 
 [files]
-hdl/zkf_neg.v
+zkf/rtl/zkf_neg.v
 proof/harness/zkf_neg_eq.v

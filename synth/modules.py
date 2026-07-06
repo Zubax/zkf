@@ -18,7 +18,7 @@ from common import REPO
 
 # Latency is owned by the verification suite; importing it here keeps the HTML reports in lockstep with the
 # scoreboard delays used by the cocotb tests.
-sys.path.insert(0, str(REPO / "model"))
+sys.path.insert(0, str(REPO))
 sys.path.insert(0, str(REPO / "tb"))
 from zkf_latency import div_qfrac as latency_div_qfrac, module_latency  # noqa: E402  (path set up immediately above)
 
@@ -752,7 +752,7 @@ def module_group(spec: ModuleSpec) -> str:
 
 
 def rtl_sources(spec: ModuleSpec) -> list[Path]:
-    hdl = REPO / "hdl"
+    hdl = REPO / "zkf" / "rtl"
     if spec.kind == "pack":
         return [hdl / "_zkf_pack.v"]
     if spec.kind == "mul":

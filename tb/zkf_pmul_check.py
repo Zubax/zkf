@@ -2,7 +2,7 @@
 """
 Self-checking unit bench for the shared pipelined multiply _zkf_pmul.
 
-Compiles hdl/_zkf_pmul.v + tb/_zkf_pmul_tb.v under Icarus and runs it: the bench proves p == a*b exactly
+Compiles zkf/rtl/_zkf_pmul.v + tb/_zkf_pmul_tb.v under Icarus and runs it: the bench proves p == a*b exactly
 across STAGE_PRODUCT in {0..4}, both signedness flags, and several operand widths, then prints PASS and
 $finish (or FAIL and $fatal). This is a plain-Verilog bench, not cocotb, so it runs standalone rather than
 through the cocotb matrix. Formerly the FuseSoC target sim_pmul_icarus; now invoked by ``nox -s tests``.
@@ -16,7 +16,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 BUILD_DIR = REPO_ROOT / "build" / "float" / "pmul"
-SOURCES = [REPO_ROOT / "hdl" / "_zkf_pmul.v", REPO_ROOT / "tb" / "_zkf_pmul_tb.v"]
+SOURCES = [REPO_ROOT / "zkf" / "rtl" / "_zkf_pmul.v", REPO_ROOT / "tb" / "_zkf_pmul_tb.v"]
 TOPLEVEL = "_zkf_pmul_tb"
 
 

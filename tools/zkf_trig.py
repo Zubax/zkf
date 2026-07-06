@@ -6,7 +6,7 @@ Phase ``x`` is in turns (``sin = sin(2*pi*x)``). The module reduces ``x`` mod 1 
 two bits as the ``quadrant`` and folds the rest to one octant angle ``t' in [0, pi/4]``, runs a fixed-point CORDIC
 rotation, then unmaps and packs. Why CORDIC: faithful sin/cos needs relative accuracy near each zero, and CORDIC gets it
 with adds/shifts only (no small-coefficient cancellation; inverse-gain folded into the seed). KEY DESIGN: the SAME
-engine (``hdl/_zkf_cordic.v``), run in *vectoring* mode, computes ``atan2`` + the vector magnitude -- reusing the arctan
+engine (``zkf/rtl/_zkf_cordic.v``), run in *vectoring* mode, computes ``atan2`` + the vector magnitude -- reusing the arctan
 LUT (stored in *turns*), datapath, iteration count, and quadrant pre/post-processing; only MODE differs.
 
 Angle units: the arctan LUT is ``L[i] = atan(2**-i)/(2*pi)`` at scale ``2**-ZF``, ``ZF = WT + 2 + GUARD_ZF``. The octant
@@ -33,10 +33,10 @@ import mpmath as mp
 
 mp.mp.prec = 400  # generous headroom for the gain/LUT constants and ground-truth rounding
 
-REPO = Path(__file__).resolve().parent
-HDL = REPO / "hdl"
+REPO = Path(__file__).resolve().parents[1]
+HDL = REPO / "zkf" / "rtl"
 TABLES = HDL / "_tables"
-PKG_TABLES = REPO / "model" / "zkf" / "_tables"
+PKG_TABLES = REPO / "zkf" / "_tables"
 
 FUNC = "sincos"
 
@@ -75,7 +75,7 @@ RANDOM_CHECK_SAMPLES = int(os.environ.get("ZKF_CHECK_SAMPLES", "1000000"))
 
 def guard_ff(wman: int) -> int:
     # Small-angle handoff guard: places the linear-path boundary where |1 - cos(2*pi*2**e_b)| <= 2**-WMAN, i.e.
-    # GUARD_FF >= WMAN//2 + 2; floored at 12. Mirrored in hdl/zkf_sincos.v.
+    # GUARD_FF >= WMAN//2 + 2; floored at 12. Mirrored in zkf/rtl/zkf_sincos.v.
     return max(12, wman // 2 + 2)
 
 
@@ -243,7 +243,7 @@ class _Writer:
 
 def _emit_consts(s: Spec) -> str:
     """
-    Per-WMAN CORDIC constants bound to the generic engine hdl/_zkf_cordic.v. The MODE parameter is passed straight
+    Per-WMAN CORDIC constants bound to the generic engine zkf/rtl/_zkf_cordic.v. The MODE parameter is passed straight
     through (ROTATION for zkf_sincos, VECTORING for zkf_atan2) so all operators reuse the same LUT, gain seed, widths,
     and engine -- only the mode differs.
     """
@@ -423,54 +423,59 @@ def _report(all_specs: dict[int, Spec]) -> None:
         print(f"{wman:>4} {s.n:>4} {s.xf:>4} {s.xw:>4} {s.zf:>4} {s.zw:>4} {s.wt:>4} {lut_bits:>8}")
 
 
-def _check() -> None:
-    """End-to-end faithful-rounding check vs mpmath via the bit-exact model (imports only the public zkf package)."""
-    import sys
-
-    sys.path.insert(0, str(REPO / "model"))
+# One worker process per (format) case over a fork pool spreads the mpmath sweep across all cores. Each unit
+# regenerates its own inputs (random draws are unseeded either way) and returns only its summary; the helper
+# functions and freshly-emitted tables come from the forked parent.
+def _sincos_unit(case: tuple[int, int]) -> tuple[int, int, int, int, str, tuple | None]:
+    """One (wexp, wman) sincos sweep -> (worst_sin, worst_cos, quad_mismatches, count, tag, first_bad)."""
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
 
-    # zkf is first-imported here, after --emit has written the tables, so the freshly-emitted data is picked up
-    # without reaching into package internals to reload/clear caches.
-
-    def sincos_reference(fmt, b):
+    wexp, wman = case
+    fmt = ZkfFormat(wexp, wman)
+    n = 1 << fmt.wfull
+    exhaustive = n <= (1 << 22)
+    inputs = list(range(n)) if exhaustive else _stratified_inputs(fmt)
+    worst_sin = worst_cos = nq = 0
+    bad = None
+    for b in inputs:
         r = zkf.Zkf(fmt, b).sincos()
-        return (r.sin.bits, r.cos.bits, r.quadrant)
+        t = zkf.oracle.sincos(zkf.Zkf(fmt, b))
+        ds, dc = _ulp_diff(fmt, r.sin.bits, t.sin.bits), _ulp_diff(fmt, r.cos.bits, t.cos.bits)
+        if (ds > 1 or dc > 1 or r.quadrant != t.quadrant) and bad is None:
+            bad = (b, ds, dc, r.quadrant, t.quadrant)
+        worst_sin, worst_cos = max(worst_sin, ds), max(worst_cos, dc)
+        nq += int(r.quadrant != t.quadrant)
+    tag = "exhaustive" if exhaustive else f"sampled({len(inputs)})"
+    return worst_sin, worst_cos, nq, len(inputs), tag, bad
 
-    def sincos_true(fmt, b):
-        r = zkf.oracle.sincos(zkf.Zkf(fmt, b))
-        return (r.sin.bits, r.cos.bits, r.quadrant)
+
+def _check() -> None:
+    """End-to-end faithful-rounding check vs mpmath via the bit-exact model (imports only the public zkf package)."""
+    import sys
+    from concurrent.futures import ProcessPoolExecutor
+    from multiprocessing import get_context
+
+    sys.path.insert(0, str(REPO))
+    # zkf is first-imported here, after --emit has written the tables, so the fork pool inherits the freshly-emitted
+    # data without reaching into package internals to reload/clear caches.
+    import zkf  # noqa: F401
+    import zkf.oracle  # noqa: F401
 
     print("end-to-end faithful-rounding check (model vs mpmath):")
     cases = [(6, 16), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
-    worst_overall = 0
-    for wexp, wman in cases:
-        if wman not in SUPPORTED_WMAN:
-            continue
-        fmt = ZkfFormat(wexp, wman)
-        n = 1 << fmt.wfull
-        exhaustive = n <= (1 << 22)
-        inputs = list(range(n)) if exhaustive else _stratified_inputs(fmt)
-        worst_sin = worst_cos = nq = 0
-        bad = None
-        for b in inputs:
-            sin_r, cos_r, q_r = sincos_reference(fmt, b)
-            sin_t, cos_t, q_t = sincos_true(fmt, b)
-            ds, dc = _ulp_diff(fmt, sin_r, sin_t), _ulp_diff(fmt, cos_r, cos_t)
-            if (ds > 1 or dc > 1 or q_r != q_t) and bad is None:
-                bad = (b, ds, dc, q_r, q_t)
-            worst_sin, worst_cos = max(worst_sin, ds), max(worst_cos, dc)
-            nq += int(q_r != q_t)
-        tag = "exhaustive" if exhaustive else f"sampled({len(inputs)})"
-        ok = worst_sin <= 1 and worst_cos <= 1 and nq == 0
-        worst_overall = max(worst_overall, worst_sin, worst_cos)
-        print(
-            f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} sin_ulp={worst_sin} cos_ulp={worst_cos} "
-            f"quad_mismatch={nq} ({tag})"
-        )
-        assert ok, f"{wexp}/{wman}: sin_ulp={worst_sin} cos_ulp={worst_cos} quad_mismatch={nq} first_bad={bad}"
+    sincos_cases = [(we, wm) for we, wm in cases if wm in SUPPORTED_WMAN]
+    with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=get_context("fork")) as ex:
+        for (wexp, wman), (worst_sin, worst_cos, nq, count, tag, bad) in zip(
+            sincos_cases, ex.map(_sincos_unit, sincos_cases)
+        ):
+            ok = worst_sin <= 1 and worst_cos <= 1 and nq == 0
+            print(
+                f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} sin_ulp={worst_sin} cos_ulp={worst_cos} "
+                f"quad_mismatch={nq} ({tag})"
+            )
+            assert ok, f"{wexp}/{wman}: sin_ulp={worst_sin} cos_ulp={worst_cos} quad_mismatch={nq} first_bad={bad}"
 
 
 def _stratified_inputs(fmt) -> list[int]:
@@ -625,48 +630,50 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
     return list(pairs)
 
 
-def _check_atan2() -> None:
-    """End-to-end faithful-rounding check for zkf_atan2 (theta and mag) vs mpmath via the bit-exact model."""
-    import sys
-
-    sys.path.insert(0, str(REPO / "model"))
+def _atan2_unit(case: tuple[int, int]) -> tuple[int, int, int, tuple | None]:
+    """One (wexp, wman) atan2 sweep -> (worst_theta_ulp, worst_mag_ulp, count, first_bad)."""
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
 
-    # zkf is first-imported here, after --emit has written the tables, so the freshly-emitted data is picked up
-    # without reaching into package internals to reload/clear caches.
+    wexp, wman = case
+    fmt = ZkfFormat(wexp, wman)
+    pairs = _atan2_pairs(fmt)
+    worst_t = worst_m = 0
+    bad = None
+    for yb, xb in pairs:
+        r = zkf.Zkf(fmt, yb).atan2(zkf.Zkf(fmt, xb))
+        t = zkf.oracle.atan2(zkf.Zkf(fmt, yb), zkf.Zkf(fmt, xb))
+        dt, dm = _theta_ulp_diff(fmt, r.theta.bits, t.theta.bits), _ulp_diff(fmt, r.magnitude.bits, t.magnitude.bits)
+        if (dt > 1 or dm > 1) and bad is None:
+            bad = (hex(yb), hex(xb), dt, dm)
+        worst_t, worst_m = max(worst_t, dt), max(worst_m, dm)
+    return worst_t, worst_m, len(pairs), bad
 
-    def atan2_reference(fmt, y, x):
-        r = zkf.Zkf(fmt, y).atan2(zkf.Zkf(fmt, x))
-        return (r.theta.bits, r.magnitude.bits)
 
-    def atan2_true(fmt, y, x):
-        r = zkf.oracle.atan2(zkf.Zkf(fmt, y), zkf.Zkf(fmt, x))
-        return (r.theta.bits, r.magnitude.bits)
+def _check_atan2() -> None:
+    """End-to-end faithful-rounding check for zkf_atan2 (theta and mag) vs mpmath via the bit-exact model."""
+    import sys
+    from concurrent.futures import ProcessPoolExecutor
+    from multiprocessing import get_context
+
+    sys.path.insert(0, str(REPO))
+    # zkf is first-imported here, after --emit has written the tables, so the fork pool inherits the freshly-emitted
+    # data without reaching into package internals to reload/clear caches.
+    import zkf  # noqa: F401
+    import zkf.oracle  # noqa: F401
 
     print("atan2 end-to-end faithful-rounding check (model vs mpmath):")
     cases = [(6, 16), (6, 18), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
-    for wexp, wman in cases:
-        if wman not in SUPPORTED_WMAN:
-            continue
-        fmt = ZkfFormat(wexp, wman)
-        pairs = _atan2_pairs(fmt)
-        worst_t = worst_m = 0
-        bad = None
-        for yb, xb in pairs:
-            tr, mr = atan2_reference(fmt, yb, xb)
-            tt, mt = atan2_true(fmt, yb, xb)
-            dt, dm = _theta_ulp_diff(fmt, tr, tt), _ulp_diff(fmt, mr, mt)
-            if (dt > 1 or dm > 1) and bad is None:
-                bad = (hex(yb), hex(xb), dt, dm)
-            worst_t, worst_m = max(worst_t, dt), max(worst_m, dm)
-        ok = worst_t <= 1 and worst_m <= 1
-        print(
-            f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} theta_ulp={worst_t} mag_ulp={worst_m} "
-            f"(sampled({len(pairs)}))"
-        )
-        assert ok, f"{wexp}/{wman}: theta_ulp={worst_t} mag_ulp={worst_m} first_bad={bad}"
+    atan2_cases = [(we, wm) for we, wm in cases if wm in SUPPORTED_WMAN]
+    with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=get_context("fork")) as ex:
+        for (wexp, wman), (worst_t, worst_m, count, bad) in zip(atan2_cases, ex.map(_atan2_unit, atan2_cases)):
+            ok = worst_t <= 1 and worst_m <= 1
+            print(
+                f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} theta_ulp={worst_t} mag_ulp={worst_m} "
+                f"(sampled({count}))"
+            )
+            assert ok, f"{wexp}/{wman}: theta_ulp={worst_t} mag_ulp={worst_m} first_bad={bad}"
 
 
 def main() -> None:

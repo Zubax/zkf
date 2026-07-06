@@ -3,6 +3,7 @@ on:
   push:
     paths-ignore:
       - '**/*.md'
+      - 'docs/**'
   pull_request:
 env:
   COCOTB_IGNORE_PYTHON_REQUIRES: "1"
@@ -10,41 +11,53 @@ env:
 jobs:
   tests:
     name: tests
+    runs-on: [self-hosted, ci-runner]
+    container: &mega_toolchain_container
+      image: containers.zubax.com/zubax-fpga-toolchain-mega:latest
+      options: --user root --cap-add NET_ADMIN --shm-size 8g --volume /run/udev:/run/udev:ro
+    steps:
+      - &checkout_step
+        uses: actions/checkout@v7
+      - &python_cache_step
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
+          restore-keys: pip-${{ runner.os }}-
+      - run: nox -s tests black
+
+  deep:
+    name: deep
+    if: contains(github.event.head_commit.message, '#ci-deep')
+    runs-on: [self-hosted, ci-runner]
+    container: *mega_toolchain_container
+    steps:
+      - *checkout_step
+      - *python_cache_step
+      - run: nox -s deep
+
+  accuracy:
+    name: accuracy
+    runs-on: [self-hosted, ci-runner]
+    container: *mega_toolchain_container
+    steps:
+      - *checkout_step
+      - *python_cache_step
+      - run: nox -s accuracy
+
+  formal:
+    name: formal
     runs-on: ubuntu-latest
     container: &fpga_toolchain_container
       image: ghcr.io/zubax/zubax-fpga-toolchain:latest
       options: --user root
     steps:
-      - &checkout_step
-        uses: actions/checkout@v4
-      - run: nox -s tests black
-
-  formal:
-    name: formal
-    runs-on: ubuntu-latest
-    container: *fpga_toolchain_container
-    steps:
       - *checkout_step
+      - *python_cache_step
       - run: nox -s formal
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with: { name: formal-report, path: build/float/formal/report.html, if-no-files-found: ignore }
-
-  accuracy:
-    name: accuracy
-    runs-on: ubuntu-latest
-    container: *fpga_toolchain_container
-    steps:
-      - *checkout_step
-      - run: nox -s accuracy
-
-  deep:
-    name: deep
-    runs-on: ubuntu-latest
-    container: *fpga_toolchain_container
-    steps:
-      - *checkout_step
-      - run: nox -s deep
 
   synth:
     name: synth
@@ -52,7 +65,8 @@ jobs:
     container: *fpga_toolchain_container
     steps:
       - *checkout_step
+      - *python_cache_step
       - run: nox -s synth
       - if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with: { name: synth-artifacts, path: build, if-no-files-found: ignore }

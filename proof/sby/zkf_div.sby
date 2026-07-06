@@ -18,10 +18,10 @@ chparam -set WEXP 4 -set WMAN 6 zkf_div_eq
 prep -top zkf_div_eq
 
 [files]
-hdl/_zkf_pack.v
-hdl/zkf_pipe.v
-hdl/_zkf_div_core.v
-hdl/zkf_div.v
+zkf/rtl/_zkf_pack.v
+zkf/rtl/zkf_pipe.v
+zkf/rtl/_zkf_div_core.v
+zkf/rtl/zkf_div.v
 proof/refs/zkf_pack_ref.v
 proof/refs/zkf_div_ref.v
 proof/harness/zkf_div_eq.v

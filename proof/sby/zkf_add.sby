@@ -19,11 +19,11 @@ chparam -set WEXP 4 -set WMAN 6 zkf_add_eq
 prep -top zkf_add_eq
 
 [files]
-hdl/_zkf_normshift.v
-hdl/_zkf_rshift_sticky.v
-hdl/_zkf_pack.v
-hdl/zkf_pipe.v
-hdl/zkf_add.v
+zkf/rtl/_zkf_normshift.v
+zkf/rtl/_zkf_rshift_sticky.v
+zkf/rtl/_zkf_pack.v
+zkf/rtl/zkf_pipe.v
+zkf/rtl/zkf_add.v
 proof/refs/zkf_pack_ref.v
 proof/refs/zkf_add_ref.v
 proof/harness/zkf_add_eq.v

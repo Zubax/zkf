@@ -37,7 +37,7 @@ import subprocess
 import sys
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RTL_DIR = REPO_ROOT / "hdl"
+RTL_DIR = REPO_ROOT / "zkf" / "rtl"
 TB_DIR = REPO_ROOT / "tb"
 
 _RECORD = re.compile(r"^C '(.*)' (\d+)\s*$")
@@ -50,7 +50,7 @@ _TB_DRIVEN_PORTS = {"clk", "rst", "in_valid", "out_valid", "a", "b", "x", "y", "
 
 def is_zkf_source(path_text: str) -> bool:
     path = Path(path_text)
-    return path.parent.name == "hdl" and path.name.endswith(".v") and path.name.startswith(("zkf_", "_zkf_"))
+    return path.parent.name == "rtl" and path.name.endswith(".v") and path.name.startswith(("zkf_", "_zkf_"))
 
 
 def normalized_source(path_text: str) -> str:
@@ -59,7 +59,7 @@ def normalized_source(path_text: str) -> str:
     source (Verilator emits build-CWD-relative paths that don't resolve after the build dir is cleaned).
     """
     path = Path(path_text)
-    if path.parent.name == "hdl":
+    if path.parent.name == "rtl":
         source = RTL_DIR / path.name
         if source.is_file():
             return str(source)

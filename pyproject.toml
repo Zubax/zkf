@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zkf"
-version = "0.1.0"
+dynamic = ["version"]
 requires-python = ">=3.11"
 description = "Efficient floating-point engine RTL for controls & embedded following IEEE 754 sans NaN and subnormals"
 readme = { file = "README.md", content-type = "text/markdown" }
@@ -18,14 +18,12 @@ classifiers = [
     "Operating System :: OS Independent",
     "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
 ]
-# The zkf value model is pure standard library; numpy/mpmath are only needed by the zkf.oracle submodule and tests.
-dependencies = [
-    "numpy~=2.4",
-    "mpmath~=1.4",
-]
 
 [project.optional-dependencies]
+# The zkf value model and get_rtl() are pure standard library; numpy/mpmath are only needed by the zkf.oracle submodule.
+oracle = ["numpy~=2.4", "mpmath~=1.4"]
 test = [
+    "zkf[oracle]",
     "cocotb~=2.0",
     "pytest>=8",
     "pytest-xdist>=3", # parallel workers for the verification matrix (-n auto)
@@ -34,9 +32,19 @@ test = [
 [project.urls]
 Repository = "https://github.com/Zubax/zkf"
 
+# __version__ in zkf/__init__.py is the single source of truth; setuptools reads the literal statically (no import).
+[tool.setuptools.dynamic]
+version = { attr = "zkf.__version__" }
+
+# namespaces=false keeps zkf/rtl (no __init__.py) as package DATA rather than a PEP 420 namespace package.
 [tool.setuptools.packages.find]
-where = ["model"]
-include = ["zkf*"]
+where = ["."]
+include = ["zkf", "zkf.*"]
+namespaces = false
+
+# Ship the RTL Verilog as package data so get_rtl() and consumers can reach it from an installed wheel.
+[tool.setuptools.package-data]
+zkf = ["rtl/*.v", "rtl/_tables/*.v", "py.typed"]
 
 [tool.pytest.ini_options]
 # Only the float matrix orchestrator is collected here; the cocotb test_*.py modules run inside a simulator,
@@ -58,6 +66,4 @@ markers = [
 [tool.black]
 line-length = 120
 target-version = ["py311"]
-# The transcendental/trig lookup tables are machine-generated (zkf_transcendental.py / zkf_trig.py --emit);
-# keep them out of the style gate so the generators stay the single source of truth.
-extend-exclude = "model/zkf/_tables/.+\\.py"
+extend-exclude = "zkf/_tables/.+\\.py"

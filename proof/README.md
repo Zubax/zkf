@@ -1,6 +1,6 @@
 # Float-HDL Formal Verification
 
-This directory contains the SymbiYosys-driven equivalence proofs for certain modules under `hdl/`.
+This directory contains the SymbiYosys-driven equivalence proofs for certain modules under `zkf/rtl/`.
 The proofs run via `nox -s formal`, which invokes [`run_proofs.py`](run_proofs.py) and renders the HTML report at
 `build/float/formal/report.html`.
 

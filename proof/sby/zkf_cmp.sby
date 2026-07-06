@@ -16,8 +16,8 @@ chparam -set WEXP 6 -set WMAN 18 zkf_cmp_eq
 prep -top zkf_cmp_eq
 
 [files]
-hdl/zkf_cmp_comb.v
-hdl/zkf_pipe.v
-hdl/zkf_cmp.v
+zkf/rtl/zkf_cmp_comb.v
+zkf/rtl/zkf_pipe.v
+zkf/rtl/zkf_cmp.v
 proof/refs/zkf_cmp_ref.v
 proof/harness/zkf_cmp_eq.v

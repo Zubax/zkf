@@ -575,7 +575,7 @@ class Zkf:
         spec = _trig_spec(fmt.wman)
         xf, zf = spec["xf"], spec["zf"]
         # const2pi arrives PRE-NARROWED from the table (top WMAN+5 bits == round(2*pi * 2**const2pi_s)); const2pi_s is
-        # the single source of scale for every consuming shift / exp-offset. Mirrors hdl/zkf_sincos.v.
+        # the single source of scale for every consuming shift / exp-offset. Mirrors zkf/rtl/zkf_sincos.v.
         const2pi, const2pi_s = spec["const2pi"], spec["const2pi_s"]
         n_sincos = spec["n_sincos"]  # sincos iterations (linear-rotation termination); == table n
         wt = spec["wt"]  # quadrant-local coordinate width (FF - 2)
@@ -679,7 +679,7 @@ class Zkf:
 
         # The shared _zkf_pmul multiplies x_K*kinv_mag (magnitude) and Q*inv_tau (residual + bypass theta). Both
         # constants are PRE-NARROWED to WMAN+5 bits at their native scales (kinv_s, invtau_s), so every dependent shift
-        # is "product-scale minus target-scale" with no fold-back. Mirrors hdl/zkf_atan2.v.
+        # is "product-scale minus target-scale" with no fold-back. Mirrors zkf/rtl/zkf_atan2.v.
         kinv_mag, kinv_s = spec["kinv_mag"], spec["kinv_s"]  # narrowed 1/gain (MAG product) + its native scale
         inv_tau, invtau_s = spec["inv_tau"], spec["invtau_s"]  # narrowed 1/(2*pi) (residual + bypass) + native scale
 
@@ -951,7 +951,7 @@ def _round_fraction_to_int_ties_even(value: Fraction) -> int:
 
 @enum.unique
 class _RoundMode(enum.IntEnum):
-    """Private round-to-integer modes; the integer values match hdl/zkf_round.v and its 2-bit round_mode port."""
+    """Private round-to-integer modes; the integer values match zkf/rtl/zkf_round.v and its 2-bit round_mode port."""
 
     NEAREST_EVEN = 0  # round to nearest integer, ties to even (the IEEE default)
     FLOOR = 1  # round toward -inf
@@ -997,7 +997,7 @@ def _trans_sqrt2_threshold(wfrac: int) -> int:
 
 
 def _horner_eval(coeffs_idx: list[int], w: int, rw: int) -> int:
-    """Truncating fixed-point Horner, bit-identical to hdl/_zkf_horner.v and the generator."""
+    """Truncating fixed-point Horner, bit-identical to zkf/rtl/_zkf_horner.v and the generator."""
     acc = coeffs_idx[-1]
     for j in range(len(coeffs_idx) - 2, -1, -1):
         acc = coeffs_idx[j] + ((acc * w) >> rw)  # Python >> floors, matching arithmetic >>> on signed
@@ -1020,7 +1020,7 @@ def _trig_spec(wman: int) -> dict:
 
 def _fixed_to_float_ref(fmt: ZkfFormat, sign: int, mag: int, exp_offset: int, wmag: int, *, force_inf: int = 0) -> int:
     """
-    Mirror hdl/_zkf_fixed_to_float.v: normalize the unsigned magnitude, extract G/R/S, exp = exp_offset - count,
+    Mirror zkf/rtl/_zkf_fixed_to_float.v: normalize the unsigned magnitude, extract G/R/S, exp = exp_offset - count,
     and pack (RTNE). mag == 0 forces +0 unless force_inf is set.
     """
     zero_flag, count, aligned = _normshift_reference(wmag, mag)
@@ -1035,7 +1035,7 @@ def _fixed_to_float_ref(fmt: ZkfFormat, sign: int, mag: int, exp_offset: int, wm
 
 def _cordic_rotate(spec: dict, z0: int, n: int) -> tuple[int, int, int]:
     """
-    Fixed-point CORDIC rotation (n ~= WMAN/2 iterations), mirroring hdl/_zkf_cordic.v. Returns (x_K, y_K, z_K): the
+    Fixed-point CORDIC rotation (n ~= WMAN/2 iterations), mirroring zkf/rtl/_zkf_cordic.v. Returns (x_K, y_K, z_K): the
     partially rotated vector at scale 2**-xf and the residual angle z_K at scale 2**-zf (turns); the caller finishes
     with one linear step. Inverse gain is folded into the x seed. Shifts truncate toward -inf (Verilog >>>); the
     N-iteration truncation bias stays below the result ULP.
@@ -1052,7 +1052,7 @@ def _cordic_rotate(spec: dict, z0: int, n: int) -> tuple[int, int, int]:
 
 def _cordic_vector(spec: dict, x0: int, y0: int, n: int) -> tuple[int, int, int]:
     """
-    Fixed-point CORDIC in VECTORING mode (n = N_atan2 iterations), mirroring hdl/_zkf_cordic.v MODE=1. Drives y -> 0
+    Fixed-point CORDIC in VECTORING mode (n = N_atan2 iterations), mirroring zkf/rtl/_zkf_cordic.v MODE=1. Drives y -> 0
     and returns (x_K, y_K, z_K): the residual vector at scale 2**-xf (x_K ~= gain*hypot) and the accumulated angle z_K
     at scale 2**-zf (turns, ~= atan2(y0, x0)). Same update as _cordic_rotate but sigma follows sign(y), and there is no
     inverse-gain seed (the gain stays in x_K for the magnitude path). x/y/z wrap to the engine widths (xw/zw); the

@@ -13,5 +13,5 @@ chparam -set WEXP 6 -set WMAN 18 zkf_is_finite_eq
 prep -top zkf_is_finite_eq
 
 [files]
-hdl/zkf_is_finite.v
+zkf/rtl/zkf_is_finite.v
 proof/harness/zkf_is_finite_eq.v

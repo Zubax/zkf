@@ -14,6 +14,6 @@ chparam -set WEXP 6 -set WMAN 18 -set WEXP_UNBIASED 8 zkf_pack_eq
 prep -top zkf_pack_eq
 
 [files]
-hdl/_zkf_pack.v
+zkf/rtl/_zkf_pack.v
 proof/refs/zkf_pack_ref.v
 proof/harness/zkf_pack_eq.v

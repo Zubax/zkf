@@ -10,7 +10,7 @@ import numpy as np
 from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 
-# zkf_round round_mode port codes (hdl/zkf_round.v) -> the Zkf integral-rounding method modelling each.
+# zkf_round round_mode port codes (zkf/rtl/zkf_round.v) -> the Zkf integral-rounding method modelling each.
 _ROUND_BY_MODE = ("round", "floor", "ceil", "trunc")  # 0=RNTE, 1=floor, 2=ceil, 3=trunc
 from zkf_operands import (
     directed_numbers,
