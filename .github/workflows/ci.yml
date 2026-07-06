@@ -8,6 +8,10 @@ on:
 env:
   COCOTB_IGNORE_PYTHON_REQUIRES: "1"
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   tests:
     name: tests
