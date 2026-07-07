@@ -22,13 +22,13 @@ from typing import Any
 import mpmath as _mpmath
 import numpy as _np
 
-from ._core import (
+from ._format import ZkfFormat
+from ._value import (
     Atan2Result,
     DivResult,
     Log2Result,
     SinCos,
     Zkf,
-    ZkfFormat,
     atan2_canon_half,
     atan2_special,
 )

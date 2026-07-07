@@ -5,7 +5,8 @@ Usage:
 
 import sys
 
-from ._core import ZkfFormat, bits_to_signed
+from ._format import ZkfFormat
+from ._reference import bits_to_signed
 
 
 def main(argv: list[str]) -> None:
