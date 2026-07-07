@@ -20,7 +20,6 @@ from zkf_operands import (
     random_operand,
     random_zero,
 )
-from zkf_latency import round_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -138,12 +137,12 @@ async def round_runtime_cases(dut) -> None:
     drive_unsigned(dut.a, 0)
     dut.round_mode.value = 0
 
-    register_stages = round_latency(
+    register_stages = fmt.model_of("round")(
         stage_input=context.stage_input,
         stage_decode=context.stage_decode,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    )
+    ).latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

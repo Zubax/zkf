@@ -7,9 +7,846 @@ from __future__ import annotations
 import enum
 import functools
 import math
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, fields, is_dataclass
 from fractions import Fraction
-from typing import NamedTuple
+from typing import ClassVar, NamedTuple
+
+
+def _check_int_range(value: int, min: int | None, max: int | None, /, extra: set[int] | None = None) -> None:
+    extra = extra or set()
+    if not isinstance(value, int):
+        raise ValueError(f"Expected an integer, found {value}")
+    if (min is not None and value < min) or (max is not None and value > max):
+        if value not in extra:
+            raise ValueError(f"Value {value} is outside {min}..{max}")
+
+
+@dataclass(frozen=True, slots=True)
+class OperatorModel:
+    fmt: "ZkfFormat"
+    module: ClassVar[str]
+
+    @property
+    def config(self) -> dict[str, int]:
+        return {f.name: getattr(self, f.name) for f in fields(self) if f.init and f.name != "fmt"}
+
+    @property
+    def params(self) -> dict[str, int]:
+        raise NotImplementedError
+
+    @property
+    def verilog_params(self) -> str:
+        return ", ".join(f".{name}({value})" for name, value in self.params.items())
+
+    @property
+    def latency(self) -> int:
+        raise NotImplementedError
+
+    def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
+        return {**params, "LATENCY": self.latency}
+
+
+@dataclass(frozen=True, slots=True)
+class AbsModel(OperatorModel):
+    module: ClassVar[str] = "zkf_abs"
+
+    @property
+    def params(self) -> dict[str, int]:
+        return {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman}
+
+    @property
+    def latency(self) -> int:
+        return 0
+
+
+@dataclass(frozen=True, slots=True)
+class NegModel(AbsModel):
+    module: ClassVar[str] = "zkf_neg"
+
+
+@dataclass(frozen=True, slots=True)
+class IsFiniteModel(AbsModel):
+    module: ClassVar[str] = "zkf_is_finite"
+
+
+@dataclass(frozen=True, slots=True)
+class SaturateModel(AbsModel):
+    module: ClassVar[str] = "zkf_saturate"
+
+
+@dataclass(frozen=True, slots=True)
+class PipeModel(OperatorModel):
+    module: ClassVar[str] = "zkf_pipe"
+    w: int | None = None
+    n: int = 0
+
+    def __post_init__(self) -> None:
+        if self.w is not None:
+            _check_int_range(self.w, 1, None)
+        _check_int_range(self.n, 0, None)
+
+    @property
+    def _w(self) -> int:
+        return self.fmt.wfull if self.w is None else self.w
+
+    @property
+    def config(self) -> dict[str, int]:
+        return {"w": self._w, "n": self.n}
+
+    @property
+    def params(self) -> dict[str, int]:
+        return {"W": self._w, "N": self.n}
+
+    @property
+    def latency(self) -> int:
+        return self.n
+
+
+@dataclass(frozen=True, slots=True)
+class PackModel(OperatorModel):
+    module: ClassVar[str] = "_zkf_pack"
+    wexp_unbiased: int | None = None
+    exp_is_biased: int = 0
+    assume_no_overflow: int = 0
+    stage_input: int = 0
+    stage_output: int = 0
+
+    def __post_init__(self) -> None:
+        if self.wexp_unbiased is not None:
+            _check_int_range(self.wexp_unbiased, 1, None)
+        _check_int_range(self._wexp_unbiased, self.fmt.wexp + 1, None)
+        for value in (self.exp_is_biased, self.assume_no_overflow, self.stage_input, self.stage_output):
+            _check_int_range(value, 0, 1)
+
+    @property
+    def _wexp_unbiased(self) -> int:
+        return self.fmt.wexp + 2 if self.wexp_unbiased is None else self.wexp_unbiased
+
+    @property
+    def config(self) -> dict[str, int]:
+        return {
+            "wexp_unbiased": self._wexp_unbiased,
+            "exp_is_biased": self.exp_is_biased,
+            "assume_no_overflow": self.assume_no_overflow,
+            "stage_input": self.stage_input,
+            "stage_output": self.stage_output,
+        }
+
+    @property
+    def params(self) -> dict[str, int]:
+        return {
+            "WEXP": self.fmt.wexp,
+            "WMAN": self.fmt.wman,
+            "WEXP_UNBIASED": self._wexp_unbiased,
+            "EXP_IS_BIASED": self.exp_is_biased,
+            "ASSUME_NO_OVERFLOW": self.assume_no_overflow,
+            "STAGE_INPUT": self.stage_input,
+            "STAGE_OUTPUT": self.stage_output,
+        }
+
+    @property
+    def latency(self) -> int:
+        return self.stage_input + self.stage_output
+
+
+@dataclass(frozen=True, slots=True)
+class CmpModel(OperatorModel):
+    module: ClassVar[str] = "zkf_cmp"
+    stage_input: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman, "STAGE_INPUT": self.stage_input}
+        )
+
+    @property
+    def latency(self) -> int:
+        return 1 + self.stage_input
+
+
+@dataclass(frozen=True, slots=True)
+class SortModel(CmpModel):
+    module: ClassVar[str] = "zkf_sort"
+
+
+@dataclass(frozen=True, slots=True)
+class AddModel(OperatorModel):
+    module: ClassVar[str] = "zkf_add"
+    stage_input: int = 0
+    stage_decode: int = 0
+    stage_align: int = 0
+    stage_normalize: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        for value in (self.stage_decode, self.stage_align, self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+        _check_int_range(self.stage_normalize, 0, 2)
+        norm_width = self.fmt.wman + 3
+        if self.stage_normalize == 2 and norm_width < 17:
+            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_DECODE": self.stage_decode,
+                "STAGE_ALIGN": self.stage_align,
+                "STAGE_NORMALIZE": self.stage_normalize,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return (
+            4
+            + self.stage_input
+            + self.stage_decode
+            + self.stage_align
+            + self.stage_normalize
+            + self.stage_pack
+            + self.stage_output
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class AddSubModel(AddModel):
+    module: ClassVar[str] = "zkf_addsub"
+
+
+@dataclass(frozen=True, slots=True)
+class MulModel(OperatorModel):
+    module: ClassVar[str] = "zkf_mul"
+    stage_input: int = 0
+    stage_product: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+    wmultiplier: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_product, 0, 4)
+        for value in (self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+        _check_int_range(self.wmultiplier, 0, None)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "WMULTIPLIER": self.wmultiplier,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_PRODUCT": self.stage_product,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return 1 + self.stage_input + self.stage_product + self.stage_pack + self.stage_output
+
+
+@dataclass(frozen=True, slots=True)
+class FmaModel(OperatorModel):
+    module: ClassVar[str] = "zkf_fma"
+    stage_input: int = 0
+    stage_product: int = 0
+    stage_decode: int = 0
+    stage_align: int = 0
+    stage_normalize: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+    wmultiplier: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_product, 0, 4)
+        for value in (self.stage_decode, self.stage_align, self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+        _check_int_range(self.stage_normalize, 0, 2)
+        norm_width = 2 * self.fmt.wman + 3
+        if self.stage_normalize == 2 and norm_width < 17:
+            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
+        _check_int_range(self.wmultiplier, 0, None)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "WMULTIPLIER": self.wmultiplier,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_PRODUCT": self.stage_product,
+                "STAGE_DECODE": self.stage_decode,
+                "STAGE_ALIGN": self.stage_align,
+                "STAGE_NORMALIZE": self.stage_normalize,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return (
+            5
+            + self.stage_input
+            + self.stage_product
+            + self.stage_decode
+            + self.stage_align
+            + self.stage_normalize
+            + self.stage_pack
+            + self.stage_output
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class MulIlog2Model(OperatorModel):
+    module: ClassVar[str] = "zkf_mul_ilog2"
+    wk: int | None = None
+    stage_input: int = 0
+    stage_decode: int = 0
+
+    def __post_init__(self) -> None:
+        if self.wk is not None:
+            _check_int_range(self.wk, 1, None)
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_decode, 0, 1)
+
+    @property
+    def _wk(self) -> int:
+        return self.fmt.wexp + 1 if self.wk is None else self.wk
+
+    @property
+    def config(self) -> dict[str, int]:
+        return {
+            "wk": self._wk,
+            "stage_input": self.stage_input,
+            "stage_decode": self.stage_decode,
+        }
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "WK": self._wk,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_DECODE": self.stage_decode,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return 1 + self.stage_input + self.stage_decode
+
+
+@dataclass(frozen=True, slots=True)
+class MulIlog2ConstModel(OperatorModel):
+    module: ClassVar[str] = "zkf_mul_ilog2_const"
+    k: int = 0
+    stage_input: int = 0
+    stage_decode: int = 0
+
+    def __post_init__(self) -> None:
+        limit = (1 << self.fmt.wexp) - 2
+        _check_int_range(self.k, -limit, limit - 1)
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_decode, 0, 1)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "K": self.k,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_DECODE": self.stage_decode,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return 1 + self.stage_input + self.stage_decode
+
+
+@dataclass(frozen=True, slots=True)
+class DivCoreModel(OperatorModel):
+    module: ClassVar[str] = "_zkf_div_core"
+
+    @property
+    def qfrac_base(self) -> int:
+        return self.fmt.wman + 2
+
+    @property
+    def qfrac(self) -> int:
+        return self.qfrac_base + (self.qfrac_base % 2)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return {
+            "WEXP": self.fmt.wexp,
+            "WMAN": self.fmt.wman,
+            "QFRAC_BASE": self.qfrac_base,
+            "QFRAC": self.qfrac,
+            "WEXP_UNBIASED": self.fmt.wexp + 2,
+        }
+
+    @property
+    def latency(self) -> int:
+        return 2 + self.qfrac // 2
+
+
+@dataclass(frozen=True, slots=True)
+class DivModel(OperatorModel):
+    module: ClassVar[str] = "zkf_div"
+    stage_input: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        for value in (self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return DivCoreModel(self.fmt).latency + self.stage_input + self.stage_pack + self.stage_output
+
+
+@dataclass(frozen=True, slots=True)
+class FromIntModel(OperatorModel):
+    module: ClassVar[str] = "zkf_from_int"
+    wint: int = 32
+    stage_input: int = 0
+    stage_normalize: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.wint, 2, None)
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_normalize, 0, 2)
+        norm_width = max(self.wint, self.fmt.wman + 3)
+        if self.stage_normalize == 2 and norm_width < 17:
+            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
+        for value in (self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "WINT": self.wint,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_NORMALIZE": self.stage_normalize,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return 1 + self.stage_input + self.stage_normalize + self.stage_pack + self.stage_output
+
+
+@dataclass(frozen=True, slots=True)
+class ToIntModel(OperatorModel):
+    module: ClassVar[str] = "zkf_to_int"
+    wint: int = 32
+    stage_input: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.wint, 2, None)
+        _check_int_range(self.stage_input, 0, None)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman, "WINT": self.wint, "STAGE_INPUT": self.stage_input}
+        )
+
+    @property
+    def latency(self) -> int:
+        return 4 + self.stage_input
+
+
+@dataclass(frozen=True, slots=True)
+class ResizeModel(OperatorModel):
+    module: ClassVar[str] = "zkf_resize"
+    wexp_in: int | None = None
+    wman_in: int | None = None
+    stage_input: int = 0
+    stage_output: int = 0
+
+    def __post_init__(self) -> None:
+        ZkfFormat(self._wexp_in, self._wman_in)
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_output, 0, 1)
+
+    @property
+    def _wexp_in(self) -> int:
+        return self.fmt.wexp if self.wexp_in is None else self.wexp_in
+
+    @property
+    def _wman_in(self) -> int:
+        return self.fmt.wman if self.wman_in is None else self.wman_in
+
+    @property
+    def config(self) -> dict[str, int]:
+        return {
+            "wexp_in": self._wexp_in,
+            "wman_in": self._wman_in,
+            "stage_input": self.stage_input,
+            "stage_output": self.stage_output,
+        }
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP_IN": self._wexp_in,
+                "WMAN_IN": self._wman_in,
+                "WEXP_OUT": self.fmt.wexp,
+                "WMAN_OUT": self.fmt.wman,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return self.stage_input + self.stage_output
+
+
+@dataclass(frozen=True, slots=True)
+class RoundModel(OperatorModel):
+    module: ClassVar[str] = "zkf_round"
+    stage_input: int = 0
+    stage_decode: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        for value in (self.stage_decode, self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_DECODE": self.stage_decode,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return self.stage_input + self.stage_decode + self.stage_pack + self.stage_output
+
+
+@dataclass(frozen=True, slots=True)
+class Exp2Model(OperatorModel):
+    module: ClassVar[str] = "zkf_exp2"
+    stage_input: int = 0
+    stage_reduce: int = 0
+    stage_product: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+    wmultiplier: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_product, 0, 4)
+        for value in (self.stage_reduce, self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+        _check_int_range(self.wmultiplier, 0, None)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "WMULTIPLIER": self.wmultiplier,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_REDUCE": self.stage_reduce,
+                "STAGE_PRODUCT": self.stage_product,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        degree = _trans_spec("exp2", self.fmt.wman)["d"]
+        return (
+            self.stage_input
+            + self.stage_reduce
+            + 4
+            + degree * (2 + self.stage_product)
+            + self.stage_pack
+            + self.stage_output
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Log2Model(OperatorModel):
+    module: ClassVar[str] = "zkf_log2"
+    stage_input: int = 0
+    stage_decode: int = 0
+    stage_product: int = 0
+    stage_product_final: int | None = None
+    stage_normalize: int = 0
+    stage_normalize_output: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+    wmultiplier: int = 0
+
+    def __post_init__(self) -> None:
+        spec = _trans_spec("log2", self.fmt.wman)
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_product, 0, 4)
+        if self.stage_product_final is not None:
+            _check_int_range(self.stage_product_final, 0, 4)
+        _check_int_range(self.stage_decode, 0, 1)
+        norm_width = self.fmt.wexp + self.fmt.wfrac + spec["cf"]
+        _check_int_range(self.stage_normalize, 0, 2)
+        if self.stage_normalize == 2 and norm_width < 17:
+            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
+        for value in (self.stage_normalize_output, self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+        _check_int_range(self.wmultiplier, 0, None)
+
+    @property
+    def _stage_product_final(self) -> int:
+        return self.stage_product if self.stage_product_final is None else self.stage_product_final
+
+    @property
+    def config(self) -> dict[str, int]:
+        return {
+            "stage_input": self.stage_input,
+            "stage_decode": self.stage_decode,
+            "stage_product": self.stage_product,
+            "stage_product_final": self._stage_product_final,
+            "stage_normalize": self.stage_normalize,
+            "stage_normalize_output": self.stage_normalize_output,
+            "stage_pack": self.stage_pack,
+            "stage_output": self.stage_output,
+            "wmultiplier": self.wmultiplier,
+        }
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "WMULTIPLIER": self.wmultiplier,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_DECODE": self.stage_decode,
+                "STAGE_PRODUCT": self.stage_product,
+                "STAGE_PRODUCT_FINAL": self._stage_product_final,
+                "STAGE_NORMALIZE": self.stage_normalize,
+                "STAGE_NORMALIZE_OUTPUT": self.stage_normalize_output,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        degree = _trans_spec("log2", self.fmt.wman)["d"]
+        return (
+            self.stage_input
+            + self.stage_decode
+            + 5
+            + self._stage_product_final
+            + self.stage_normalize
+            + self.stage_normalize_output
+            + self.stage_pack
+            + degree * (2 + self.stage_product)
+            + self.stage_output
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SincosModel(OperatorModel):
+    module: ClassVar[str] = "zkf_sincos"
+    unroll100: int = 100
+    stage_input: int = 0
+    stage_product: int = 0
+    stage_normalize: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+    wmultiplier: int = 0
+
+    def __post_init__(self) -> None:
+        spec = _trig_spec(self.fmt.wman)
+        _check_int_range(self.unroll100, 100, None, {50})
+        _check_int_range(self.stage_product, 0, 4)
+        norm_width = spec["const2pi"].bit_length() + spec["wt"] + 1
+        _check_int_range(self.stage_normalize, 0, 2)
+        if self.stage_normalize == 2 and norm_width < 17:
+            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
+        for value in (self.stage_input, self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+        _check_int_range(self.wmultiplier, 0, None)
+
+    @property
+    def config(self) -> dict[str, int]:
+        return {
+            "unroll100": self.unroll100,
+            "stage_input": self.stage_input,
+            "stage_product": self.stage_product,
+            "stage_normalize": self.stage_normalize,
+            "stage_pack": self.stage_pack,
+            "stage_output": self.stage_output,
+            "wmultiplier": self.wmultiplier,
+        }
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "WMULTIPLIER": self.wmultiplier,
+                "UNROLL100": self.unroll100,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_PRODUCT": self.stage_product,
+                "STAGE_NORMALIZE": self.stage_normalize,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        k = _trig_spec(self.fmt.wman)["n_sincos"]
+        xycyc = (k * 100 + self.unroll100 - 1) // self.unroll100
+        parallel = self.unroll100 < 100
+        saved = min(1 + self.stage_product, xycyc - k) if parallel else 0
+        return (
+            11
+            + (2 * self.stage_product)
+            + xycyc
+            - saved
+            + self.stage_input
+            + self.stage_normalize
+            + self.stage_pack
+            + self.stage_output
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Atan2Model(OperatorModel):
+    module: ClassVar[str] = "zkf_atan2"
+    unroll100: int = 100
+    stage_input: int = 0
+    stage_product: int = 0
+    stage_normalize: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+    wmultiplier: int = 0
+
+    def __post_init__(self) -> None:
+        spec = _trig_spec(self.fmt.wman)
+        _check_int_range(self.unroll100, 100, None, {50})
+        _check_int_range(self.stage_product, 0, 4)
+        xf = spec["xf"]
+        zf = spec["zf"]
+        wx = xf + 2
+        wquo = 2 * ((xf + 1) // 2) + 1
+        norm_width = max((wx - 1) + self.fmt.wman + 5, wquo + self.fmt.wman + 5, zf + 5)
+        _check_int_range(self.stage_normalize, 0, 2)
+        if self.stage_normalize == 2 and norm_width < 17:
+            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
+        for value in (self.stage_input, self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+        _check_int_range(self.wmultiplier, 0, None)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "WMULTIPLIER": self.wmultiplier,
+                "UNROLL100": self.unroll100,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_PRODUCT": self.stage_product,
+                "STAGE_NORMALIZE": self.stage_normalize,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        spec = _trig_spec(self.fmt.wman)
+        n = spec["n_atan2"]
+        xf = spec["xf_atan2"]
+        steps = (xf + 1) // 2
+        div_cycles = steps + 1
+        xycyc = (n * 100 + self.unroll100 - 1) // self.unroll100
+        return (
+            8
+            + self.stage_input
+            + xycyc
+            + div_cycles
+            + self.stage_product
+            + self.stage_normalize
+            + self.stage_pack
+            + self.stage_output
+        )
+
+
+_MODEL_BY_NAME: dict[str, type[OperatorModel]] = {
+    module.removeprefix("_").removeprefix("zkf_"): item
+    for name in dir()
+    if not name.startswith("_")
+    for item in (globals()[name],)
+    if isinstance(item, type) and is_dataclass(item)
+    for module in (getattr(item, "module", None),)
+    if isinstance(module, str)
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -20,8 +857,19 @@ class ZkfFormat:
     wman: int
 
     def __post_init__(self) -> None:
-        if self.wexp < 2 or self.wman < 4:
-            raise ValueError(f"invalid ZKF format WEXP={self.wexp} WMAN={self.wman}")
+        _check_int_range(self.wexp, 2, None)
+        _check_int_range(self.wman, 4, None)
+
+    def model_of(self, name: str) -> Callable[..., OperatorModel]:
+        try:
+            model_cls = _MODEL_BY_NAME[name]
+        except KeyError:
+            raise KeyError(name) from None
+
+        def factory(**config: object) -> OperatorModel:
+            return model_cls(self, **config)
+
+        return factory
 
     @property
     def wfrac(self) -> int:
@@ -73,41 +921,6 @@ class ZkfFormat:
     def epsilon(self) -> Fraction:
         """Gap between 1.0 and the next representable value above it."""
         return _pow2_fraction(-self.wfrac)
-
-    @property
-    def exp2_poly_degree(self) -> int:
-        """Degree of the zkf_exp2 evaluation polynomial for this format."""
-        return _trans_spec("exp2", self.wman)["d"]
-
-    @property
-    def log2_poly_degree(self) -> int:
-        """Degree of the zkf_log2 evaluation polynomial for this format."""
-        return _trans_spec("log2", self.wman)["d"]
-
-    @property
-    def sincos_iterations(self) -> int:
-        """CORDIC rotation iteration count zkf_sincos runs for this format."""
-        return _trig_spec(self.wman)["n_sincos"]
-
-    @property
-    def atan2_iterations(self) -> int:
-        """CORDIC vectoring iteration count zkf_atan2 runs for this format."""
-        return _trig_spec(self.wman)["n_atan2"]
-
-    @property
-    def atan2_divider_width(self) -> int:
-        """Fractional x/y width of the zkf_atan2 residual divider for this format."""
-        return _trig_spec(self.wman)["xf_atan2"]
-
-    @property
-    def atan2_bypass_shift(self) -> int:
-        """
-        Exponent-difference threshold above which zkf_atan2 takes its small-ratio tiny-theta bypass path
-        (i.e. shift_dn = e_x - e_y exceeding this, for x > 0 with |y| < |x|).
-        """
-        from ._tables import trig
-
-        return _trig_spec(self.wman)["zf"] - self.wman - trig.GUARD_DIV
 
     def wrap(self, bits: int) -> Zkf:
         """Wrap raw packed bits (masked to WFULL) as a Zkf."""
@@ -717,7 +1530,7 @@ class Zkf:
 
         # theta. Bypass only the near-+x-axis tiny-theta corner; everywhere else theta sits near a boundary
         # (+-1/4, +-1/2) and the fixed-turns path (scale 2**-zf, zf >> wman) has ample relative precision.
-        tiny_shift = fmt.atan2_bypass_shift  # single source of truth (also what the checks/sweeps use)
+        tiny_shift = _atan2_bypass_shift(fmt)
         if (not swap) and (sx == 0) and (shift_dn > tiny_shift):
             # theta ~= (|y|/|x|)*INV_TAU (atan(r) ~= r): one truncating divide (F frac bits + sticky), *INV_TAU, then a
             # single RTNE pack consuming the sticky. F >= wman+GUARD_DIV keeps the truncation below the round bit.
@@ -1016,6 +1829,12 @@ def _trig_spec(wman: int) -> dict:
         return _trig_specs()[wman]
     except KeyError:
         raise KeyError(f"no sincos table for WMAN={wman}; run zkf_trig.py --emit")
+
+
+def _atan2_bypass_shift(fmt: ZkfFormat) -> int:
+    from ._tables import trig
+
+    return _trig_spec(fmt.wman)["zf"] - fmt.wman - trig.GUARD_DIV
 
 
 def _fixed_to_float_ref(fmt: ZkfFormat, sign: int, mag: int, exp_offset: int, wmag: int, *, force_inf: int = 0) -> int:

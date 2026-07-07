@@ -398,7 +398,7 @@ def _emit_python(all_specs: dict[int, Spec]) -> str:
     w.pop()
     w("}")
     w("")
-    w(f"GUARD_DIV = {GUARD_DIV}")  # load-bearing: the package derives ZkfFormat.atan2_bypass_shift from it
+    w(f"GUARD_DIV = {GUARD_DIV}")
     w("# FF (reduced-fraction width) = WMAN + max(12, WMAN//2 + 2); WT = FF - 2; ZF = WT + 2 + GUARD_ZF.")
     return w.render()
 
@@ -622,7 +622,7 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
                     if 1 <= xe < fmt.exp_inf:
                         for xf in (0, nf // 2, nf - 1):
                             pairs.add((y, fmt.normal(0, xe, xf).bits))
-    ts = fmt.atan2_bypass_shift  # straddle the small-ratio bypass cutoff
+    ts = choose_spec(fmt.wman).zf - fmt.wman - GUARD_DIV
     for off in (-1, 0, 1, 2):
         for ey in (1, max(1, fmt.bias // 2), max(1, fmt.bias - 3)):
             xe = ey + ts + off

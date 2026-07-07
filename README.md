@@ -76,6 +76,7 @@ A zero `LATENCY` is a special value indicating that the latency should not be ch
 
 The `LATENCY` value is a sum of some constant baseline number of stages,
 plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).
+Compute it like `ZkfFormat(WEXP, WMAN).model_of("mul")(stage_product=1).latency`.
 
 Generated lookup table ROMs are plain initialized Verilog arrays. They expose `ZKF_ATTRIBUTE_ROM_PRE` and
 `ZKF_ATTRIBUTE_ROM_POST` as optional hooks around the ROM declaration for tool-specific attributes.

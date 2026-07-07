@@ -10,7 +10,6 @@ import numpy as np
 from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
-from zkf_latency import mul_ilog2_const_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -142,10 +141,10 @@ async def mul_ilog2_const_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     dut.a.value = 0
 
-    register_stages = mul_ilog2_const_latency(
+    register_stages = fmt.model_of("mul_ilog2_const")(
         stage_input=context.stage_input,
         stage_decode=context.stage_decode,
-    )
+    ).latency
     outputs = {port: (getattr(dut, port), fmt.wfull) for port in ports}
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, outputs)
 

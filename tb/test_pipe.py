@@ -13,10 +13,11 @@ from zkf_stream import RegisterStageScoreboard, drive_unsigned, is_resolvable, s
 async def pipe_runtime_cases(dut) -> None:
     context = pipe_context()
     width = context.pipe_w
-    stages = context.pipe_n
+    pipe_n = context.pipe_n
     sample_count = context.count
     assert width is not None
-    assert stages is not None
+    assert pipe_n is not None
+    stages = pipe_n
 
     in_handle = dut["in"]
     check_width("in", in_handle, width, context)

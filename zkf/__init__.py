@@ -1,53 +1,40 @@
-"""ZKF (Zubax Kulibin float) engine: the bit-exact reference model plus the packaged RTL sources.
-
-The value model is re-exported here; ``get_rtl()`` returns the Verilog modules shipped as package data.
-"""
-
-from collections.abc import Mapping
-from functools import cache
-from importlib.resources import files
-from importlib.resources.abc import Traversable
-from types import MappingProxyType
+"""ZKF (Zubax Kulibin float) engine: bit-exact reference model plus packaged RTL sources."""
 
 from ._core import (
+    AbsModel as AbsModel,
     Atan2Result as Atan2Result,
+    Atan2Model as Atan2Model,
     CmpResult as CmpResult,
+    CmpModel as CmpModel,
+    AddModel as AddModel,
+    AddSubModel as AddSubModel,
+    DivCoreModel as DivCoreModel,
+    DivModel as DivModel,
     DivResult as DivResult,
+    Exp2Model as Exp2Model,
+    FmaModel as FmaModel,
+    FromIntModel as FromIntModel,
+    IsFiniteModel as IsFiniteModel,
     Log2Result as Log2Result,
+    Log2Model as Log2Model,
+    MulIlog2ConstModel as MulIlog2ConstModel,
+    MulIlog2Model as MulIlog2Model,
+    MulModel as MulModel,
+    NegModel as NegModel,
+    OperatorModel as OperatorModel,
+    PackModel as PackModel,
+    PipeModel as PipeModel,
+    ResizeModel as ResizeModel,
+    RoundModel as RoundModel,
+    SaturateModel as SaturateModel,
     SinCos as SinCos,
+    SincosModel as SincosModel,
+    SortModel as SortModel,
+    ToIntModel as ToIntModel,
     Zkf as Zkf,
     ZkfFormat as ZkfFormat,
 )
-
-__all__ = [
-    "Atan2Result",
-    "CmpResult",
-    "DivResult",
-    "Log2Result",
-    "SinCos",
-    "Zkf",
-    "ZkfFormat",
-    "get_rtl",
-    "__version__",
-]
+from ._rtl import get_rtl as get_rtl
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.1.0"
-
-
-@cache
-def get_rtl() -> Mapping[str, str]:
-    """Every packaged RTL module as a read-only mapping from POSIX path relative to ``zkf/rtl``
-    (e.g. ``zkf_add.v``, ``_tables/_zkf_exp2_m18.v``) to its Verilog source text."""
-    out: dict[str, str] = {}
-
-    def walk(node: Traversable, prefix: str) -> None:
-        for child in node.iterdir():
-            name = f"{prefix}{child.name}"
-            if child.is_dir():
-                walk(child, f"{name}/")
-            elif child.name.endswith(".v"):
-                out[name] = child.read_text(encoding="utf-8")
-
-    walk(files(__name__) / "rtl", "")
-    return MappingProxyType(dict(sorted(out.items())))
+__version__ = "0.2.0"

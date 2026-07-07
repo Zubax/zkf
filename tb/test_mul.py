@@ -18,7 +18,6 @@ from zkf_operands import (
     random_operand,
     random_zero,
 )
-from zkf_latency import mul_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -204,12 +203,12 @@ async def mul_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    register_stages = mul_latency(
+    register_stages = fmt.model_of("mul")(
         stage_input=context.stage_input,
         stage_product=context.stage_product,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    )
+    ).latency
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: BinaryCase) -> dict[str, int]:

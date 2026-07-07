@@ -18,7 +18,6 @@ from zkf_operands import (
     random_operand,
     random_zero,
 )
-from zkf_latency import resize_latency
 from zkf_params import check_width, resize_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -157,7 +156,12 @@ async def resize_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     drive_unsigned(dut.a, 0)
 
-    register_stages = resize_latency(stage_input=context.stage_input, stage_output=context.stage_output)
+    register_stages = fmt_out.model_of("resize")(
+        wexp_in=fmt_in.wexp,
+        wman_in=fmt_in.wman,
+        stage_input=context.stage_input,
+        stage_output=context.stage_output,
+    ).latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

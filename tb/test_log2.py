@@ -11,7 +11,6 @@ from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 from zkf_operands import normal
 from zkf_operands import directed_numbers, random_bits, random_operand
-from zkf_latency import log2_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -115,8 +114,7 @@ async def log2_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     dut.x.value = 0
 
-    register_stages = log2_latency(
-        fmt,
+    register_stages = fmt.model_of("log2")(
         stage_input=context.stage_input,
         stage_decode=context.stage_decode,
         stage_product=context.stage_product,
@@ -125,7 +123,7 @@ async def log2_runtime_cases(dut) -> None:
         stage_normalize_output=context.stage_normalize_output,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    )
+    ).latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

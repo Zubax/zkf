@@ -586,7 +586,7 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("log2", sim, "pr", "w6_m16_decode", 6, 16, "random", 256, sd=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_split_final", 6, 16, "random", 256, sp=1, spf=2))
     # UNROLL100 (iterations/cycle x100): 50 = half-rate, 100 = synthesized M18 rate, 200 = 2/cycle. Each changes the
-    # published II; the test asserts measured == model.
+    # published latency; the test asserts measured == model.
     out.append(_trans("sincos", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=50))
     out.append(_trans("sincos", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=200))
     # sincos staging knobs, bit-transparent vs the unstaged path (the test checks bit-exactness + latency). si/so are
@@ -602,7 +602,7 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("sincos", sim, "pr", "w5_m16_un50_prod", 5, 16, "random", 256, un=50, parallel=0, sp=2))
     # PARALLEL decouples the z-recurrence (runs at full rate ahead of the half-rate x/y rotator, issues PHI early):
     # bit-identical to lock-step, lower latency. Only legal half-rate (full-rate + PARALLEL is rejected at
-    # elaboration), so sweep un=50 with PARALLEL=1/0. The test asserts bit-exactness + II == model.
+    # elaboration), so sweep un=50 with PARALLEL=1/0. The test asserts bit-exactness + latency.
     out.append(_trans("sincos", sim, "pr", "w5_m16_dec", 5, 16, "random", 256, un=50, parallel=1))
     out.append(_trans("sincos", sim, "pr", "w5_m16_dec", 5, 16, "random", 256, un=50, parallel=1, sp=2))
     out.append(_trans("sincos", sim, "pr", "w5_m16_dec", 5, 16, "random", 256, un=50, parallel=1, sp=3))
@@ -627,7 +627,7 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=1, spf=1))
     out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, spf=1, so=1))
     # zkf_atan2 (two-input vectoring CORDIC): directed pair table + random, then the shared knob sweeps. Each row
-    # checks bit-exactness + II == atan2_latency; directed alone hits every special/axis/diagonal/bypass-boundary pair.
+    # checks bit-exactness + latency; directed alone hits every special/axis/diagonal/bypass-boundary pair.
     for cfg, w, m, k, c in TRANS_ATAN2:
         out.append(_trans("atan2", sim, "pr", cfg, w, m, k, c))
     # Tiny WEXP (2, 3): random covers the narrow exponent-difference path plus the axis/diagonal turn constants that
@@ -694,8 +694,8 @@ def _per_pr(sim, out: list) -> None:
     out.append(_binary("add", sim, "pr", "w6_m100_directed", 6, 100, "directed", 0))
     for cfg, w, n, c in PIPE:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
-    # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks the widened input
-    # pipe against the _count(stage_input) latency model. sincos/atan2 excluded (handshake-entangled input stage).
+    # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks widened input
+    # pipes in the latency model. sincos/atan2 excluded (handshake-entangled input stage).
     for op in ("mul", "div", "cmp", "sort"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
@@ -786,7 +786,7 @@ def _deep_correctness(out: list) -> None:
         out.append(_trans("log2", s, "deep", base + "_decode", w, m, k, c, sd=1))
         out.append(_trans("log2", s, "deep", base + "_split_final", w, m, k, c, sp=1, spf=2))
 
-    # sincos: STAGE_PRODUCT (_zkf_pmul split), UNROLL100, STAGE_NORMALIZE/PACK; the testbench asserts II == model.
+    # sincos: STAGE_PRODUCT (_zkf_pmul split), UNROLL100, STAGE_NORMALIZE/PACK; the testbench asserts latency.
     for w, m, k, c in TRANS_TRIG_EXT:
         base = f"w{w}m{m}_{k}"
         for un in (50, 100, 200, 400):
@@ -804,7 +804,7 @@ def _deep_correctness(out: list) -> None:
     out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, spf=3, wm=18, sn=2, pa=1))
     # zkf_atan2 deep: baseline per format, UNROLL100 sweep + full staging on 5/16, and the synthesized 6/18 + 8/36
-    # operating points. Each asserts II == model.
+    # operating points. Each asserts latency.
     for cfg, w, m, k, c in TRANS_ATAN2:
         out.append(_trans("atan2", s, "deep", f"atan2_{cfg}", w, m, k, c))
     for un in (50, 100, 200, 400):

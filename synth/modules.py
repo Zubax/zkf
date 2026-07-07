@@ -16,11 +16,8 @@ import sys
 
 from common import REPO
 
-# Latency is owned by the verification suite; importing it here keeps the HTML reports in lockstep with the
-# scoreboard delays used by the cocotb tests.
 sys.path.insert(0, str(REPO))
-sys.path.insert(0, str(REPO / "tb"))
-from zkf_latency import div_qfrac as latency_div_qfrac, module_latency  # noqa: E402  (path set up immediately above)
+from zkf import OperatorModel, ZkfFormat  # noqa: E402  (path set up immediately above)
 
 
 @dataclass(frozen=True)
@@ -49,8 +46,6 @@ class ModuleSpec:
     stage_pack: int = 0  # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
     stage_output: int = 0  # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
     unroll100: int = 100  # zkf_sincos: CORDIC iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
-    parallel: int = -1  # zkf_sincos: run z ahead of x/y. -1 = auto (the RTL default, = UNROLL100 < 100);
-    #   0/1 force.
     wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul DSP tile-width hint (0 = symmetric;
     #   >=8 -> slice grid).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
@@ -650,7 +645,8 @@ MODULES = [
     ModuleSpec(
         name="zkf_sincos",
         label="zkf_sincos (sin/cos of x turns, iterative folded CORDIC; one datapath reused over ceil(K*100/UNROLL100) "
-        "cycles + a shared linear-correction multiply, II = latency. The only DSPs are the 2*pi correction; it "
+        "cycles + a shared linear-correction multiply; accept interval is latency+1. The only DSPs are the 2*pi "
+        "correction; it "
         "fits the LFE5U-25F many times over. UNROLL100=100: one iteration per cycle, the shortest path)",
         top="zkf_sincos_synth_top",
         kind="sincos",
@@ -658,8 +654,6 @@ MODULES = [
         wman=18,
         wexp_unbiased=0,
         unroll100=100,  # one CORDIC iteration per engine cycle (shortest combinational path).
-        # PARALLEL auto-resolves to 0 here: a full-rate z-chain can't get ahead of a full-rate x/y, so
-        # the engine stays lock-step (forcing it would need a 2-deep z-chain that misses 100 MHz).
         stage_product=2,  # 2x2 + operand-capture split of the shared correction multiply -> 100 MHz.
         #   (Post-narrowing SP=1 native multiply was tried: Yosys 87 MHz -- the unregistered DSP
         #   cascade limits; reverted.)
@@ -670,8 +664,8 @@ MODULES = [
     # rotation array uses no DSPs; only the correction multiplies do).
     ModuleSpec(
         name="zkf_sincos_w8m36",
-        label="zkf_sincos (WEXP=8, WMAN=36, iterative folded CORDIC; UNROLL100=50 + PARALLEL (auto: the decoupled "
-        "full-rate z-path runs ahead so the PHI correction overlaps the CORDIC, -4 cycles) + STAGE_PRODUCT=3 "
+        label="zkf_sincos (WEXP=8, WMAN=36, iterative folded CORDIC; UNROLL100=50 with the default decoupled "
+        "z-path so the PHI correction overlaps the CORDIC, -4 cycles + STAGE_PRODUCT=3 "
         "(3x3 split) + STAGE_NORMALIZE=2 + STAGE_PACK=1; engine half-rate, 2 cycles/iteration; LFE5U-25F)",
         top="zkf_sincos_w8m36_synth_top",
         kind="sincos",
@@ -679,8 +673,6 @@ MODULES = [
         wman=36,
         wexp_unbiased=0,
         unroll100=50,  # half-rate 2-cycle engine: the wide (WX=62) shift+add recurrence misses 100 MHz single-cycle.
-        # PARALLEL auto-resolves to 1: the full-rate z-path (1 iter/cycle) laps the half-rate x/y so
-        # the PHI correction overlaps the CORDIC, -4 cycles, with no Fmax or DSP cost.
         stage_product=3,  # row-sum staging for the shared correction multiply (depth/latency knob) -> 100 MHz.
         #   (Post-narrowing SP=2 flat 3x3 sum tried: Diamond 56 / Yosys 93 MHz -- the flat sum
         #   limits; reverted.)
@@ -696,7 +688,7 @@ MODULES = [
     ModuleSpec(
         name="zkf_atan2",
         label="zkf_atan2 (atan2(y, x) in turns + hypot(y, x), iterative vectoring CORDIC; one datapath reused over "
-        "ceil(N*100/UNROLL100) engine cycles + a ceil(XF/2)-cycle radix-4 divide, II = latency; UNROLL100=50 "
+        "ceil(N*100/UNROLL100) engine cycles + a ceil(XF/2)-cycle radix-4 divide; UNROLL100=50 "
         "half-rate + shared _zkf_pmul STAGE_PRODUCT=2 WMULTIPLIER=18 + STAGE_NORMALIZE=2 + "
         "STAGE_PACK)",
         top="zkf_atan2_synth_top",
@@ -890,33 +882,35 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
 
-def div_qfrac(spec: ModuleSpec) -> int:
-    return latency_div_qfrac(spec.wman)
-
-
-def effective_parallel(spec: ModuleSpec) -> int:
-    # Mirror the RTL PARALLEL default (= UNROLL100 < 100) when the spec leaves it on auto (-1).
-    return spec.parallel if spec.parallel >= 0 else (1 if spec.unroll100 < 100 else 0)
+def model_for(spec: ModuleSpec) -> OperatorModel:
+    fmt = ZkfFormat(spec.wexp_out, spec.wman_out) if spec.kind == "resize" else ZkfFormat(spec.wexp, spec.wman)
+    values = {
+        "wexp_unbiased": spec.wexp_unbiased or None,
+        "wint": spec.wint or 32,
+        "wk": spec.wk or None,
+        "k": MUL_ILOG2_CONST_K,
+        "wexp_in": spec.wexp_in or None,
+        "wman_in": spec.wman_in or None,
+        "unroll100": spec.unroll100,
+        "stage_input": spec.stage_input,
+        "stage_reduce": spec.stage_reduce,
+        "stage_product": spec.stage_product,
+        "stage_product_final": spec.stage_product_final if spec.stage_product_final >= 0 else None,
+        "stage_align": spec.stage_align,
+        "stage_decode": spec.stage_decode,
+        "stage_normalize": spec.stage_normalize,
+        "stage_normalize_output": spec.stage_normalize_output,
+        "stage_pack": spec.stage_pack,
+        "stage_output": spec.stage_output,
+        "wmultiplier": spec.wmultiplier,
+    }
+    factory = fmt.model_of(spec.kind)
+    defaults = factory()
+    return factory(**{name: values[name] for name in defaults.config.keys() if name in values})
 
 
 def register_stages(spec: ModuleSpec) -> int:
-    return module_latency(
-        spec.kind,
-        wexp=spec.wexp,
-        wman=spec.wman,
-        unroll100=spec.unroll100,
-        parallel=effective_parallel(spec),
-        stage_input=spec.stage_input,
-        stage_reduce=spec.stage_reduce,
-        stage_product=spec.stage_product,
-        stage_product_final=effective_stage_product_final(spec),
-        stage_align=spec.stage_align,
-        stage_decode=spec.stage_decode,
-        stage_normalize=spec.stage_normalize,
-        stage_normalize_output=spec.stage_normalize_output,
-        stage_pack=spec.stage_pack,
-        stage_output=spec.stage_output,
-    )
+    return model_for(spec).latency
 
 
 def format_register_stages(stages: int) -> str:
@@ -924,137 +918,8 @@ def format_register_stages(stages: int) -> str:
     return f"{stages} {suffix}"
 
 
-def _si_suffix(spec: ModuleSpec) -> str:
-    return f", STAGE_INPUT={spec.stage_input}" if spec.stage_input else ""
-
-
-def _sr_suffix(spec: ModuleSpec) -> str:
-    return f", STAGE_REDUCE={spec.stage_reduce}" if spec.kind == "exp2" and spec.stage_reduce else ""
-
-
-def _sp_suffix(spec: ModuleSpec) -> str:
-    return f", STAGE_PRODUCT={spec.stage_product}" if spec.stage_product else ""
-
-
-def effective_stage_product_final(spec: ModuleSpec) -> int:
-    return spec.stage_product if spec.stage_product_final < 0 else spec.stage_product_final
-
-
-def _spf_suffix(spec: ModuleSpec) -> str:
-    spf = effective_stage_product_final(spec)
-    return f", STAGE_PRODUCT_FINAL={spf}" if spec.kind == "log2" and spf != spec.stage_product else ""
-
-
-def _wm_suffix(spec: ModuleSpec) -> str:
-    return f", WMULTIPLIER={spec.wmultiplier}" if spec.wmultiplier else ""
-
-
-def _un_suffix(spec: ModuleSpec) -> str:
-    return f", UNROLL100={spec.unroll100}" if spec.unroll100 != 100 else ""
-
-
-def _parallel_suffix(spec: ModuleSpec) -> str:
-    return f", PARALLEL={effective_parallel(spec)}" if spec.kind == "sincos" and effective_parallel(spec) else ""
-
-
-def _so_suffix(spec: ModuleSpec) -> str:
-    return ", STAGE_OUTPUT=1" if spec.stage_output == 1 else ""
-
-
-def _sa_suffix(spec: ModuleSpec) -> str:
-    return f", STAGE_ALIGN={spec.stage_align}" if spec.stage_align else ""
-
-
-def _sd_suffix(spec: ModuleSpec) -> str:
-    return f", STAGE_DECODE={spec.stage_decode}" if spec.stage_decode else ""
-
-
-def _sn_suffix(spec: ModuleSpec) -> str:
-    return f", STAGE_NORMALIZE={spec.stage_normalize}" if spec.stage_normalize else ""
-
-
-def _sno_suffix(spec: ModuleSpec) -> str:
-    return (
-        f", STAGE_NORMALIZE_OUTPUT={spec.stage_normalize_output}"
-        if spec.kind == "log2" and spec.stage_normalize_output
-        else ""
-    )
-
-
-def _pa_suffix(spec: ModuleSpec) -> str:
-    return f", STAGE_PACK={spec.stage_pack}" if spec.stage_pack else ""
-
-
 def params(spec: ModuleSpec) -> str:
-    if spec.kind == "pack":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WEXP_UNBIASED={spec.wexp_unbiased}"
-    if spec.kind == "div_core":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, " f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}"
-    if spec.kind == "div":
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}, "
-            f"QFRAC={div_qfrac(spec)}, WEXP_UNBIASED={spec.wexp + 2}"
-            f"{_si_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}"
-        )
-    if spec.kind == "mul_ilog2_const":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, K={MUL_ILOG2_CONST_K}{_si_suffix(spec)}{_sd_suffix(spec)}"
-    if spec.kind == "mul_ilog2":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WK={spec.wk}{_si_suffix(spec)}{_sd_suffix(spec)}"
-    if spec.kind == "to_int":
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}{_si_suffix(spec)}"
-    if spec.kind == "resize":
-        return (
-            f"WEXP_IN={spec.wexp_in}, WMAN_IN={spec.wman_in}, "
-            f"WEXP_OUT={spec.wexp_out}, WMAN_OUT={spec.wman_out}{_si_suffix(spec)}"
-        )
-    if spec.kind == "round":
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}"
-            f"{_si_suffix(spec)}{_sd_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}"
-        )
-    if spec.kind in {"cmp", "sort"}:
-        return f"WEXP={spec.wexp}, WMAN={spec.wman}{_si_suffix(spec)}"
-    if spec.kind == "mul":
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}"
-            f"{_sp_suffix(spec)}{_wm_suffix(spec)}{_si_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}"
-        )
-    if spec.kind in {"add", "addsub"}:
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}"
-            f"{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}{_sn_suffix(spec)}"
-            f"{_pa_suffix(spec)}{_so_suffix(spec)}"
-        )
-    if spec.kind == "from_int":
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}, WINT={spec.wint}"
-            f"{_si_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}"
-        )
-    if spec.kind in {"exp2", "log2"}:
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}"
-            f"{_si_suffix(spec)}{_sr_suffix(spec)}{_sd_suffix(spec)}{_sp_suffix(spec)}{_spf_suffix(spec)}"
-            f"{_wm_suffix(spec)}{_sn_suffix(spec)}{_sno_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}"
-        )
-    if spec.kind == "fma":
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}"
-            f"{_sp_suffix(spec)}{_wm_suffix(spec)}{_si_suffix(spec)}{_sd_suffix(spec)}{_sa_suffix(spec)}"
-            f"{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}"
-        )
-    if spec.kind == "sincos":
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}"
-            f"{_un_suffix(spec)}{_parallel_suffix(spec)}{_sp_suffix(spec)}{_wm_suffix(spec)}"
-            f"{_si_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}"
-        )
-    if spec.kind == "atan2":
-        return (
-            f"WEXP={spec.wexp}, WMAN={spec.wman}"
-            f"{_un_suffix(spec)}{_sp_suffix(spec)}{_wm_suffix(spec)}"
-            f"{_si_suffix(spec)}{_sn_suffix(spec)}{_pa_suffix(spec)}{_so_suffix(spec)}"
-        )
-    return f"WEXP={spec.wexp}, WMAN={spec.wman}"
+    return ", ".join(f"{name}={value}" for name, value in model_for(spec).params.items())
 
 
 def selected_modules(names: str | None) -> list[ModuleSpec]:

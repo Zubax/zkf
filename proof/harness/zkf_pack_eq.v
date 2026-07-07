@@ -1,12 +1,11 @@
-/// Formal harness: _zkf_pack DUT vs zkf_pack_ref, for either STAGE_OUTPUT.
+/// Formal harness: _zkf_pack DUT vs zkf_pack_ref.
 /// Single-pulse: drive arbitrary inputs at cycle 1 with rst=0/in_valid=1, else in_valid=0.
-/// STAGE_OUTPUT=1: result is registered, valid at cycle 2 (compare against the shadowed inputs).
-/// STAGE_OUTPUT=0: result is combinational, valid at cycle 1 (compare against the live inputs).
+/// LATENCY is supplied by run_proofs.py from the shared Python model.
 
 `default_nettype none
 
 module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNBIASED = WEXP + 2,
-                     parameter STAGE_OUTPUT = 0) (
+                     parameter STAGE_INPUT = 0, parameter STAGE_OUTPUT = 0, parameter LATENCY = 0) (
     input wire clk,
     input wire rst,
     input wire in_valid,
@@ -19,17 +18,18 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
     input wire                            round_bit,
     input wire                            sticky
 );
-    localparam WFULL    = WEXP + WMAN;
-    localparam T_RESULT = 1 + STAGE_OUTPUT;  // combinational: result at cycle 1; registered: at cycle 2
+    localparam WFULL           = WEXP + WMAN;
+    localparam integer T_RESULT = 1 + LATENCY;
+    localparam integer CYCLE_W  = (T_RESULT < 2) ? 2 : $clog2(T_RESULT + 2);
 
-    reg [3:0] cycle = 4'd0;
-    always @(posedge clk) cycle <= (cycle == 4'd15) ? cycle : cycle + 4'd1;
+    reg [CYCLE_W-1:0] cycle = {CYCLE_W{1'b0}};
+    always @(posedge clk) if (cycle < T_RESULT + 1) cycle <= cycle + 1'b1;
 
     always @(*) begin
-        if (cycle == 4'd0) begin
+        if (cycle == 0) begin
             assume(rst == 1'b1);
             assume(in_valid == 1'b0);
-        end else if (cycle == 4'd1) begin
+        end else if (cycle == 1) begin
             assume(rst == 1'b0);
             assume(in_valid == 1'b1);
         end else begin
@@ -38,7 +38,6 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
         end
     end
 
-    // Shadow latches.
     reg                            sh_sign;
     reg                            sh_force_zero;
     reg                            sh_force_inf;
@@ -47,7 +46,7 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
     reg                            sh_guard;
     reg                            sh_round_bit;
     reg                            sh_sticky;
-    always @(posedge clk) if (cycle == 4'd1) begin
+    always @(posedge clk) if (cycle == 1) begin
         sh_sign         <= sign;
         sh_force_zero   <= force_zero;
         sh_force_inf    <= force_inf;
@@ -58,10 +57,15 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
         sh_sticky       <= sticky;
     end
 
-    // DUT.
     wire             dut_valid;
     wire [WFULL-1:0] dut_y;
-    _zkf_pack #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED), .STAGE_OUTPUT(STAGE_OUTPUT)) u_dut (
+    _zkf_pack #(
+        .WEXP(WEXP),
+        .WMAN(WMAN),
+        .WEXP_UNBIASED(WEXP_UNBIASED),
+        .STAGE_INPUT(STAGE_INPUT),
+        .STAGE_OUTPUT(STAGE_OUTPUT)
+    ) u_dut (
         .clk(clk), .rst(rst), .in_valid(in_valid),
         .sign(sign), .force_zero(force_zero), .force_inf(force_inf),
         .exp_unbiased(exp_unbiased), .significand(significand),
@@ -69,18 +73,15 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
         .out_valid(dut_valid), .y(dut_y)
     );
 
-    // Reference operands: registered output compares against the shadow (result one cycle late); combinational
-    // output compares against the live inputs (result in the input's own cycle).
-    wire                            r_sign         = STAGE_OUTPUT ? sh_sign         : sign;
-    wire                            r_force_zero   = STAGE_OUTPUT ? sh_force_zero   : force_zero;
-    wire                            r_force_inf    = STAGE_OUTPUT ? sh_force_inf    : force_inf;
-    wire signed [WEXP_UNBIASED-1:0] r_exp_unbiased = STAGE_OUTPUT ? sh_exp_unbiased : exp_unbiased;
-    wire                 [WMAN-1:0] r_significand  = STAGE_OUTPUT ? sh_significand  : significand;
-    wire                            r_guard        = STAGE_OUTPUT ? sh_guard        : guard;
-    wire                            r_round_bit    = STAGE_OUTPUT ? sh_round_bit    : round_bit;
-    wire                            r_sticky       = STAGE_OUTPUT ? sh_sticky       : sticky;
+    wire                            r_sign         = LATENCY ? sh_sign         : sign;
+    wire                            r_force_zero   = LATENCY ? sh_force_zero   : force_zero;
+    wire                            r_force_inf    = LATENCY ? sh_force_inf    : force_inf;
+    wire signed [WEXP_UNBIASED-1:0] r_exp_unbiased = LATENCY ? sh_exp_unbiased : exp_unbiased;
+    wire                 [WMAN-1:0] r_significand  = LATENCY ? sh_significand  : significand;
+    wire                            r_guard        = LATENCY ? sh_guard        : guard;
+    wire                            r_round_bit    = LATENCY ? sh_round_bit    : round_bit;
+    wire                            r_sticky       = LATENCY ? sh_sticky       : sticky;
 
-    // Reference.
     wire [WFULL-1:0] ref_y;
     zkf_pack_ref #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED)) u_ref (
         .sign(r_sign), .force_zero(r_force_zero), .force_inf(r_force_inf),
@@ -94,8 +95,7 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
             assert(dut_valid == 1'b1);
             assert(dut_y == ref_y);
         end
-        // The registered output is silent the cycle before the result; the combinational output is valid at cycle 1.
-        if (STAGE_OUTPUT != 0 && cycle == 4'd1) assert(dut_valid == 1'b0);
+        if (cycle >= 1 && cycle < T_RESULT) assert(dut_valid == 1'b0);
     end
 endmodule
 
