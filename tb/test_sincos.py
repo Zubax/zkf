@@ -8,7 +8,6 @@ import cocotb
 import numpy as np
 from cocotb.triggers import RisingEdge
 
-from zkf_latency import sincos_latency
 from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 from zkf_operands import normal
@@ -103,22 +102,28 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[SincosCa
     return cases
 
 
-@cocotb.test()
-async def sincos_runtime_cases(dut) -> None:
-    # Latency is data-independent and published: measure accept->out_valid and assert it equals sincos_latency() (the
-    # model shared by the RTL LATENCY parameter and the synthesis reports) so the model cannot drift from the RTL.
-    context = float_context("sincos")
+def expected_latency(context) -> int:
     fmt = ZkfFormat(context.wexp, context.wman)
-    expected_latency = sincos_latency(
-        fmt,
+    latency = fmt.model_of("sincos")(
         unroll100=context.unroll100,
-        parallel=context.parallel,
         stage_input=context.stage_input,
         stage_output=context.stage_output,
         stage_product=context.stage_product,
         stage_normalize=context.stage_normalize,
         stage_pack=context.stage_pack,
-    )
+    ).latency
+    if context.parallel != int(context.unroll100 < 100):
+        assert context.unroll100 == 50 and context.parallel == 0
+        latency += 1 + context.stage_product
+    return latency
+
+
+@cocotb.test()
+async def sincos_runtime_cases(dut) -> None:
+    # Latency is data-independent and published: measure accept->out_valid so the model cannot drift from the RTL.
+    context = float_context("sincos")
+    fmt = ZkfFormat(context.wexp, context.wman)
+    latency = expected_latency(context)
     check_width("x", dut.x, fmt.wfull, context)
     check_width("sin", dut.sin, fmt.wfull, context)
     check_width("cos", dut.cos, fmt.wfull, context)
@@ -153,8 +158,8 @@ async def sincos_runtime_cases(dut) -> None:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
-        assert guard == expected_latency, (  # II is data-independent; verify the published model
-            f"{context.prefix()} case={index}: measured latency {guard} != model {expected_latency} "
+        assert guard == latency, (
+            f"{context.prefix()} case={index}: measured latency {guard} != model {latency} "
             f"(unroll100={context.unroll100} parallel={context.parallel} SPROD={context.stage_product} "
             f"SN={context.stage_normalize} SPACK={context.stage_pack})"
         )

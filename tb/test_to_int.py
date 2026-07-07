@@ -18,7 +18,6 @@ from zkf_operands import (
     random_operand,
     random_zero,
 )
-from zkf_latency import to_int_latency
 from zkf_params import cast_context, check_width
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -163,7 +162,7 @@ async def to_int_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     drive_unsigned(dut.a, 0)
 
-    register_stages = to_int_latency(stage_input=context.stage_input)
+    register_stages = fmt.model_of("to_int")(wint=wint, stage_input=context.stage_input).latency
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, wint)})
 
     def drive_case(case: ToIntCase) -> dict[str, int]:

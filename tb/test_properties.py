@@ -15,7 +15,6 @@ from cocotb.triggers import RisingEdge, Timer
 from zkf import ZkfFormat
 from zkf_bits import hex_bits
 from zkf_operands import canonical_inf, directed_numbers, normal, pack_bits, random_operand, zero
-from zkf_latency import add_latency, mul_latency
 from zkf_params import check_width, float_context
 from zkf_stream import drive_unsigned, is_resolvable, start_clock
 
@@ -73,17 +72,17 @@ async def drive_and_capture(dut, a: int, b: int, stages: int, op_sub: int = 0) -
 
 
 def infer_stages(
-    dut, stage_product: int = 0, stage_decode: int = 0, stage_align: int = 0, stage_output: int = 0
+    dut, fmt: ZkfFormat, stage_product: int = 0, stage_decode: int = 0, stage_align: int = 0, stage_output: int = 0
 ) -> int:
-    """
-    Pipeline depth per toplevel (knobs hardcoded): zkf_mul has STAGE_PRODUCT; zkf_add/zkf_addsub have
-    STAGE_DECODE and STAGE_ALIGN; all carry STAGE_OUTPUT (0=combinational, 1=registered).
-    """
     name = str(dut._name)
     if "mul" in name:
-        return mul_latency(stage_product=stage_product, stage_output=stage_output)
+        return fmt.model_of("mul")(stage_product=stage_product, stage_output=stage_output).latency
     if "addsub" in name or "add" in name:
-        return add_latency(stage_decode=stage_decode, stage_align=stage_align, stage_output=stage_output)
+        return fmt.model_of("add")(
+            stage_decode=stage_decode,
+            stage_align=stage_align,
+            stage_output=stage_output,
+        ).latency
     raise RuntimeError(f"unknown toplevel for property test: {name}")
 
 
@@ -94,7 +93,9 @@ async def commutativity(dut) -> None:
     check_width("a", dut.a, fmt.wfull, context)
     check_width("b", dut.b, fmt.wfull, context)
     check_width("y", dut.y, fmt.wfull, context)
-    stages = infer_stages(dut, context.stage_product, context.stage_decode, context.stage_align, context.stage_output)
+    stages = infer_stages(
+        dut, fmt, context.stage_product, context.stage_decode, context.stage_align, context.stage_output
+    )
 
     start_clock(dut)
     await reset_dut(dut, stages)
@@ -149,7 +150,9 @@ async def algebraic_identities(dut) -> None:
     check_width("a", dut.a, fmt.wfull, context)
     check_width("b", dut.b, fmt.wfull, context)
     check_width("y", dut.y, fmt.wfull, context)
-    stages = infer_stages(dut, context.stage_product, context.stage_decode, context.stage_align, context.stage_output)
+    stages = infer_stages(
+        dut, fmt, context.stage_product, context.stage_decode, context.stage_align, context.stage_output
+    )
 
     name = str(dut._name)
     is_mul = "mul" in name

@@ -11,7 +11,6 @@ from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 from zkf_operands import normal
 from zkf_operands import directed_numbers, random_bits, random_operand
-from zkf_latency import exp2_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -95,14 +94,13 @@ async def exp2_runtime_cases(dut) -> None:
     dut.in_valid.value = 0
     dut.x.value = 0
 
-    register_stages = exp2_latency(
-        fmt,
+    register_stages = fmt.model_of("exp2")(
         stage_input=context.stage_input,
         stage_reduce=context.stage_reduce,
         stage_product=context.stage_product,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    )
+    ).latency
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: UnaryCase) -> dict[str, int]:

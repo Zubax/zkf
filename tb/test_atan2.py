@@ -8,7 +8,6 @@ import cocotb
 import numpy as np
 from cocotb.triggers import RisingEdge
 
-from zkf_latency import atan2_latency
 from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 from zkf_operands import normal
@@ -142,19 +141,17 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[Atan2Cas
 
 @cocotb.test()
 async def atan2_runtime_cases(dut) -> None:
-    # Latency is data-independent and published: measure accept->out_valid and assert it equals atan2_latency() so the
-    # model cannot drift from the RTL.
+    # Latency is data-independent and published: measure accept->out_valid so the model cannot drift from the RTL.
     context = float_context("atan2")
     fmt = ZkfFormat(context.wexp, context.wman)
-    expected_latency = atan2_latency(
-        fmt,
+    expected_latency = fmt.model_of("atan2")(
         unroll100=context.unroll100,
         stage_input=context.stage_input,
         stage_product=context.stage_product,
         stage_normalize=context.stage_normalize,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    )
+    ).latency
     check_width("y", dut.y, fmt.wfull, context)
     check_width("x", dut.x, fmt.wfull, context)
     check_width("theta", dut.theta, fmt.wfull, context)
@@ -193,7 +190,7 @@ async def atan2_runtime_cases(dut) -> None:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
-        assert guard == expected_latency, (  # II is data-independent; verify the published model
+        assert guard == expected_latency, (
             f"{context.prefix()} case={index}: measured latency {guard} != model {expected_latency} "
             f"(unroll100={context.unroll100} SI={context.stage_input} SP={context.stage_product} "
             f"SN={context.stage_normalize} PA={context.stage_pack} "

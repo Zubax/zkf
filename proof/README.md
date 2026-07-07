@@ -22,7 +22,9 @@ For each module we write:
   the reference applied to the shadow inputs. Validity latency is asserted on every cycle.
 
 - A **SymbiYosys flow** under `sby/` — one `.sby` file per proof, naming the parameter set,
-  engine, BMC depth, and the file list.
+  engine, BMC depth, and the file list. `run_proofs.py` injects `LATENCY` for pipelined DUTs.
+
+Latency values come from `ZkfFormat(WEXP, WMAN).model_of(<operator>)(...).latency`.
 
 For combinational modules the spec is small enough that the harness asserts the spec directly without a separate
 reference module.
@@ -80,8 +82,8 @@ Combinational/sequential and trivial-wrapper consolidation rule applied:
 nox -s formal              # all primary proofs, renders HTML report at the end
 nox -s clean               # wipe build/ (incl. build/float/formal)
 
-# Iterate on one proof:
-sby -f -d build/float/formal/zkf_pack proof/sby/zkf_pack.sby
+# For one proof, point --sby-dir at a scratch directory containing only that .sby.
+python proof/run_proofs.py --sby-dir build/float/formal-one/sby --jobs 1 --timeout-seconds 300
 ```
 
 The report at `build/float/formal/report.html` is regenerated automatically by `run_proofs.py`;

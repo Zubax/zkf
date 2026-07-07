@@ -17,17 +17,18 @@ Importing this submodule requires numpy and mpmath.
 
 import math as _math
 from fractions import Fraction as _Fraction
+from typing import Any
 
 import mpmath as _mpmath
 import numpy as _np
 
-from ._core import (
+from ._format import ZkfFormat
+from ._value import (
     Atan2Result,
     DivResult,
     Log2Result,
     SinCos,
     Zkf,
-    ZkfFormat,
     atan2_canon_half,
     atan2_special,
 )
@@ -214,25 +215,25 @@ def _require_same(*operands: Zkf) -> None:
             raise ValueError(f"operands have different formats: {fmt} vs {other.fmt}")
 
 
-def _mpf_to_fraction(x) -> _Fraction:
+def _mpf_to_fraction(x: Any) -> _Fraction:
     """Exact dyadic Fraction of an mpmath mpf (value = man * 2^exp)."""
     sign, man, exp, _bc = _mpmath.mpf(x)._mpf_
     value = _Fraction(int(man)) * (_Fraction(2) ** int(exp))
     return -value if sign else value
 
 
-def _round_mpf(fmt: ZkfFormat, v) -> Zkf:
+def _round_mpf(fmt: ZkfFormat, v: Any) -> Zkf:
     """Round an mpmath value to the nearest ZKF value (ties-to-even); exact zero -> +0."""
     return fmt.encode(_mpf_to_fraction(v))
 
 
-def _to_mpf(z: Zkf):
+def _to_mpf(z: Zkf) -> Any:
     """Exact signed mpf of a finite Zkf (must be called inside an ample mpmath.workprec context)."""
     v = _mpmath.mpf(z.significand()) * _mpmath.power(2, (z.exp - z.fmt.bias) - z.fmt.wfrac)
     return -v if z.negative else v
 
 
-def _dtype(fmt: ZkfFormat):
+def _dtype(fmt: ZkfFormat) -> Any | None:
     if (fmt.wexp, fmt.wman) == (8, 24):
         return _np.float32
     if (fmt.wexp, fmt.wman) == (11, 53):
@@ -252,13 +253,13 @@ def _is_ieee_canonical(z: Zkf) -> bool:
     return True
 
 
-def _to_np(bits: int, dtype):
+def _to_np(bits: int, dtype: Any) -> Any:
     if dtype is _np.float32:
         return _np.array([bits], dtype=_np.uint32).view(_np.float32)[0]
     return _np.array([bits], dtype=_np.uint64).view(_np.float64)[0]
 
 
-def _from_np(value, dtype) -> int:
+def _from_np(value: Any, dtype: Any) -> int:
     if dtype is _np.float32:
         return int(_np.array([value], dtype=_np.float32).view(_np.uint32)[0])
     return int(_np.array([value], dtype=_np.float64).view(_np.uint64)[0])

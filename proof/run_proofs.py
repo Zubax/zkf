@@ -29,6 +29,19 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(REPO))
+from zkf import ZkfFormat  # noqa: E402
+
+LATENCY_KIND_BY_HARNESS = {
+    "zkf_pack_eq": "pack",
+    "zkf_cmp_eq": "cmp",
+    "zkf_sort_eq": "sort",
+    "zkf_mul_eq": "mul",
+    "zkf_add_eq": "add",
+    "zkf_div_eq": "div",
+}
+
 
 @dataclass
 class ProofResult:
@@ -112,25 +125,100 @@ def parse_sby_summary(build_dir: Path) -> tuple[str, str, str]:
     return (status, engine, trace)
 
 
-def parse_sby_parameters(sby_path: Path) -> str:
-    chparam_terms: list[str] = []
+def parse_sby_chparams(sby_path: Path) -> list[tuple[str, dict[str, int]]]:
+    out: list[tuple[str, dict[str, int]]] = []
     with sby_path.open() as fp:
         for raw in fp:
             line = raw.strip()
             if line.startswith("chparam"):
-                # Strip leading 'chparam' and trailing module name; keep parameter assignments.
                 tokens = line.split()
-                pairs: list[str] = []
+                pairs: dict[str, int] = {}
                 index = 1
                 while index < len(tokens):
                     if tokens[index] == "-set" and index + 2 < len(tokens):
-                        pairs.append(f"{tokens[index+1]}={tokens[index+2]}")
+                        pairs[tokens[index + 1]] = int(tokens[index + 2], 0)
                         index += 3
                     else:
                         index += 1
                 if pairs:
-                    chparam_terms.append(" ".join(pairs))
+                    out.append((tokens[-1], pairs))
+    return out
+
+
+def parse_sby_parameters(sby_path: Path) -> str:
+    chparam_terms: list[str] = []
+    for _module, pairs in parse_sby_chparams(sby_path):
+        chparam_terms.append(" ".join(f"{key}={value}" for key, value in pairs.items()))
     return "; ".join(chparam_terms)
+
+
+def proof_latency(harness: str, params: dict[str, int]) -> int | None:
+    kind = LATENCY_KIND_BY_HARNESS.get(harness)
+    if kind is None:
+        return None
+    wexp = params.get("WEXP", 6)
+    wman = params.get("WMAN", 18)
+    values = {
+        "wexp_unbiased": params.get("WEXP_UNBIASED"),
+        "stage_input": params.get("STAGE_INPUT", 0),
+        "stage_product": params.get("STAGE_PRODUCT", 0),
+        "stage_align": params.get("STAGE_ALIGN", 0),
+        "stage_decode": params.get("STAGE_DECODE", 0),
+        "stage_normalize": params.get("STAGE_NORMALIZE", 0),
+        "stage_pack": params.get("STAGE_PACK", 0),
+        "stage_output": params.get("STAGE_OUTPUT", 0),
+    }
+    fmt = ZkfFormat(wexp, wman)
+    factory = fmt.model_of(kind)
+    defaults = factory()
+    model = factory(**{name: values[name] for name in defaults.config.keys() if name in values})
+    return model.latency
+
+
+def _inject_chparam_latency(line: str, latency: int) -> str:
+    tokens = line.split()
+    if "LATENCY" in tokens:
+        index = tokens.index("LATENCY")
+        tokens[index + 1] = str(latency)
+        return " ".join(tokens)
+    return " ".join([*tokens[:-1], "-set", "LATENCY", str(latency), tokens[-1]])
+
+
+def prepare_sby(sby_path: Path, build_root: Path) -> Path:
+    chparams = parse_sby_chparams(sby_path)
+    if not chparams:
+        return sby_path
+    latencies = {
+        harness: latency for harness, params in chparams if (latency := proof_latency(harness, params)) is not None
+    }
+    if not latencies:
+        return sby_path
+
+    generated_dir = build_root / "_generated_sby"
+    generated_dir.mkdir(parents=True, exist_ok=True)
+    out_path = generated_dir / sby_path.name
+    min_depth = max(latencies.values()) + 4
+    in_files = False
+    in_options = False
+    lines: list[str] = []
+    for raw in sby_path.read_text(encoding="utf-8").splitlines():
+        stripped = raw.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            in_files = stripped == "[files]"
+            in_options = stripped == "[options]"
+            lines.append(raw)
+        elif in_options and stripped.startswith("depth "):
+            depth = max(int(stripped.split()[1], 0), min_depth)
+            lines.append(f"depth {depth}")
+        elif stripped.startswith("chparam"):
+            harness = stripped.split()[-1]
+            lines.append(_inject_chparam_latency(raw, latencies[harness]) if harness in latencies else raw)
+        elif in_files and stripped and not stripped.startswith("#"):
+            lines.append(str((REPO / stripped).resolve()))
+        else:
+            lines.append(raw)
+    out_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return out_path
 
 
 def run_one_proof(sby_path: Path, build_root: Path, timeout: int) -> ProofResult:
@@ -138,7 +226,8 @@ def run_one_proof(sby_path: Path, build_root: Path, timeout: int) -> ProofResult
     build_dir = build_root / name
     if build_dir.exists():
         shutil.rmtree(build_dir)
-    cmd = ["sby", "-f", "-d", str(build_dir), str(sby_path)]
+    prepared_sby = prepare_sby(sby_path, build_root)
+    cmd = ["sby", "-f", "-d", str(build_dir), str(prepared_sby)]
     start = time.monotonic()
     try:
         completed = subprocess.run(cmd, timeout=timeout, capture_output=True, text=True)
@@ -150,7 +239,7 @@ def run_one_proof(sby_path: Path, build_root: Path, timeout: int) -> ProofResult
             status="TIMEOUT",
             wall_seconds=wall,
             engine="",
-            parameters=parse_sby_parameters(sby_path),
+            parameters=parse_sby_parameters(prepared_sby),
             trace_vcd="",
             detail=f"Wall-clock soft timeout after {timeout}s",
         )
@@ -166,7 +255,7 @@ def run_one_proof(sby_path: Path, build_root: Path, timeout: int) -> ProofResult
         status=status,
         wall_seconds=wall,
         engine=engine,
-        parameters=parse_sby_parameters(sby_path),
+        parameters=parse_sby_parameters(prepared_sby),
         trace_vcd=trace,
         detail=detail,
     )

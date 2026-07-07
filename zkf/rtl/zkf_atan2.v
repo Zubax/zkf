@@ -685,8 +685,7 @@ module zkf_atan2 #(
     //       product, so the pmul_p->P2 hop is wires only) and the EARLY unmap base un_base = unmap_const +/- z_K (from
     //       registered dv_*) -- plus the bypass jam and every dv_*-derived back-end input, pre-forming texp/mexp.
     //   B2 (next stage): performs the ONE remaining signed add un_tmag = un_base +/- res_delta and assembles the packer
-    //       inputs. So the P2->B2 cone is exactly one add; the pmul_p->P2 cone is the shift wires. +1 latency cycle
-    //       (folded into BASE / atan2_latency()).
+    //       inputs. So the P2->B2 cone is exactly one add; the pmul_p->P2 cone is the shift wires. +1 latency cycle.
     // The special-case descriptor {special, sp_sign, spk, sp_mag} is NOT re-registered through P2/B2:
     // it is read DIRECTLY from the held dv_* regs at the output (latched at cd_done, held for the whole single
     // in-flight transaction -- earlier and longer-lived than any p2_*/b2_* copy), so only the numeric theta payload

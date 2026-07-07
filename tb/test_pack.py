@@ -11,7 +11,6 @@ from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask, signed_range
 from zkf_operands import canonical_inf, normal, pack_bits, random_pack_mag_scale, zero
 from zkf_params import check_width, float_context
-from zkf_latency import pack_latency
 from zkf_stream import RegisterStageScoreboard, drive_signed, drive_unsigned, run_stream_cases, start_clock
 
 
@@ -333,7 +332,13 @@ async def pack_runtime_cases(dut) -> None:
     dut.round.value = 0
     dut.sticky.value = 0
 
-    register_stages = pack_latency(stage_output=context.stage_output)
+    register_stages = fmt.model_of("pack")(
+        wexp_unbiased=wexp_unbiased,
+        exp_is_biased=exp_is_biased,
+        assume_no_overflow=assume_no_overflow,
+        stage_input=context.stage_input,
+        stage_output=context.stage_output,
+    ).latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

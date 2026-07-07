@@ -10,7 +10,6 @@ import numpy as np
 from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
-from zkf_latency import add_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -154,14 +153,14 @@ async def addsub_runtime_cases(dut) -> None:
     dut.b.value = 0
     dut.op_sub.value = 0
 
-    register_stages = add_latency(
+    register_stages = fmt.model_of("addsub")(
         stage_input=context.stage_input,
         stage_decode=context.stage_decode,
         stage_align=context.stage_align,
         stage_normalize=context.stage_normalize,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    )
+    ).latency
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: AddSubCase) -> dict[str, int]:

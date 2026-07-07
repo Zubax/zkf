@@ -218,6 +218,8 @@ def _parallel(unroll100: int) -> int:
     value = plusarg_int("ZKF_PARALLEL", 1 if unroll100 < 100 else 0)
     if value not in (0, 1):
         raise ValueError(f"ZKF_PARALLEL must be 0 or 1, got {value}")
+    if value and unroll100 != 50:
+        raise ValueError(f"ZKF_PARALLEL requires ZKF_UNROLL100=50, got {unroll100}")
     return value
 
 
@@ -246,6 +248,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
     if wexp_unbiased is not None and wexp_unbiased < wexp + 1:
         raise ValueError(f"ZKF_WEXP_UNBIASED={wexp_unbiased} is too narrow for ZKF_WEXP={wexp}")
     stage_product = _stage_product()
+    unroll100 = _unroll100()
     return TestContext(
         suite=suite,
         config=plusarg_str("ZKF_CONFIG", "default"),
@@ -266,8 +269,8 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_normalize_output=_stage_normalize_output(),
         stage_pack=_stage_pack(),
         stage_output=_stage_output(),
-        unroll100=_unroll100(),
-        parallel=_parallel(_unroll100()),
+        unroll100=unroll100,
+        parallel=_parallel(unroll100) if suite == "sincos" else 0,
         exp_is_biased=_exp_is_biased(),
         assume_no_overflow=_assume_no_overflow(),
     )

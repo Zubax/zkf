@@ -10,7 +10,6 @@ import numpy as np
 from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
-from zkf_latency import cmp_latency
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
 
@@ -157,7 +156,7 @@ async def cmp_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    register_stages = cmp_latency(stage_input=context.stage_input)
+    register_stages = fmt.model_of("cmp")(stage_input=context.stage_input).latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,
