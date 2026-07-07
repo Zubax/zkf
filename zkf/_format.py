@@ -19,6 +19,13 @@ from ._reference import (
 
 @dataclass(frozen=True)
 class OperatorModel:
+    """
+    This is the centerpiece for modeling and instantiating operators.
+    Instantiate RTL as:
+
+        f"{model.module} #({model.verilog_params}) {instance_name} ({nets...});"
+    """
+
     fmt: ZkfFormat
     module: ClassVar[str]
 
