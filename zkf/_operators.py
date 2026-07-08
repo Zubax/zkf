@@ -732,6 +732,10 @@ class SincosModel(OperatorModel):
             + self.stage_output
         )
 
+    @property
+    def initiation_interval(self) -> int:
+        return self.latency + 1
+
 
 @dataclass(frozen=True)
 class Atan2Model(OperatorModel):
@@ -794,6 +798,10 @@ class Atan2Model(OperatorModel):
             + self.stage_pack
             + self.stage_output
         )
+
+    @property
+    def initiation_interval(self) -> int:
+        return self.latency + 1
 
 
 def _check_int_range(value: int, min: int | None, max: int | None, /, extra: set[int] | None = None) -> None:

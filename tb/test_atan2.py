@@ -9,6 +9,7 @@ import numpy as np
 from cocotb.triggers import RisingEdge
 
 from zkf import ZkfFormat
+from zkf._reference import atan2_bypass_shift
 from zkf_bits import hex_bits, mask
 from zkf_operands import normal
 from zkf_operands import directed_numbers, random_inf, random_normal_near, random_operand, random_zero
@@ -35,6 +36,26 @@ def add_unique(cases: list[Atan2Case], seen: set[tuple[int, int]], label: str, f
     seen.add(key)
     r = fmt.wrap(key[0]).atan2(fmt.wrap(key[1]))
     cases.append(Atan2Case(label, key[0], key[1], r.theta.bits, r.magnitude.bits))
+
+
+# A full per-exponent sweep is O(2**WEXP) and at wide WEXP dominates CI wall time. Above the cap, sample only the
+# coverage-bearing exponents: the extremes, the bypass-decision boundary (bias +- the bypass shift), and an even
+# spread. Line coverage is unaffected.
+_FULL_SWEEP_CAP = 4096
+
+
+def bypass_sweep_exponents(fmt: ZkfFormat) -> list[int]:
+    top = fmt.exp_inf
+    if top - 1 <= _FULL_SWEEP_CAP:
+        return list(range(1, top))
+    shift = atan2_bypass_shift(fmt)
+    keep: set[int] = set()
+    keep.update(range(1, 9))
+    keep.update(range(top - 8, top))
+    for center in (fmt.bias, fmt.bias + shift, fmt.bias - shift):
+        keep.update(range(center - 4, center + 5))
+    keep.update(range(1, top, max(1, (top - 1) // _FULL_SWEEP_CAP)))
+    return sorted(e for e in keep if 1 <= e < top)
 
 
 def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
@@ -82,8 +103,8 @@ def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
             out.append((f"yone_xbig_{s}", one | sb, big | sb))
         out.append(("xneginf_ypos_finite", one, neginf))
         out.append(("xneginf_yneg_finite", mone, neginf))
-        # |y/x| straddling the small-ratio bypass boundary across the whole exponent range (x = +1).
-        for e in range(1, fmt.exp_inf):
+        # |y/x| straddling the small-ratio bypass boundary across the exponent range (x = +1).
+        for e in bypass_sweep_exponents(fmt):
             out.append((f"sweep_y_{e}", normal(fmt, 0, e, fmt.frac_mask), one))
             out.append((f"sweep_x_{e}", one, normal(fmt, 0, e, 1)))
     return out

@@ -80,12 +80,15 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
     return out
 
 
-def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[SincosCase]:
+def cases_for(
+    fmt: ZkfFormat, kind: str, seed: int, count: int, shard_index: int = 0, shard_count: int = 1
+) -> list[SincosCase]:
     cases: list[SincosCase] = []
     seen: set[int] = set()
 
     if kind == "exhaustive":
-        for x in range(1 << fmt.wfull):
+        # Strided slice: the union over all shard indices is the full sweep. Splits the suite's slowest case.
+        for x in range(shard_index, 1 << fmt.wfull, shard_count):
             add_unique(cases, seen, "exhaustive", fmt, x)
         return cases
 
@@ -127,7 +130,7 @@ async def sincos_runtime_cases(dut) -> None:
     check_width("x", dut.x, fmt.wfull, context)
     check_width("sin", dut.sin, fmt.wfull, context)
     check_width("cos", dut.cos, fmt.wfull, context)
-    cases = cases_for(fmt, context.kind, context.seed, context.count)
+    cases = cases_for(fmt, context.kind, context.seed, context.count, context.shard_index, context.shard_count)
 
     start_clock(dut)
     dut.rst.value = 1

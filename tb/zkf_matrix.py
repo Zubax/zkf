@@ -1117,6 +1117,26 @@ def _fast(out: list) -> None:
     )
 
 
+# The exhaustive sincos run is the suite's slowest case (~30 min on the runner), stranding one worker. Split each into
+# this many strided shards (union == the full sweep) so worksteal spreads them across the idle workers.
+SINCOS_SHARDS = 8
+
+
+def _shard_long_cases(runs: list) -> list:
+    out = []
+    for r in runs:
+        if r.module == "sincos" and dict(r.plus).get("ZKF_KIND") == "exhaustive" and SINCOS_SHARDS > 1:
+            for k in range(SINCOS_SHARDS):
+                suffix = f"_sh{k}of{SINCOS_SHARDS}"
+                plus = r.plus + [("ZKF_SHARD_INDEX", k), ("ZKF_SHARD_COUNT", SINCOS_SHARDS)]
+                out.append(
+                    Run(r.module, r.sim, r.tier, r.config + suffix, r.target, r.root + suffix, r.vlog, plus, r.defines)
+                )
+        else:
+            out.append(r)
+    return out
+
+
 def build_matrix() -> list:
     """The complete suite as a flat list of Runs."""
     out: list = []
@@ -1126,7 +1146,7 @@ def build_matrix() -> list:
     _deep_coverage(out)
     _properties(out)
     _fast(out)
-    return out
+    return _shard_long_cases(out)
 
 
 if __name__ == "__main__":

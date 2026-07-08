@@ -12,10 +12,8 @@ nox.options.reuse_existing_virtualenvs = True
 
 BLACK_TARGETS = ("zkf", "tb", "synth", "proof", "noxfile.py", "tools")
 
-# Each cocotb case runs the simulator and its Python driver as two tight-handoff threads that busy-wait on each other,
-# so a single case pins ~2 cores. `-n auto` (workers == cores) therefore double-books every core; the contended
-# handoffs then thrash and a few cases spin for hours (the ~6h tail). Cap workers near half the CPU count so each case
-# gets its two cores. worksteal load-balances the heterogeneous-duration matrix across them.
+# Half the cores, not all: the sims are memory-bandwidth-bound, so the full core count inflates every case ~+50% and
+# loses wall-clock. worksteal + the sharded long cases (zkf_matrix) fill the idle headroom.
 PYTEST_DIST = ("-n", str(max(1, (os.cpu_count() or 2) // 2)), "--dist", "worksteal")
 
 
