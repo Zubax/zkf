@@ -1117,10 +1117,8 @@ def _fast(out: list) -> None:
     )
 
 
-# The exhaustive sincos run (2**18 codes through the multi-cycle CORDIC) is by far the slowest case in the suite -- on
-# the CI runner a single one takes ~30 min, so it strands one worker while the rest of the pool sits idle behind it.
-# Split every exhaustive sincos into this many strided shards (union == the full sweep, coverage unchanged) so worksteal
-# spreads them across the idle workers. Bench support lives in test_sincos.cases_for + ZKF_SHARD_INDEX/COUNT.
+# The exhaustive sincos run is the suite's slowest case (~30 min on the runner), stranding one worker. Split each into
+# this many strided shards (union == the full sweep) so worksteal spreads them across the idle workers.
 SINCOS_SHARDS = 8
 
 

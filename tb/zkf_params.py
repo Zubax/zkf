@@ -44,8 +44,8 @@ class TestContext:
     parallel: int = 0  # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
     exp_is_biased: int = 0  # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees in-range exponent)
-    shard_index: int = 0  # exhaustive sweep is split into shard_count strided slices; this run drives slice shard_index
-    shard_count: int = 1  # >1 splits a long exhaustive case into parallel cocotb runs (union == the full sweep)
+    shard_index: int = 0  # strided-slice index of the exhaustive sweep
+    shard_count: int = 1  # >1 splits the sweep into parallel slices (union == full)
 
     @property
     def params(self) -> str:

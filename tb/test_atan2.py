@@ -38,16 +38,14 @@ def add_unique(cases: list[Atan2Case], seen: set[tuple[int, int]], label: str, f
     cases.append(Atan2Case(label, key[0], key[1], r.theta.bits, r.magnitude.bits))
 
 
-# The bypass sweep in directed_pairs() straddles the small-ratio bypass boundary at every exponent scale. The exponent
-# range is 2**WEXP, so a full per-exponent sweep is O(2**WEXP) simulated transactions -- at wide WEXP (e.g. w20_m16,
-# ~1e6 exponents -> ~2e6 cases) it dominates the whole CI wall time. Keep the full sweep where it is already cheap;
-# where it is not, sample the coverage-bearing exponents only: the extremes, the neighborhood of the bypass-decision
-# boundary (bias +- the bypass shift), and an even spread across the range. Line coverage is unaffected.
+# A full per-exponent sweep is O(2**WEXP) and at wide WEXP dominates CI wall time. Above the cap, sample only the
+# coverage-bearing exponents: the extremes, the bypass-decision boundary (bias +- the bypass shift), and an even
+# spread. Line coverage is unaffected.
 _FULL_SWEEP_CAP = 4096
 
 
 def bypass_sweep_exponents(fmt: ZkfFormat) -> list[int]:
-    top = fmt.exp_inf  # exponents run [1, exp_inf); exp_inf encodes the non-finite class
+    top = fmt.exp_inf
     if top - 1 <= _FULL_SWEEP_CAP:
         return list(range(1, top))
     shift = atan2_bypass_shift(fmt)
@@ -105,7 +103,7 @@ def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
             out.append((f"yone_xbig_{s}", one | sb, big | sb))
         out.append(("xneginf_ypos_finite", one, neginf))
         out.append(("xneginf_yneg_finite", mone, neginf))
-        # |y/x| straddling the small-ratio bypass boundary across the exponent range (x = +1); bounded at wide WEXP.
+        # |y/x| straddling the small-ratio bypass boundary across the exponent range (x = +1).
         for e in bypass_sweep_exponents(fmt):
             out.append((f"sweep_y_{e}", normal(fmt, 0, e, fmt.frac_mask), one))
             out.append((f"sweep_x_{e}", one, normal(fmt, 0, e, 1)))

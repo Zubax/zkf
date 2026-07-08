@@ -45,6 +45,10 @@ class OperatorModel:
     def latency(self) -> int:
         raise NotImplementedError
 
+    @property
+    def initiation_interval(self) -> int:
+        return 1
+
     def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
         return {**params, "LATENCY": self.latency}
 

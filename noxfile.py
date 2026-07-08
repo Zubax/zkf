@@ -12,11 +12,8 @@ nox.options.reuse_existing_virtualenvs = True
 
 BLACK_TARGETS = ("zkf", "tb", "synth", "proof", "noxfile.py", "tools")
 
-# A cocotb case occupies ~1 core (measured), but the sims are memory-bandwidth-bound: pushing workers to the full core
-# count inflates every case ~+50% from cache/bus contention and is a net loss (measured 56m vs 51m at cores vs
-# cores/2). Half the cores is the sweet spot -- enough parallelism, tolerable contention. The idle headroom this leaves
-# is not wasted: the long exhaustive transcendental cases are sharded (see zkf_matrix) so worksteal fills those workers
-# instead of stranding them behind a serial pole. worksteal load-balances the heterogeneous-duration matrix.
+# Half the cores, not all: the sims are memory-bandwidth-bound, so the full core count inflates every case ~+50% and
+# loses wall-clock. worksteal + the sharded long cases (zkf_matrix) fill the idle headroom.
 PYTEST_DIST = ("-n", str(max(1, (os.cpu_count() or 2) // 2)), "--dist", "worksteal")
 
 

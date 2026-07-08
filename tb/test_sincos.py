@@ -87,8 +87,7 @@ def cases_for(
     seen: set[int] = set()
 
     if kind == "exhaustive":
-        # Strided slice shard_index of shard_count; the union over all indices is the full [0, 2**wfull) sweep. The
-        # exhaustive sincos run is the slowest case in the suite, so the matrix splits it into parallel shards.
+        # Strided slice: the union over all shard indices is the full sweep. Splits the suite's slowest case.
         for x in range(shard_index, 1 << fmt.wfull, shard_count):
             add_unique(cases, seen, "exhaustive", fmt, x)
         return cases
