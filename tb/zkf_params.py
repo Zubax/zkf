@@ -44,6 +44,8 @@ class TestContext:
     parallel: int = 0  # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
     exp_is_biased: int = 0  # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees in-range exponent)
+    shard_index: int = 0  # exhaustive sweep is split into shard_count strided slices; this run drives slice shard_index
+    shard_count: int = 1  # >1 splits a long exhaustive case into parallel cocotb runs (union == the full sweep)
 
     @property
     def params(self) -> str:
@@ -237,6 +239,14 @@ def _assume_no_overflow() -> int:
     return value
 
 
+def _shard() -> tuple[int, int]:
+    count = plusarg_int("ZKF_SHARD_COUNT", 1)
+    index = plusarg_int("ZKF_SHARD_INDEX", 0)
+    if count < 1 or not (0 <= index < count):
+        raise ValueError(f"ZKF_SHARD_INDEX/COUNT must satisfy 0 <= index < count, got {index}/{count}")
+    return index, count
+
+
 def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContext:
     wexp = plusarg_int("ZKF_WEXP")
     wman = plusarg_int("ZKF_WMAN")
@@ -249,6 +259,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         raise ValueError(f"ZKF_WEXP_UNBIASED={wexp_unbiased} is too narrow for ZKF_WEXP={wexp}")
     stage_product = _stage_product()
     unroll100 = _unroll100()
+    shard_index, shard_count = _shard()
     return TestContext(
         suite=suite,
         config=plusarg_str("ZKF_CONFIG", "default"),
@@ -258,6 +269,8 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         wexp=wexp,
         wman=wman,
         wexp_unbiased=wexp_unbiased,
+        shard_index=shard_index,
+        shard_count=shard_count,
         wk=(plusarg_int("ZKF_WK", 0) or None),  # only zkf_mul_ilog2 sets it; 0/absent -> None (RTL default WEXP+1)
         stage_input=_stage_input(),
         stage_reduce=_stage_reduce(),

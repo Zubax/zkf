@@ -1117,6 +1117,28 @@ def _fast(out: list) -> None:
     )
 
 
+# The exhaustive sincos run (2**18 codes through the multi-cycle CORDIC) is by far the slowest case in the suite -- on
+# the CI runner a single one takes ~30 min, so it strands one worker while the rest of the pool sits idle behind it.
+# Split every exhaustive sincos into this many strided shards (union == the full sweep, coverage unchanged) so worksteal
+# spreads them across the idle workers. Bench support lives in test_sincos.cases_for + ZKF_SHARD_INDEX/COUNT.
+SINCOS_SHARDS = 8
+
+
+def _shard_long_cases(runs: list) -> list:
+    out = []
+    for r in runs:
+        if r.module == "sincos" and dict(r.plus).get("ZKF_KIND") == "exhaustive" and SINCOS_SHARDS > 1:
+            for k in range(SINCOS_SHARDS):
+                suffix = f"_sh{k}of{SINCOS_SHARDS}"
+                plus = r.plus + [("ZKF_SHARD_INDEX", k), ("ZKF_SHARD_COUNT", SINCOS_SHARDS)]
+                out.append(
+                    Run(r.module, r.sim, r.tier, r.config + suffix, r.target, r.root + suffix, r.vlog, plus, r.defines)
+                )
+        else:
+            out.append(r)
+    return out
+
+
 def build_matrix() -> list:
     """The complete suite as a flat list of Runs."""
     out: list = []
@@ -1126,7 +1148,7 @@ def build_matrix() -> list:
     _deep_coverage(out)
     _properties(out)
     _fast(out)
-    return out
+    return _shard_long_cases(out)
 
 
 if __name__ == "__main__":
