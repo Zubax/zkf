@@ -12,11 +12,13 @@ nox.options.reuse_existing_virtualenvs = True
 
 BLACK_TARGETS = ("zkf", "tb", "synth", "proof", "noxfile.py", "tools")
 
-# Each cocotb case runs the simulator and its Python driver as two tight-handoff threads that busy-wait on each other,
-# so a single case pins ~2 cores. `-n auto` (workers == cores) therefore double-books every core; the contended
-# handoffs then thrash and a few cases spin for hours (the ~6h tail). Cap workers near half the CPU count so each case
-# gets its two cores. worksteal load-balances the heterogeneous-duration matrix across them.
-PYTEST_DIST = ("-n", str(max(1, (os.cpu_count() or 2) // 2)), "--dist", "worksteal")
+# A cocotb case hands off between the simulator and its Python driver by blocking, not spinning, so it occupies ~1
+# core (measured: build and run both ~1.0 core for icarus and verilator). One worker per core is therefore correct;
+# worksteal load-balances the heterogeneous-duration matrix. The earlier ~6h tail was NOT oversubscription -- it was a
+# single atan2 case generating ~2e6 vectors via an O(2**WEXP) sweep (fixed in test_atan2.py); the incidental ~180%-CPU
+# reading that motivated a cores/2 cap came from that pathological case's rapid handoffs and does not generalize, so
+# the cap merely left half the runner idle.
+PYTEST_DIST = ("-n", str(os.cpu_count() or 2), "--dist", "worksteal")
 
 
 @nox.session(python=False, default=False)
