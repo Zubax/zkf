@@ -670,6 +670,7 @@ def _per_pr(sim, out: list) -> None:
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=6, sd=1))
+    out.append(_ilog2(sim, "pr", "w8_m36", 8, 36, "random", 512, wk=44, sd=0))
     for si in (0, 1):
         for cfg, w, m, wint, k, c in FROM_INT:
             out.append(_cast("from_int", sim, "pr", cfg, w, m, wint, k, c, si))

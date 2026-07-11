@@ -38,8 +38,8 @@ module zkf_mul_ilog2 #(
 );
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
-    // Signed accumulator wide enough to hold a_exp (0 .. 2^WEXP-1) + k (any signed WK value) without wrapping.
-    localparam WACC  = ((WEXP > WK) ? WEXP : WK) + 2;
+    localparam WK_NRW = WEXP + 1;
+    localparam WACC   = WEXP + 2;
 
     localparam [WEXP-1:0] EXP_INF = {WEXP{1'b1}};   // = 2^WEXP-1; new_exp >= EXP_INF is the overflow boundary
 
@@ -76,17 +76,33 @@ module zkf_mul_ilog2 #(
     wire             a_inf     =  &a_exp;
     wire             a_special = a_zero || a_inf;   // zero/inf pass through regardless of k, with absolute priority
 
-    // Result biased exponent a_exp + k, in a wide signed accumulator so any |k| lands outside the range without
-    // wrapping. Both boundaries stay live (k's sign is unknown at elaboration). The !a_special gate is what the
-    // constant module gets free from its |K| bound: without it, e.g. inf*2^(-big) drives new_exp < 0 and would be
-    // misclassified as underflow-to-zero. It keeps ldexp(+-inf,k)=+-inf and ldexp(+-0,k)=+-0.
-    wire signed [WACC-1:0] new_exp_acc = $signed({1'b0, a_exp}) + $signed(k_q);
+    wire signed [WK_NRW-1:0] k_nrw;
+    wire k_sat_pos;
+    wire k_sat_neg;
+    generate
+        if (WK <= WK_NRW) begin : g_k_extend
+            assign k_nrw = {{(WK_NRW-WK){k_q[WK-1]}}, k_q};
+            assign k_sat_pos = 1'b0;
+            assign k_sat_neg = 1'b0;
+        end else begin : g_k_saturate
+            wire [WK-WK_NRW:0] k_upper = k_q[WK-1:WK_NRW-1];
+            wire k_in_range = &(k_upper ~^ {WK-WK_NRW+1{k_q[WK-1]}});
+            assign k_nrw = $signed(k_q[WK_NRW-1:0]);
+            // Discarded shifts already force every normal input to zero or infinity, so class saturation is exact.
+            assign k_sat_pos = !k_in_range && !k_q[WK-1];
+            assign k_sat_neg = !k_in_range &&  k_q[WK-1];
+        end
+    endgenerate
+
+    wire signed [WACC-1:0] a_exp_acc = $signed({{(WACC-WEXP){1'b0}}, a_exp});
+    wire signed [WACC-1:0] k_exp_acc = $signed({{(WACC-WK_NRW){k_nrw[WK_NRW-1]}}, k_nrw});
+    wire signed [WACC-1:0] new_exp_acc = a_exp_acc + k_exp_acc;
     // Overflow via the sign bit of (new_exp_acc - EXP_INF), not a `>=` comparator: logically identical, but this form
     // (mirroring zkf_mul_ilog2_const) maps to a short carry chain that synthesizers handle predictably, whereas the
     // wide comparator was observed to map poorly on some tool/mapper combinations (bloated area, weaker timing).
     wire signed [WACC-1:0] of_acc = new_exp_acc - $signed({{(WACC-WEXP){1'b0}}, EXP_INF});
-    wire overflow   = !a_special && ~of_acc[WACC-1];        // new_exp_acc >= EXP_INF
-    wire underflow  = !a_special &&  new_exp_acc[WACC-1];   // < 0
+    wire overflow   = !a_special && (k_sat_pos || (!k_sat_neg && ~of_acc[WACC-1]));      // >= EXP_INF
+    wire underflow  = !a_special && (k_sat_neg || (!k_sat_pos && new_exp_acc[WACC-1]));  // < 0
     wire min_normal = !a_special && ~|new_exp_acc;          // == 0 rounds up to MIN_NORMAL (>= 0.5*MIN_NORMAL)
 
     wire result_is_zero       = a_zero || underflow;

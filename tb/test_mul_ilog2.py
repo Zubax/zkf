@@ -44,6 +44,10 @@ def directed_shifts(fmt: ZkfFormat, wk: int) -> list[int]:
         -(fmt.bias + 1),  # one -> min-normal value / underflow-to-zero
         fmt.exp_max_finite,
         -fmt.exp_max_finite,
+        -(1 << fmt.wexp) - 1,
+        -(1 << fmt.wexp),
+        (1 << fmt.wexp) - 1,
+        1 << fmt.wexp,
         kmin,
         kmax,
         kmin + 1,

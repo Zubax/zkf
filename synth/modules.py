@@ -325,8 +325,7 @@ MODULES = [
         wexp_unbiased=0,
         stage_decode=1,
     ),
-    # zkf_mul_ilog2 (runtime k): narrow and wide operating points. With the offset-sum overflow the runtime path clears
-    # timing at minimum latency (STAGE_DECODE=0) at both widths; the wide SD1 variant covers the registered decode path.
+    # WK=44/SD0 pins the full cone that regressed to 97.37 MHz when accumulator width followed WK.
     ModuleSpec(
         name="zkf_mul_ilog2",
         label="zkf_mul_ilog2 (runtime k; WEXP=6, WMAN=18, WK=7)",
@@ -346,6 +345,17 @@ MODULES = [
         wman=36,
         wexp_unbiased=0,
         wk=9,
+    ),
+    ModuleSpec(
+        name="zkf_mul_ilog2_w8m36_wk44",
+        label="zkf_mul_ilog2 (runtime k; WEXP=8, WMAN=36, WK=44, STAGE_DECODE=0)",
+        top="zkf_mul_ilog2_w8m36_wk44_synth_top",
+        kind="mul_ilog2",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        wk=44,
+        stage_decode=0,
     ),
     ModuleSpec(
         name="zkf_mul_ilog2_w8m36_sd1",
