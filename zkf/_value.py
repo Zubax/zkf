@@ -94,15 +94,30 @@ class Zkf:
         mag = Fraction(self.significand()) * pow2_fraction(self.exp - self.fmt.bias - self.fmt.wfrac)
         return -mag if self.negative else mag
 
-    def to_int(self, wint: int) -> int:
-        """The zkf_to_int hardware operator: round to a signed wint-bit integer (ties-to-even, saturating)."""
+    def round_int(self, wint: int) -> int:
+        """Round to the nearest signed wint-bit integer, ties to even, with saturation."""
+        return self._round_to_int(wint, RoundMode.NEAREST_EVEN)
+
+    def floor_int(self, wint: int) -> int:
+        """Round toward -inf to a signed wint-bit integer with saturation."""
+        return self._round_to_int(wint, RoundMode.FLOOR)
+
+    def ceil_int(self, wint: int) -> int:
+        """Round toward +inf to a signed wint-bit integer with saturation."""
+        return self._round_to_int(wint, RoundMode.CEIL)
+
+    def trunc_int(self, wint: int) -> int:
+        """Round toward zero to a signed wint-bit integer with saturation."""
+        return self._round_to_int(wint, RoundMode.TRUNC)
+
+    def _round_to_int(self, wint: int, mode: RoundMode) -> int:
         int_max = signed_int_max(wint)
         int_min = signed_int_min(wint)
         if self.is_inf:
             return int_min if self.negative else int_max
         if self.is_zero:
             return 0
-        rounded = round_fraction_to_int_ties_even(self.to_fraction())
+        rounded = round_signed_fraction_to_int(self.to_fraction(), mode)
         if rounded > int_max:
             return int_max
         if rounded < int_min:

@@ -935,6 +935,7 @@ module {spec.top} (
     input  wire                          rst,
     input  wire                          in_valid,
     input  wire [{wfull - 1}:0]          a,
+    input  wire [1:0]                    round_mode,
     output wire                          out_valid,
     output wire signed [{wint - 1}:0]    y
 );
@@ -943,6 +944,8 @@ module {spec.top} (
     reg                 r_in_valid;
     {SYNTH_REG_ATTR}
     reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg           [1:0] r_round_mode;
 
     wire                       dut_out_valid;
     wire signed [{wint - 1}:0] dut_y;
@@ -962,6 +965,7 @@ module {spec.top} (
         .rst(rst),
         .in_valid(r_in_valid),
         .a(r_a),
+        .round_mode(r_round_mode),
         .out_valid(dut_out_valid),
         .y(dut_y)
     );
@@ -976,6 +980,7 @@ module {spec.top} (
         end
 
         r_a <= a;
+        r_round_mode <= round_mode;
         r_y <= dut_y;
     end
 endmodule

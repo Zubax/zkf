@@ -268,6 +268,37 @@ class ZkfModelLayoutTest(unittest.TestCase):
     def test_random_binary64_normal_layout(self) -> None:
         self.assert_random_normal_layout(BINARY64, np.float64, count=5000, seed=0x64F17A)
 
+    def test_integer_rounding_modes(self) -> None:
+        fmt = ZkfFormat(8, 24)
+        methods = ("round_int", "floor_int", "ceil_int", "trunc_int")
+        cases = [
+            (Fraction(1, 2), (0, 0, 1, 0)),
+            (Fraction(-1, 2), (0, -1, 0, 0)),
+            (Fraction(5, 4), (1, 1, 2, 1)),
+            (Fraction(-5, 4), (-1, -2, -1, -1)),
+            (Fraction(3, 2), (2, 1, 2, 1)),
+            (Fraction(-3, 2), (-2, -2, -1, -1)),
+            (Fraction(7, 4), (2, 1, 2, 1)),
+            (Fraction(-7, 4), (-2, -2, -1, -1)),
+        ]
+        for value, expected in cases:
+            encoded = fmt.encode(value)
+            for method, result in zip(methods, expected):
+                with self.subTest(value=value, method=method):
+                    self.assertEqual(getattr(encoded, method)(8), result)
+
+        self.assertEqual(fmt.encode(128).round_int(8), 127)
+        self.assertEqual(fmt.encode(-128).round_int(8), -128)
+        self.assertEqual(fmt.encode(-129).ceil_int(8), -128)
+        self.assertEqual(fmt.wrap(0).floor_int(8), 0)
+        self.assertEqual(fmt.wrap(0xFFFFFFFF).ceil_int(8), -128)
+        self.assertEqual(fmt.wrap(0x7F800001).trunc_int(8), 127)
+        self.assertFalse(hasattr(fmt.wrap(0), "to_int"))
+        for method in methods:
+            with self.subTest(method=method, wint=1):
+                with self.assertRaises(ValueError):
+                    getattr(fmt.wrap(0), method)(1)
+
     def assert_random_normal_layout(
         self,
         fmt: ZkfFormat,

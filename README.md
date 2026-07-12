@@ -104,7 +104,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_div`             | ⇻ | 1       | `a ÷ b`; flags divide-by-zero.                                 |                             |
 | `zkf_fma`             | ⇻ | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
 | `zkf_from_int`        | ⇻ | 1       | Cast signed two's-complement integer to float.                 |                             |
-| `zkf_to_int`          | ⇻ | 1       | Cast float to signed two's-complement integer with saturation. | RNTE                        |
+| `zkf_to_int`          | ⇻ | 1       | Cast float to signed two's-complement integer with saturation. | RNTE/floor/ceil/trunc       |
 | `zkf_resize`          |   | 1       | Cast between different float formats.                          |                             |
 | `zkf_round`           |   | 1       | Round to integer in same format: RNTE/floor/ceil/trunc.        | Outputs float; also see `zkf_to_int`|
 | `zkf_exp2`            | ⇻ | 1       | `2^x`                                                          | Faithful rounding, see below|
