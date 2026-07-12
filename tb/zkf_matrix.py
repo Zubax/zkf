@@ -135,7 +135,11 @@ FROM_INT = [
     # at this width, so directed covers the boundary deterministically.
     ("w6_m18_int128_directed", 6, 18, 128, "directed", 0),
 ]
-TO_INT = FROM_INT + [("w11_m53_int32_random", 11, 53, 32, "random", 384)]
+TO_INT = FROM_INT + [
+    ("w2_m4_int2_exhaustive", 2, 4, 2, "exhaustive", 0),
+    ("w8_m36_int44_random", 8, 36, 44, "random", 768),
+    ("w11_m53_int32_random", 11, 53, 32, "random", 384),
+]
 # resize: (config, wexp_in, wman_in, wexp_out, wman_out, kind, count). Covers every (WMAN, WEXP) quadrant so each
 # zkf_resize elaboration-time branch runs: widen-only fast path, pack/g_widen (g_same_width, g_zero_pad), and
 # pack/g_narrow (DROP=1/2/7).

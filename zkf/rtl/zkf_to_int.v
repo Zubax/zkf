@@ -60,22 +60,16 @@ module zkf_to_int #(
     // and zero produces mag=0 through the helper's right-shift saturation. Tie off explicitly to keep lint happy.
     wire _unused_to_int = &{1'b0, s2_is_inf, s2_is_zero, 1'b0};
 
-    // -- Stage 2 -> Stage 3 combinational: round, then saturation detect via bit-range checks.
-    // Round only the low WINT bits and feed the rounding carry-out into the overflow detector. The mag has no
-    // padding above WINT (the helper sizes the magnitude container to exactly WI+FF = WINT bits), so a bit ever
-    // appearing above position WINT-1 only happens via rcarry; there is no separate `hi_pre` term.
-    wire           round_increment = s2_guard & (s2_lost_sticky | s2_mag[0]);
-    wire [WINT:0]  mag_rounded_low = {1'b0, s2_mag} + {{WINT{1'b0}}, round_increment};
-    wire           rcarry          = mag_rounded_low[WINT];
+    wire             round_increment = s2_guard & (s2_lost_sticky | s2_mag[0]);
+    wire [WINT-1:0]  mag_rounded     = s2_mag + {{(WINT-1){1'b0}}, round_increment};
 
-    // Saturation detection. Positive overflow fires when the magnitude exceeds INT_MAX = 2^(WINT-1)-1, i.e. any
-    // bit at position WINT-1 or above is set. Negative overflow fires when the magnitude exceeds 2^(WINT-1) (the
-    // magnitude 2^(WINT-1) itself negates exactly to INT_MIN), i.e. either rcarry or (top_bit & low_set).
-    wire top_bit = mag_rounded_low[WINT-1];
-    wire low_set = |mag_rounded_low[WINT-2:0];
+    // Predict saturation from the pre-rounded magnitude in parallel with the rounding carry chain.
+    wire top_pre     =  s2_mag[WINT-1];
+    wire low_all_set = &s2_mag[WINT-2:0];
+    wire low_any_set = |s2_mag[WINT-2:0];
 
-    wire overflow_pos = rcarry | top_bit;
-    wire overflow_neg = rcarry | (top_bit & low_set);
+    wire overflow_pos = top_pre | (round_increment & low_all_set);
+    wire overflow_neg = top_pre & (round_increment | low_any_set);
     wire overflow_now = s2_oor | (s2_sign ? overflow_neg : overflow_pos);
 
     // Saturation magnitudes (as unsigned WINT bits). INT_NEG_MAG (= 0x80..0) negates back to INT_MIN.
@@ -83,7 +77,7 @@ module zkf_to_int #(
     localparam [WINT-1:0] INT_MAX     = {1'b0, {(WINT-1){1'b1}}};
 
     wire [WINT-1:0] mag_sat_overflow = s2_sign ? INT_NEG_MAG : INT_MAX;
-    wire [WINT-1:0] mag_sat          = overflow_now ? mag_sat_overflow : mag_rounded_low[WINT-1:0];
+    wire [WINT-1:0] mag_sat          = overflow_now ? mag_sat_overflow : mag_rounded;
 
     // -- Stage 3 register.
     reg            s3_valid;

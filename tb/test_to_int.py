@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 
 import cocotb
 import numpy as np
@@ -117,6 +118,25 @@ def rcarry_overflow_inputs(fmt: ZkfFormat, wint: int) -> list[tuple[str, int]]:
     return cases
 
 
+def signed_boundary_inputs(fmt: ZkfFormat, wint: int) -> list[tuple[str, int]]:
+    exp = wint - 1
+    if not (fmt.min_exp_unbiased <= exp <= fmt.max_exp_unbiased):
+        return []
+
+    def pow2(e: int) -> Fraction:
+        return Fraction(1 << e) if e >= 0 else Fraction(1, 1 << -e)
+
+    boundary = pow2(exp)
+    below_step = max(Fraction(1), pow2(exp - 1 - fmt.wfrac))
+    above_step = max(Fraction(1), pow2(exp - fmt.wfrac))
+    return [
+        ("int_max_float_neighbor", fmt.encode(boundary - below_step).bits),
+        ("int_max_plus_one", fmt.encode(boundary).bits),
+        ("int_min_exact", fmt.encode(-boundary).bits),
+        ("int_min_float_neighbor_overflow", fmt.encode(-(boundary + above_step)).bits),
+    ]
+
+
 def cases_for(fmt: ZkfFormat, wint: int, kind: str, seed: int, count: int) -> list[ToIntCase]:
     cases: list[ToIntCase] = []
     seen: set[int] = set()
@@ -134,6 +154,9 @@ def cases_for(fmt: ZkfFormat, wint: int, kind: str, seed: int, count: int) -> li
             add_unique(cases, seen, "small_format", fmt, wint, a)
 
     for label, a in rcarry_overflow_inputs(fmt, wint):
+        add_unique(cases, seen, label, fmt, wint, a)
+
+    for label, a in signed_boundary_inputs(fmt, wint):
         add_unique(cases, seen, label, fmt, wint, a)
 
     if kind == "directed":

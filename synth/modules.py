@@ -413,6 +413,16 @@ MODULES = [
         wint=32,
     ),
     ModuleSpec(
+        name="zkf_to_int_w8m36_i44",
+        label="zkf_to_int (WEXP=8, WMAN=36, WINT=44)",
+        top="zkf_to_int_w8m36_i44_synth_top",
+        kind="to_int",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        wint=44,
+    ),
+    ModuleSpec(
         name="zkf_to_int_si1",
         label="zkf_to_int (WINT=32, STAGE_INPUT=1)",
         top="zkf_to_int_si1_synth_top",
