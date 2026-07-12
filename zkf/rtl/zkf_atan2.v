@@ -434,7 +434,6 @@ module zkf_atan2 #(
     // Vectoring CORDIC engine (MODE=1), per-WMAN table.
     // ================================================================================================================
     wire                 cd_done;
-    wire [WSB-1:0]       cd_sb_unused;
     wire signed [WX-1:0] cd_xn, cd_yn;
     wire signed [WZ-1:0] cd_zn;
     // Vectoring is always lock-step (the engine's decoupled z-path requires MODE=0), so PARALLEL is hardwired to 0.
@@ -448,7 +447,7 @@ module zkf_atan2 #(
         ) u_cordic ( \
             .clk(clk), .rst(rst), .start(eng_start), .sb_in({WSB{1'b0}}), \
             .x0(f2_x0), .y0(f2_y0), .z0({WZ{1'b0}}), \
-            .busy(), .done(cd_done), .z_done(), .sb_out(cd_sb_unused), \
+            .busy(), .done(cd_done), .z_done(), .sb_out(), \
             .xn(cd_xn), .yn(cd_yn), .zn(cd_zn), .const2pi(), .inv_tau(eng_inv_tau), .kinv_mag(eng_kinv_mag), .kinv());
     // Intentional: unsupported in-range WMAN names missing _zkf_cordic_m<WMAN>, prompting table generation.
     generate

@@ -38,4 +38,4 @@ from ._value import (
 from ._rtl import get_rtl as get_rtl
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.3.0"
+__version__ = "0.3.1"

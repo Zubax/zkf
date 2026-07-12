@@ -352,17 +352,19 @@ def _rom_read_pipeline(
     w("r_rsb2 <= r_rsb1;")
     w.pop()
     w("end")
+    wout = "()" if s.func == "exp2" else "(ew)"
+    ew_decl = "wire          [RW-1:0] ew;" if s.func == "log2" else ""
     w(f"""
         wire signed [ACCW-1:0] acc;
         wire                   ev;
         wire         {sb_range}esb;
-        wire          [RW-1:0] ew;
+        {ew_decl}
         _zkf_horner #(
             .D(D), .WCOEF(CW), .WRARG(RW), .WACC(ACCW), .WSB({sb_width}), .ACC_SIGNED({acc_signed}),
             .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
         ) u_h (
             .clk(clk), .rst(rst), .in_valid(r_rv2), .sb_in(r_rsb2), .coeffs(r_co2), .w(r_w2),
-            .out_valid(ev), .sb_out(esb), .w_out(ew), .acc(acc)
+            .out_valid(ev), .sb_out(esb), .w_out{wout}, .acc(acc)
         );
     """)
 
@@ -490,7 +492,6 @@ def _emit_table(s: Spec) -> str:
         _rom_read_pipeline(w, s, sb_load="sb_in", sb_width="WSB")
         # acc scale 2^-CF, value 2^f in [1,2): bit CF is the hidden one. Output is combinational after the Horner.
         w("""
-            wire _unused_horner = &{1'b0, ew, 1'b0};
             assign sb_out      = esb;
             assign significand = acc[CF -: WMAN];
             assign guard       = acc[CF-WMAN];
