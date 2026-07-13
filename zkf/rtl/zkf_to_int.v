@@ -41,7 +41,9 @@ module zkf_to_int #(
             ROUND_FLOOR:        round_control_in = 3'b010;
             ROUND_CEIL:         round_control_in = 3'b100;
             ROUND_TRUNC:        round_control_in = 3'b000;
+            // verilator coverage_off
             default:            round_control_in = 3'b000;
+            // verilator coverage_on
         endcase
     end
 

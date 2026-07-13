@@ -564,9 +564,7 @@ MODULES = [
     #     used merely to isolate the first multiply. The critical path is the final f*C(f) multiply + its carry chain;
     #     STAGE_NORMALIZE=2 (splitting the close-cancellation x->1 normalize) is the single knob that relieves the
     #     surrounding placement enough to close 100 MHz on both Yosys ECP5 (102.9 MHz) and Diamond (105.9 MHz). The
-    #     formerly carried STAGE_NORMALIZE_OUTPUT=1 / STAGE_PACK=1 were redundant -- adding those stages only worsened
-    #     placement congestion (e.g. si1+sn2+sno1+pa1 dropped to ~98 MHz) -- so they are removed. log2_so1 adds
-    #     STAGE_OUTPUT=1 as the alternate registered-output boundary.
+    #     STAGE_PACK=1 places a register at the rounder input, isolating the normalizer-to-packer path.
     ModuleSpec(
         name="zkf_exp2",
         label="zkf_exp2 (2**x, table+polynomial; STAGE_PRODUCT=2 splits each Horner multiply into a registered "
@@ -582,7 +580,8 @@ MODULES = [
     ModuleSpec(
         name="zkf_log2",
         label="zkf_log2 (log2(x), symmetric-reduction table+polynomial; STAGE_NORMALIZE=1 normalize-shift split + "
-        "STAGE_PRODUCT_FINAL=1 operand-capture stage that shields the final unsigned |f|*C(f) multiply's DSP "
+        "STAGE_PACK=1 rounder-input register + STAGE_PRODUCT_FINAL=1 operand-capture stage that shields the final "
+        "unsigned |f|*C(f) multiply's DSP "
         "from the |f| magnitude-negate cone. The biased fixed-to-float back-end (EXP_IS_BIASED) and the "
         "direct-magnitude reconstruct freed enough slack to drop STAGE_NORMALIZE 2->1; closes 100 MHz on Yosys "
         "ECP5 (103.0 MHz) and Diamond)",
@@ -593,6 +592,7 @@ MODULES = [
         wexp_unbiased=0,
         stage_normalize=1,
         stage_product_final=1,
+        stage_pack=1,
     ),
     ModuleSpec(
         name="zkf_log2_so1",
@@ -616,24 +616,24 @@ MODULES = [
     # needs a 19-bit operand (18 magnitude + sign), one bit past the MULT18X18 limit, so Lattice synthesis can drop the
     # whole Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives DSP-fit
     # grids for the signed*unsigned products (3x3 for exp2 Horner, 3x2 for log2 Horner, 3x3 for log2's final f*C(f)),
-    # so every multiply maps to DSP on both Yosys and Diamond. exp2 closes at STAGE_PRODUCT=3 without the optional
-    # fixed-point split register. log2's final f*C(f) multiply is now fully UNSIGNED (|f|*C(f) with the sign folded into
+    # so every multiply maps to DSP on both Yosys and Diamond. exp2 needs STAGE_PRODUCT=4 to split the final
+    # reduction, relieving the near-full-DSP placement bind. log2's final f*C(f) multiply is now fully UNSIGNED (|f|*C(f)
+    # with the sign folded into
     # the back-end add/subtract), which cuts its grid from a signed 3x3 to an unsigned 2x3 -- 27 DSPs -> 24 -- and that
     # relieves the LFE5U-12F placement bind. With the lighter DSP load and the biased-EXP/direct-magnitude back-end,
-    # the formerly load-bearing STAGE_PRODUCT=4, STAGE_DECODE=1, STAGE_OUTPUT=1 and STAGE_NORMALIZE_OUTPUT all come back
-    # out: STAGE_PRODUCT=3 + STAGE_DECODE=0 + no back-end output registers clears 100 MHz with margin (fewer FFs raise
-    # f_max on a congestion-bound part). It still needs STAGE_NORMALIZE=2 (the x->1 normalize) and STAGE_PACK=1.
+    # STAGE_DECODE, STAGE_OUTPUT, and STAGE_NORMALIZE_OUTPUT all come back out; log2 still needs STAGE_NORMALIZE=2
+    # (the x->1 normalize) and STAGE_PACK=1.
     ModuleSpec(
         name="zkf_exp2_w8m36",
         label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + "
-        "STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_OUTPUT=1)",
+        "STAGE_PRODUCT=4 + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_OUTPUT=1)",
         top="zkf_exp2_w8m36_synth_top",
         kind="exp2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         stage_input=1,
-        stage_product=3,
+        stage_product=4,
         wmultiplier=18,
         stage_output=1,
         emit_schematic=False,
