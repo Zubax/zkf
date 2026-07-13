@@ -654,10 +654,6 @@ module zkf_sincos #(
         else if (out_valid & out_ready) busy <= 1'b0;
     end
 
-    // Intentionally-partial nets: the engine residual angle cd_zn drives the linear correction only through its low
-    // bits (cd_zn[WCP-1:0]), and the octant-local magnitudes b2_sin/b2_cos are read only as their low XF+1 bits, so the
-    // upper bits never reach an output. Reduction-xor the full vectors so the leftover bits read as used.
-    wire _unused = ^{cd_zn, b2_sin, b2_cos};
 endmodule
 
 `default_nettype wire

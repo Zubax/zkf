@@ -84,34 +84,32 @@ module zkf_exp2 #(
     // saturate the magnitude before the integer part of x can exceed WEXP signed bits (the result exponent range).
     wire             rb_valid;
     // The mag bus's high (integer) bits feed i_full below and stay covered through r0_i; the low (fraction) bits
-    // feed r0_f directly. rb_guard_unused is structurally zero for FF>0 and intentionally ignored.
     wire [WEU+FF-1:0] rb_mag;
-    wire             rb_guard_unused;          // FF>0 -> structurally 0; not consumed
     // Lost-sticky reduction path: rb_lost_sticky asserts only when the float->fixed reduction drops nonzero low bits,
     // which needs a wide exponent (e well below -WMAN).
     wire             rb_lost_sticky;
     wire             rb_sign;
-    wire             rb_is_inf_unused;         // folded into rb_oor by the helper
     wire             rb_is_zero;
     wire             rb_oor;
     _zkf_to_fixpoint #(
         .WEXP(WEXP), .WMAN(WMAN),
-        .WI(WEU), .FF(FF),
+        .WI(WEU), .FF(FF), .WSB(1),
         .STAGE_INPUT(STAGE_INPUT),
+        .LATENCY(STAGE_INPUT + 2),
         .OOR_EXP_THRESHOLD(OOR_THRESHOLD)
     ) u_to_fixpoint (
         .clk(clk), .rst(rst),
-        .in_valid(in_valid), .a(x),
+        .in_valid(in_valid), .a(x), .sb_in(1'b0),
         .out_valid(rb_valid),
+        .sb_out(),
         .mag(rb_mag),
-        .guard(rb_guard_unused),
+        .guard(),
         .lost_sticky(rb_lost_sticky),
         .sign(rb_sign),
-        .is_inf(rb_is_inf_unused),
+        .is_inf(),
         .is_zero(rb_is_zero),
         .oor(rb_oor)
     );
-    wire _unused_exp2 = &{1'b0, rb_guard_unused, rb_is_inf_unused, 1'b0};
 
     // -- RB2 combinational: form the signed two's-complement value, then split into the signed integer part i and
     // the unsigned fraction f. Negating an unsigned magnitude gives correct signed floor semantics for negative x:

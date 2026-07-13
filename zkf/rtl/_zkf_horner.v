@@ -86,7 +86,6 @@ module _zkf_horner #(
             // separate pipe so the multiplier does not carry a wide non-arithmetic sideband through its DSP-adjacent
             // registers.
             wire                  prod_v;
-            wire                  prod_sb_valid;
             wire [WSB_H-1:0]      prod_sb;
             wire [WACC+WRARG-1:0] prod_p;  // raw two's-complement acc*w (signedness assigned by the caller below)
             _zkf_pmul #(
@@ -99,9 +98,8 @@ module _zkf_horner #(
             );
             zkf_pipe #(.W(WSB_H), .N(1 + STAGE_PRODUCT)) u_payload_delay (
                 .clk(clk), .rst(rst), .in_valid(a_val[s]), .in({a_co[s][COW-1:0], a_w[s], a_sb[s]}),
-                .out_valid(prod_sb_valid), .out(prod_sb)
+                .out_valid(), .out(prod_sb)
             );
-            wire _unused_prod_sb_valid = &{1'b0, prod_sb_valid, 1'b0};
             wire [COW-1:0]   p_co = prod_sb[WSB_H-1 -: COW];
             wire [WRARG-1:0] p_w  = prod_sb[WSB+WRARG-1 -: WRARG];
             wire [WSB-1:0]   p_sb = prod_sb[WSB-1:0];

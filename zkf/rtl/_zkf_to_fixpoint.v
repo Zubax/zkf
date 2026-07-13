@@ -35,6 +35,8 @@ module _zkf_to_fixpoint #(
     parameter WI                        = 8,    // signed integer-part bits of the result; mag fits in WI+FF when oor=0
     parameter FF                        = 0,    // fractional bits kept; binary point at bit FF of mag
     parameter STAGE_INPUT               = 0,    // number of input register stages (>=0); +STAGE_INPUT cycles
+    parameter WSB                       = 1,
+    parameter LATENCY                   = 0,
     parameter integer OOR_EXP_THRESHOLD = (1 << WEXP)   // default disables the extrinsic predicate at elaboration
 ) (
     input  wire clk,
@@ -42,8 +44,10 @@ module _zkf_to_fixpoint #(
 
     input  wire                  in_valid,
     input  wire  [WEXP+WMAN-1:0] a,
+    input  wire        [WSB-1:0] sb_in,
 
     output wire                  out_valid,
+    output wire        [WSB-1:0] sb_out,
     // mag is the wide fixed-point reduction carrier (sign-extended integer part above the fraction); its top bits are
     // structural sign-extension / headroom. Its meaningful bits feed the caller's split.
     output wire    [WI+FF-1:0]   mag,
@@ -54,6 +58,7 @@ module _zkf_to_fixpoint #(
     output wire                  is_zero,
     output wire                  oor
 );
+    localparam LATENCY_REF = STAGE_INPUT + 2;
     generate
         if ((WEXP < 2) || (WMAN < 4) || (WI < 2)) begin : g_invalid_widths
             _zkf_invalid_wexp_or_wman u_invalid();
@@ -61,6 +66,9 @@ module _zkf_to_fixpoint #(
         // Shift by WEXP >= 31 overflows Verilog's 32-bit integer constant arithmetic and yields tool-dependent values.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_to_fixpoint_wexp_too_wide_unportable u_invalid();
+        end
+        if ((LATENCY != 0) && (LATENCY != LATENCY_REF)) begin : g_invalid_latency
+            _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
 
@@ -116,12 +124,16 @@ module _zkf_to_fixpoint #(
 
     // Optional input register stage.
     wire             in_valid_q;
+    wire [WSB-1:0]   sb_q;
     wire [WFULL-1:0] a_q;
-    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT)) u_input_pipe (
+    wire [WSB+WFULL-1:0] in_q;
+    zkf_pipe #(.W(WSB+WFULL), .N(STAGE_INPUT)) u_input_pipe (
         .clk(clk), .rst(rst),
-        .in_valid(in_valid), .in(a),
-        .out_valid(in_valid_q), .out(a_q)
+        .in_valid(in_valid), .in({sb_in, a}),
+        .out_valid(in_valid_q), .out(in_q)
     );
+    assign sb_q = in_q[WSB+WFULL-1 -: WSB];
+    assign a_q  = in_q[WFULL-1:0];
 
     // -- Stage-1 cone: decode the float, derive the shift magnitudes, and resolve the predicates that pick between
     // the right- and left-shift branches (and decide oor). The barrel shifters themselves are intentionally placed
@@ -200,6 +212,7 @@ module _zkf_to_fixpoint #(
 
     // -- Stage 1: capture pre-shift state (decode + clamp). Reset only validity; payload free-runs.
     reg             s1_valid;
+    reg [WSB-1:0]   s1_sb;
     reg             s1_sign;
     reg             s1_is_inf;
     reg             s1_is_zero;
@@ -284,6 +297,7 @@ module _zkf_to_fixpoint #(
 
     // -- Stage 2: capture post-shift state. Reset only validity; payload free-runs.
     reg             s2_valid;
+    reg [WSB-1:0]   s2_sb;
     reg             s2_sign;
     reg             s2_is_inf;
     reg             s2_is_zero;
@@ -303,6 +317,7 @@ module _zkf_to_fixpoint #(
             s2_valid <= s1_valid;
         end
         s1_sign          <= sign_in;
+        s1_sb            <= sb_q;
         s1_is_inf        <= is_inf_in;
         s1_is_zero       <= is_zero_in;
         s1_is_left_shift <= is_left_shift;
@@ -312,6 +327,7 @@ module _zkf_to_fixpoint #(
         s1_lshamt        <= lshamt_clamped;
 
         s2_sign        <= s1_sign;
+        s2_sb          <= s1_sb;
         s2_is_inf      <= s1_is_inf;
         s2_is_zero     <= s1_is_zero;
         s2_oor         <= s1_oor;
@@ -321,6 +337,7 @@ module _zkf_to_fixpoint #(
     end
 
     assign out_valid   = s2_valid;
+    assign sb_out      = s2_sb;
     assign mag         = s2_mag;
     assign guard       = s2_guard;
     assign lost_sticky = s2_lost_sticky;

@@ -41,27 +41,27 @@ module zkf_to_int #(
             ROUND_FLOOR:        round_control_in = 3'b010;
             ROUND_CEIL:         round_control_in = 3'b100;
             ROUND_TRUNC:        round_control_in = 3'b000;
+            // verilator coverage_off
             default:            round_control_in = 3'b000;
+            // verilator coverage_on
         endcase
     end
 
-    wire [2:0] round_control;
-    zkf_pipe #(.W(3), .N(STAGE_INPUT + 2)) u_round_control_pipe (
-        .clk(clk), .rst(rst),
-        .in_valid(in_valid), .in(round_control_in),
-        .out_valid(), .out(round_control)
-    );
-
     wire             s2_valid;
+    wire [2:0]       round_control;
     wire [WINT-1:0]  s2_mag;
     wire             s2_guard;
     wire             s2_lost_sticky;
     wire             s2_sign;
     wire             s2_oor;
-    _zkf_to_fixpoint #(.WEXP(WEXP), .WMAN(WMAN), .WI(WINT), .FF(0), .STAGE_INPUT(STAGE_INPUT)) u_to_fixpoint (
+    _zkf_to_fixpoint #(
+        .WEXP(WEXP), .WMAN(WMAN), .WI(WINT), .FF(0), .WSB(3),
+        .STAGE_INPUT(STAGE_INPUT), .LATENCY(STAGE_INPUT + 2)
+    ) u_to_fixpoint (
         .clk(clk), .rst(rst),
-        .in_valid(in_valid), .a(a),
+        .in_valid(in_valid), .a(a), .sb_in(round_control_in),
         .out_valid(s2_valid),
+        .sb_out(round_control),
         .mag(s2_mag), .guard(s2_guard), .lost_sticky(s2_lost_sticky),
         .sign(s2_sign), .is_inf(), .is_zero(), .oor(s2_oor)
     );
