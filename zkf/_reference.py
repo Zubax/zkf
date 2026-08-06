@@ -167,7 +167,7 @@ def round_fraction_to_int_ties_even(value: Fraction) -> int:
 
 @enum.unique
 class RoundMode(enum.IntEnum):
-    """Private round-to-integer modes; the integer values match zkf/rtl/zkf_round.v and its 2-bit round_mode port."""
+    """Round-to-integer modes; the integer values match zkf/rtl/zkf_round.v and its 2-bit round_mode port."""
 
     NEAREST_EVEN = 0  # round to nearest integer, ties to even (the IEEE default)
     FLOOR = 1  # round toward -inf

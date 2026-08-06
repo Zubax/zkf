@@ -4,6 +4,10 @@ on:
     paths-ignore:
       - '**/*.md'
       - 'docs/**'
+  pull_request:
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
 env:
   COCOTB_IGNORE_PYTHON_REQUIRES: "1"
 

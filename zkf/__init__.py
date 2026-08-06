@@ -35,7 +35,8 @@ from ._value import (
     SinCos as SinCos,
     Zkf as Zkf,
 )
+from ._reference import RoundMode as RoundMode
 from ._rtl import get_rtl as get_rtl
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.3.1"
+__version__ = "0.4.0"
