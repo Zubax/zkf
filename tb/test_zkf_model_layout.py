@@ -99,7 +99,10 @@ def manual_binary64_cases() -> list[LayoutCase]:
 class ZkfModelLayoutTest(unittest.TestCase):
     def test_public_api_round_mode(self) -> None:
         self.assertIsInstance(RoundMode.NEAREST_EVEN, int)
-        self.assertTrue({"NEAREST_EVEN", "FLOOR", "CEIL", "TRUNC"}.issubset({mode.name for mode in RoundMode}))
+        self.assertEqual(RoundMode.NEAREST_EVEN, 0)
+        self.assertEqual(RoundMode.FLOOR, 1)
+        self.assertEqual(RoundMode.CEIL, 2)
+        self.assertEqual(RoundMode.TRUNC, 3)
 
     def assert_layout_case(
         self,
