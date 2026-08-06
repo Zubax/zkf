@@ -20,7 +20,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # tb/ (harness siblings)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root (the zkf package)
 
-from zkf import Zkf, ZkfFormat  # noqa: E402
+from zkf import RoundMode, Zkf, ZkfFormat  # noqa: E402
 from zkf.oracle import add, div, mul  # noqa: E402
 from zkf_bits import hex_bits, mask, pow2_fraction  # noqa: E402
 from zkf_operands import canonical_inf, normal, pack_bits, zero  # noqa: E402
@@ -97,6 +97,13 @@ def manual_binary64_cases() -> list[LayoutCase]:
 
 
 class ZkfModelLayoutTest(unittest.TestCase):
+    def test_public_api_round_mode(self) -> None:
+        self.assertIsInstance(RoundMode.NEAREST_EVEN, int)
+        self.assertEqual(
+            tuple(mode.name for mode in RoundMode),
+            ("NEAREST_EVEN", "FLOOR", "CEIL", "TRUNC"),
+        )
+
     def assert_layout_case(
         self,
         fmt: ZkfFormat,
