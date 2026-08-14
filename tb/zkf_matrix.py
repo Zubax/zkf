@@ -657,11 +657,6 @@ def _per_pr(sim, out: list) -> None:
     # Shipped zkf_atan2_w8m36 synth config tested directly (correctness + data-independent latency, not just
     # inferred from the knob sweeps).
     out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256, un=50, sp=4, wm=18, sn=2, pa=1, so=1))
-    for sd in (0, 1):
-        for cfg, w, m, k, c in UNARY:
-            out.append(_binary("mul_ilog2_const", sim, "pr", cfg, w, m, k, c, sd=sd))
-    out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
-    out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1, sd=1))
     # zkf_mul_ilog2 (runtime k): same format sweep, both decode depths. Default WK=WEXP+1 already covers shifts that
     # overflow to inf / underflow to zero for every input class.
     for sd in (0, 1):
@@ -704,7 +699,6 @@ def _per_pr(sim, out: list) -> None:
     for op in ("mul", "div", "cmp", "sort"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
-    out.append(_binary("mul_ilog2_const", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_fma(sim, "pr", "w4_m6", 4, 6, "random", 256, si=2))
     out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8", 3, 4, 8, "exhaustive", 0, 2))
@@ -718,7 +712,7 @@ def _deep_correctness(out: list) -> None:
     # Full Cartesian product of each module's structural knobs across every format in its deep list (correctness;
     # coverage closure lives in _deep_coverage under merged-union). Knob axes: mul = STAGE_INPUT x PRODUCT x OUTPUT;
     # add/addsub = STAGE_DECODE x ALIGN x OUTPUT; div/from_int/resize = STAGE_INPUT x OUTPUT; to_int = STAGE_INPUT
-    # only; pack = STAGE_OUTPUT x EXP_IS_BIASED; mul_ilog2_const = STAGE_DECODE x K.
+    # only; pack = STAGE_OUTPUT x EXP_IS_BIASED.
     s = "icarus"
     for w, m, k, c in BIN_EXT:
         base = f"w{w}m{m}_{k}"
@@ -779,7 +773,6 @@ def _deep_correctness(out: list) -> None:
         for op in ("abs", "neg", "is_finite", "saturate"):
             out.append(_binary(op, s, "deep", base, w, m, k, c))
         for sd in (0, 1):
-            out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, k, c, sd=sd))
             out.append(_ilog2(s, "deep", base, w, m, k, c, sd=sd))
     # exp2/log2 staging (one knob at a time off the baseline) across the deep transcendental formats.
     for w, m, k, c in TRANS_EXPLOG_EXT:
@@ -914,7 +907,6 @@ def _deep_coverage(out: list) -> None:
         for op in ("abs", "neg", "is_finite", "saturate"):
             out.append(_binary(op, s, "deep", base, w, m, "exhaustive", 0))
         for sd in (0, 1):
-            out.append(_binary("mul_ilog2_const", s, "deep", base, w, m, "exhaustive", 0, sd=sd))
             out.append(_ilog2(s, "deep", base, w, m, "exhaustive", 0, sd=sd))
     # exp2/log2 coverage: WMAN=16 exhaustive toggles the ROM/Horner; so=1 covers the registered pack output;
     # sp=2/3/4 toggle the shared _zkf_pmul split-product paths; split-final exercises log2's final f*C(f) multiply.
@@ -1089,8 +1081,6 @@ _FAST = [
     ("add_sd1_sa1", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
     ("addsub_sd0_sa0", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),
     ("addsub_sd1_sa1", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
-    ("ilog2_sd0", "mul_ilog2_const", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0)]),
-    ("ilog2_sd1", "mul_ilog2_const", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1)]),
     ("ilog2rt_sd0", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 0)]),
     ("ilog2rt_sd1", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 1)]),
     ("mul_sp0", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_PRODUCT", 0)]),

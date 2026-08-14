@@ -40,7 +40,7 @@ class ModuleSpec:
     stage_product: int = 0  # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul pipeline depth / split 0..4.
     stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
     stage_align: int = 0  # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
-    stage_decode: int = 0  # zkf_add, zkf_addsub, zkf_mul_ilog2_const, zkf_fma, zkf_log2: 0 or 1.
+    stage_decode: int = 0  # zkf_add, zkf_addsub, zkf_mul_ilog2, zkf_fma, zkf_log2: 0 or 1.
     stage_normalize: int = 0  # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
     stage_normalize_output: int = 0  # zkf_log2: 0/1 _zkf_normshift.STAGE_OUTPUT register.
     stage_pack: int = 0  # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
@@ -49,9 +49,6 @@ class ModuleSpec:
     wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul DSP tile-width hint (0 = symmetric;
     #   >=8 -> slice grid).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
-
-
-MUL_ILOG2_CONST_K = 10  # representative midrange shift for the synthesis evaluation harness
 
 
 MODULES = [
@@ -305,25 +302,6 @@ MODULES = [
         wexp=8,
         wman=36,
         wexp_unbiased=0,
-    ),
-    ModuleSpec(
-        name="zkf_mul_ilog2_const",
-        label="zkf_mul_ilog2_const (K=+10)",
-        top="zkf_mul_ilog2_const_synth_top",
-        kind="mul_ilog2_const",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-    ),
-    ModuleSpec(
-        name="zkf_mul_ilog2_const_w8m36_sd1",
-        label="zkf_mul_ilog2_const (WEXP=8, WMAN=36, K=+10, STAGE_DECODE=1)",
-        top="zkf_mul_ilog2_const_w8m36_sd1_synth_top",
-        kind="mul_ilog2_const",
-        wexp=8,
-        wman=36,
-        wexp_unbiased=0,
-        stage_decode=1,
     ),
     # WK=44/SD0 pins the full cone that regressed to 97.37 MHz when accumulator width followed WK.
     ModuleSpec(
@@ -808,8 +786,6 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
     if spec.kind == "sort":
         return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_sort.v"]
-    if spec.kind == "mul_ilog2_const":
-        return [hdl / "zkf_pipe.v", hdl / "zkf_mul_ilog2_const.v"]
     if spec.kind == "mul_ilog2":
         return [hdl / "zkf_pipe.v", hdl / "zkf_mul_ilog2.v"]
     if spec.kind == "from_int":
@@ -908,7 +884,6 @@ def model_for(spec: ModuleSpec) -> OperatorModel:
         "wexp_unbiased": spec.wexp_unbiased or None,
         "wint": spec.wint or 32,
         "wk": spec.wk or None,
-        "k": MUL_ILOG2_CONST_K,
         "wexp_in": spec.wexp_in or None,
         "wman_in": spec.wman_in or None,
         "unroll100": spec.unroll100,

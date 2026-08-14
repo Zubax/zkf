@@ -100,7 +100,6 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_addsub`          | ⇻ | 1       | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
 | `zkf_mul`             | ⇻ | 1       | `a⋅b`.                                                         |                             |
 | `zkf_mul_ilog2`       | ⇻ | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                   |                             |
-| `zkf_mul_ilog2_const` | ⇻ | 1       | `a⋅2^K` for an elaboration-time signed integer `K`.            | Const wins some fabric area |
 | `zkf_div`             | ⇻ | 1       | `a ÷ b`; flags divide-by-zero.                                 |                             |
 | `zkf_fma`             | ⇻ | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
 | `zkf_from_int`        | ⇻ | 1       | Cast signed two's-complement integer to float.                 |                             |
@@ -146,7 +145,7 @@ representation.
     log_b(x)            = log2(x) / log2(b)     ; x>0, b>0, b≠1
     pow(a,b)            = exp2(b⋅log2(a))       ; real-valued identity for a>0
     recip(x)            = 1 / x
-    sqrt(x)             = exp2(log2(x)⋅2^-1)    ; x≥0; see zkf_mul_ilog2_const
+    sqrt(x)             = exp2(log2(x)⋅2^-1)    ; x≥0; see zkf_mul_ilog2
     rsqrt(x)            = exp2(log2(x)⋅-2^-1)   ; x>0; avoids division
     cbrt(x)             = sign(x)⋅exp2(log2(abs(x)) / 3)
 

@@ -316,36 +316,6 @@ class MulIlog2Model(OperatorModel):
 
 
 @dataclass(frozen=True)
-class MulIlog2ConstModel(OperatorModel):
-    module = "zkf_mul_ilog2_const"
-    k: int = 0
-    stage_input: int = 0
-    stage_decode: int = 0
-
-    def __post_init__(self) -> None:
-        limit = (1 << self.fmt.wexp) - 2
-        _check_int_range(self.k, -limit, limit - 1)
-        _check_int_range(self.stage_input, 0, None)
-        _check_int_range(self.stage_decode, 0, 1)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {
-                "WEXP": self.fmt.wexp,
-                "WMAN": self.fmt.wman,
-                "K": self.k,
-                "STAGE_INPUT": self.stage_input,
-                "STAGE_DECODE": self.stage_decode,
-            }
-        )
-
-    @property
-    def latency(self) -> int:
-        return 1 + self.stage_input + self.stage_decode
-
-
-@dataclass(frozen=True)
 class DivCoreModel(OperatorModel):
     module = "_zkf_div_core"
 

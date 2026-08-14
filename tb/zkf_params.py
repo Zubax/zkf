@@ -35,7 +35,7 @@ class TestContext:
     stage_product: int = 0  # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_sincos / zkf_atan2
     stage_product_final: int = 0  # zkf_log2 final f*C(f) multiply; defaults to stage_product in float_context()
     stage_align: int = 0  # zkf_add / zkf_addsub / zkf_fma
-    stage_decode: int = 0  # zkf_mul_ilog2_const / zkf_fma / zkf_log2
+    stage_decode: int = 0  # zkf_mul_ilog2 / zkf_fma / zkf_log2
     stage_normalize: int = 0  # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int
     stage_normalize_output: int = 0  # zkf_log2: register _zkf_normshift outputs before GRS/exponent combine
     stage_pack: int = 0  # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)

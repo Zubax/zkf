@@ -14,7 +14,6 @@ from ._operators import (
     FromIntModel as FromIntModel,
     IsFiniteModel as IsFiniteModel,
     Log2Model as Log2Model,
-    MulIlog2ConstModel as MulIlog2ConstModel,
     MulIlog2Model as MulIlog2Model,
     MulModel as MulModel,
     NegModel as NegModel,

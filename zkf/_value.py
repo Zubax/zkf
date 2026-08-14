@@ -275,7 +275,7 @@ class Zkf:
         return Zkf(fmt, round_fraction_to_zkf(fmt, int(result < 0), abs(result)))
 
     def mul_ilog2(self, k: int) -> Zkf:
-        """Multiply by 2**k for signed integer k (exponent add); models zkf_mul_ilog2 and zkf_mul_ilog2_const."""
+        """Multiply by 2**k for signed integer k (exponent add); models zkf_mul_ilog2."""
         fmt = self.fmt
         a = self
         if a.is_zero:

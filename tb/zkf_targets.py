@@ -54,7 +54,6 @@ FILESETS: dict[str, list[str]] = {
         "zkf/rtl/zkf_add.v",
         "zkf/rtl/zkf_addsub.v",
     ],
-    "rtl_mul_ilog2_const": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_mul_ilog2_const.v"],
     "rtl_mul_ilog2": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_mul_ilog2.v"],
     "rtl_from_int": [
         "zkf/rtl/_zkf_pack.v",
@@ -112,7 +111,6 @@ FILESETS: dict[str, list[str]] = {
         "zkf/rtl/_zkf_pmul.v",
         "zkf/rtl/zkf_atan2.v",
     ],
-    "tb_mul_ilog2_const_wrap": ["tb/zkf_mul_ilog2_const_wrap.v"],
 }
 
 
@@ -151,9 +149,6 @@ TARGETS: dict[str, Target] = {
     "sim_pipe": _t("zkf_pipe", "test_pipe", "rtl_pipe"),
     "sim_normshift": _t("_zkf_normshift", "test_normshift", "rtl_normshift"),
     "sim_rshift": _t("_zkf_rshift_sticky", "test_rshift", "rtl_rshift"),
-    "sim_mul_ilog2_const": _t(
-        "zkf_mul_ilog2_const_wrap", "test_mul_ilog2_const", "rtl_mul_ilog2_const", "tb_mul_ilog2_const_wrap"
-    ),
     "sim_mul_ilog2": _t("zkf_mul_ilog2", "test_mul_ilog2", "rtl_mul_ilog2"),
     "sim_from_int": _t("zkf_from_int", "test_from_int", "rtl_from_int"),
     "sim_to_int": _t("zkf_to_int", "test_to_int", "rtl_to_int"),

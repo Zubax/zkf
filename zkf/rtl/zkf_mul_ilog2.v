@@ -97,9 +97,7 @@ module zkf_mul_ilog2 #(
     wire signed [WACC-1:0] a_exp_acc = $signed({{(WACC-WEXP){1'b0}}, a_exp});
     wire signed [WACC-1:0] k_exp_acc = $signed({{(WACC-WK_NRW){k_nrw[WK_NRW-1]}}, k_nrw});
     wire signed [WACC-1:0] new_exp_acc = a_exp_acc + k_exp_acc;
-    // Overflow via the sign bit of (new_exp_acc - EXP_INF), not a `>=` comparator: logically identical, but this form
-    // (mirroring zkf_mul_ilog2_const) maps to a short carry chain that synthesizers handle predictably, whereas the
-    // wide comparator was observed to map poorly on some tool/mapper combinations (bloated area, weaker timing).
+    // The subtraction's sign bit implements >= EXP_INF as a carry chain; wide comparators mapped poorly in some tools.
     wire signed [WACC-1:0] of_acc = new_exp_acc - $signed({{(WACC-WEXP){1'b0}}, EXP_INF});
     wire overflow   = !a_special && (k_sat_pos || (!k_sat_neg && ~of_acc[WACC-1]));      // >= EXP_INF
     wire underflow  = !a_special && (k_sat_neg || (!k_sat_pos && new_exp_acc[WACC-1]));  // < 0
