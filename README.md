@@ -106,6 +106,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_to_int`          | ⇻ | 1       | Cast float to signed two's-complement integer with saturation. | RNTE/floor/ceil/trunc       |
 | `zkf_resize`          |   | 1       | Cast between different float formats.                          |                             |
 | `zkf_round`           |   | 1       | Round to integer in same format: RNTE/floor/ceil/trunc.        | Outputs float; also see `zkf_to_int`|
+| `zkf_sqrt`            | ⇻ | 1       | `√x`; `−inf`&`domain_error` iff `x<0`.                         | Correct rounding, 0.5 ULP   |
 | `zkf_exp2`            | ⇻ | 1       | `2^x`                                                          | Faithful rounding, see below|
 | `zkf_log2`            | ⇻ | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
 | `zkf_sincos`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)` for `x` in turns; exposes `quadrant`. | Faithful rounding, see below|
@@ -139,22 +140,22 @@ representation.
     sin(x), cos(x)      = sin_turns(radians_to_turns(x)), cos_turns(radians_to_turns(x))
     atan2(y,x)          = 2π⋅atan2_turns(y, x)
 
+    sqrt(x)             = zkf_sqrt(x)           ; correctly rounded 0.5 ULP
     exp(x)              = exp2(x⋅log2(e))
     ln(x)               = log2(x) / log2(e)
     log10(x)            = log2(x) / log2(10)
     log_b(x)            = log2(x) / log2(b)     ; x>0, b>0, b≠1
     pow(a,b)            = exp2(b⋅log2(a))       ; real-valued identity for a>0
     recip(x)            = 1 / x
-    sqrt(x)             = exp2(log2(x)⋅2^-1)    ; x≥0; see zkf_mul_ilog2
     rsqrt(x)            = exp2(log2(x)⋅-2^-1)   ; x>0; avoids division
     cbrt(x)             = sign(x)⋅exp2(log2(abs(x)) / 3)
 
     tan(x)              = sin(x) / cos(x)
     atan(x)             = atan2(x, 1)
-    asin(x)             = atan2(x, sqrt(1 − x⋅x))      ; x ∈ [-1,+1]
-    acos(x)             = atan2(sqrt(1 − x⋅x), x)      ; x ∈ [-1,+1]
+    asin(x)             = atan2(x, sqrt(1 − x⋅x))                       ; x ∈ [-1,+1]
+    acos(x)             = atan2(sqrt(1 − x⋅x), x)                       ; x ∈ [-1,+1]
     h                   = max(abs(x), abs(y))
-    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))
+    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf_atan2
 
     min(a,b), max(a,b)  = sort(a,b)
     clamp(x, lo, hi)    = min(max(x, lo), hi)
@@ -221,6 +222,7 @@ Infinity cases that would be NaN in IEEE 754:
 | 0⋅±∞                | +0                             |
 | 0 ÷ 0               | +0                             |
 | ±∞ ÷ ±∞             | +0                             |
+| √x; x<0             | -inf                           |
 
 Non-NaN infinity cases (same intent as IEEE 754):
 

@@ -19,6 +19,11 @@ class Log2Result(NamedTuple):
     pole: bool
 
 
+class SqrtResult(NamedTuple):
+    root: Zkf
+    domain_error: bool
+
+
 class SinCos(NamedTuple):
     sin: Zkf
     cos: Zkf
@@ -249,6 +254,34 @@ class Zkf:
 
         value = abs(a.to_fraction() / b.to_fraction())
         return DivResult(Zkf(fmt, round_fraction_to_zkf(fmt, result_sign, value)), div0)
+
+    def sqrt(self) -> SqrtResult:
+        """sqrt(self) plus the domain-error (self<0) flag; sqrt(x<0) = -inf (the zkf_sqrt operator)."""
+        fmt = self.fmt
+        if self.is_zero:
+            return SqrtResult(Zkf(fmt, zero(fmt)), False)  # sign of zero ignored
+        if self.negative:
+            return SqrtResult(Zkf(fmt, canonical_inf(fmt, 1)), True)  # sqrt(x<0) = -inf, domain error
+        if self.is_inf:
+            return SqrtResult(Zkf(fmt, canonical_inf(fmt, 0)), False)  # sqrt(+inf) = +inf
+
+        # Exact integer mirror of the RTL recurrence: QFRAC fractional root bits from the even-exponent-aligned
+        # radicand, then guard from the parity-dependent rule and sticky from the exact remainder.
+        qfrac = fmt.wfrac + (fmt.wfrac % 2)
+        r = (self.exp - fmt.bias) & 1
+        radicand = self.significand() << (2 * qfrac + r - fmt.wfrac)
+        raw = math.isqrt(radicand)
+        rem = radicand - raw * raw
+        if fmt.wman % 2 == 0:
+            significand_value = raw >> 1
+            guard = raw & 1
+        else:
+            significand_value = raw
+            guard = 1 if rem > raw else 0
+        sticky = 1 if rem else 0
+        exp_unbiased = (self.exp - fmt.bias) // 2
+        y = pack_reference(fmt, 0, 0, 0, exp_unbiased, significand_value, guard, 0, sticky)
+        return SqrtResult(Zkf(fmt, y), False)
 
     def fma(self, b: Zkf, c: Zkf) -> Zkf:
         """Correctly-rounded fused multiply-add: round(self*b + c) with a single rounding."""

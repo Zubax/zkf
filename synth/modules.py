@@ -268,6 +268,44 @@ MODULES = [
         emit_schematic=False,
     ),
     ModuleSpec(
+        name="_zkf_sqrt_core",
+        label="_zkf_sqrt_core",
+        top="_zkf_sqrt_core_synth_top",
+        kind="sqrt_core",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_sqrt",
+        label="zkf_sqrt",
+        top="zkf_sqrt_synth_top",
+        kind="sqrt",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+    ),
+    ModuleSpec(
+        name="zkf_sqrt_si1",
+        label="zkf_sqrt (STAGE_INPUT=1)",
+        top="zkf_sqrt_si1_synth_top",
+        kind="sqrt",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        stage_input=1,
+    ),
+    ModuleSpec(
+        name="zkf_sqrt_w8m36",
+        label="zkf_sqrt (WEXP=8, WMAN=36)",
+        top="zkf_sqrt_w8m36_synth_top",
+        kind="sqrt",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        emit_schematic=False,
+    ),
+    ModuleSpec(
         name="zkf_cmp",
         label="zkf_cmp",
         top="zkf_cmp_synth_top",
@@ -781,6 +819,14 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "zkf_pipe.v",
             hdl / "_zkf_div_core.v",
             hdl / "zkf_div.v",
+        ]
+    if spec.kind == "sqrt_core":
+        return [hdl / "zkf_sqrt.v"]
+    if spec.kind == "sqrt":
+        return [
+            hdl / "zkf_pipe.v",
+            hdl / "_zkf_pack.v",
+            hdl / "zkf_sqrt.v",
         ]
     if spec.kind == "cmp":
         return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
