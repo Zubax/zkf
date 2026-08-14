@@ -2,7 +2,7 @@
 Independent reference values for verifying the ZKF model. Two families:
 
 - correctly-rounded (ties-to-even) transcendentals via mpmath: exp2, log2, sincos, atan2;
-- IEEE-754 cross-checks via the hardware FPU: add, mul, div (binary32 and binary64) and fma (binary64 only).
+- IEEE-754 cross-checks via the hardware FPU: add, mul, div, sqrt (binary32 and binary64) and fma (binary64 only).
 
 The transcendentals run at ~4*WMAN mpmath working precision (correct last-bit rounding even at large WMAN) and prove the
 model's faithful-rounding (<=1 ULP) contract; the IEEE checks catch model bugs for the two formats where ZKF coincides
@@ -28,6 +28,7 @@ from ._value import (
     DivResult,
     Log2Result,
     SinCos,
+    SqrtResult,
     Zkf,
     atan2_canon_half,
     atan2_special,
@@ -170,6 +171,24 @@ def div(a: Zkf, b: Zkf) -> DivResult | None:
         result = _to_np(a.bits, dtype) / _to_np(b.bits, dtype)
     raw = fmt.wrap(_from_np(result, dtype))
     return None if _underflowed_to_subnormal(raw) else DivResult(_canonicalize(raw), div0)
+
+
+def sqrt(z: Zkf) -> SqrtResult | None:
+    """IEEE sqrt (correctly rounded) with the domain-error flag, or None if not IEEE-mappable."""
+    fmt = z.fmt
+    dtype = _dtype(fmt)
+    if dtype is None or not _is_ieee_canonical(z):
+        return None
+    if z.is_zero:
+        return SqrtResult(fmt.zero(), False)
+    if z.negative:
+        return SqrtResult(fmt.inf(1), True)  # ZKF: sqrt(x<0) = -inf + domain error (IEEE would raise NaN)
+    if z.is_inf:
+        return SqrtResult(fmt.inf(0), False)
+    with _np.errstate(all="ignore"):
+        result = _np.sqrt(_to_np(z.bits, dtype))
+    # sqrt of a positive normal is a positive normal: never subnormal, never overflowing, no canonicalization.
+    return SqrtResult(fmt.wrap(_from_np(result, dtype)), False)
 
 
 def fma(a: Zkf, b: Zkf, c: Zkf) -> Zkf | None:

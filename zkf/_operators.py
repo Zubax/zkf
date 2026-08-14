@@ -372,6 +372,57 @@ class DivModel(OperatorModel):
 
 
 @dataclass(frozen=True)
+class SqrtCoreModel(OperatorModel):
+    module = "_zkf_sqrt_core"
+
+    @property
+    def qfrac(self) -> int:
+        return self.fmt.wfrac + (self.fmt.wfrac % 2)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return {
+            "WEXP": self.fmt.wexp,
+            "WMAN": self.fmt.wman,
+            "QFRAC": self.qfrac,
+            "WEXP_UNBIASED": self.fmt.wexp + 2,
+        }
+
+    @property
+    def latency(self) -> int:
+        return 1 + self.qfrac // 2
+
+
+@dataclass(frozen=True)
+class SqrtModel(OperatorModel):
+    module = "zkf_sqrt"
+    stage_input: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        for value in (self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def latency(self) -> int:
+        return SqrtCoreModel(self.fmt).latency + self.stage_input + self.stage_pack + self.stage_output
+
+
+@dataclass(frozen=True)
 class FromIntModel(OperatorModel):
     module = "zkf_from_int"
     wint: int = 32

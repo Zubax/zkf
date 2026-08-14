@@ -59,6 +59,13 @@ def tests(session: nox.Session) -> None:
     )
 
 
+@nox.session(default=False)
+def focused(session: nox.Session) -> None:
+    """Filtered matrix runs for single-operator iteration (e.g. `nox -s focused -- -k sqrt`); no coverage gate."""
+    session.install("-e", ".[test]")
+    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", *PYTEST_DIST, *session.posargs)
+
+
 @nox.session
 def fast(session: nox.Session) -> None:
     session.install("-e", ".[test]")

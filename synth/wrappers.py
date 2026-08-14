@@ -587,6 +587,186 @@ endmodule
 """)
 
 
+def write_sqrt_core_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    model = model_for(spec)
+    wexp_unbiased = model.params["WEXP_UNBIASED"]
+    qfrac = model.params["QFRAC"]
+    params = model.verilog_params.replace(", ", ",\n        ")
+    path.write_text(f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                     clk,
+    input  wire                     rst,
+    input  wire                     in_valid,
+    input  wire [{wfull - 1}:0]     x,
+    output wire                     out_valid,
+    output wire                     force_zero,
+    output wire                     force_inf,
+    output wire                     domain_error,
+    output wire signed [{wexp_unbiased - 1}:0] exp_biased,
+    output wire [{spec.wman - 1}:0] significand,
+    output wire                     guard,
+    output wire                     sticky,
+    output wire [{qfrac + 1}:0]     partial_rem
+);
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_x;
+
+    wire                            dut_out_valid;
+    wire                            dut_force_zero;
+    wire                            dut_force_inf;
+    wire                            dut_domain_error;
+    wire signed [{wexp_unbiased - 1}:0] dut_exp_biased;
+    wire                 [{spec.wman - 1}:0] dut_significand;
+    wire                            dut_guard;
+    wire                            dut_sticky;
+    wire                 [{qfrac + 1}:0] dut_partial_rem;
+
+    {SYNTH_REG_ATTR}
+    reg                            r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg                            r_force_zero;
+    {SYNTH_REG_ATTR}
+    reg                            r_force_inf;
+    {SYNTH_REG_ATTR}
+    reg                            r_domain_error;
+    {SYNTH_REG_ATTR}
+    reg signed [{wexp_unbiased - 1}:0] r_exp_biased;
+    {SYNTH_REG_ATTR}
+    reg                 [{spec.wman - 1}:0] r_significand;
+    {SYNTH_REG_ATTR}
+    reg                            r_guard;
+    {SYNTH_REG_ATTR}
+    reg                            r_sticky;
+    {SYNTH_REG_ATTR}
+    reg                 [{qfrac + 1}:0] r_partial_rem;
+
+    assign out_valid    = r_out_valid;
+    assign force_zero   = r_force_zero;
+    assign force_inf    = r_force_inf;
+    assign domain_error = r_domain_error;
+    assign exp_biased   = r_exp_biased;
+    assign significand  = r_significand;
+    assign guard        = r_guard;
+    assign sticky       = r_sticky;
+    assign partial_rem  = r_partial_rem;
+
+    _zkf_sqrt_core #(
+        {params}
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .x(r_x),
+        .out_valid(dut_out_valid),
+        .force_zero(dut_force_zero),
+        .force_inf(dut_force_inf),
+        .domain_error(dut_domain_error),
+        .exp_biased(dut_exp_biased),
+        .significand(dut_significand),
+        .guard(dut_guard),
+        .sticky(dut_sticky),
+        .raw(),
+        .partial_rem(dut_partial_rem)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_x             <= x;
+        r_force_zero    <= dut_force_zero;
+        r_force_inf     <= dut_force_inf;
+        r_domain_error  <= dut_domain_error;
+        r_exp_biased    <= dut_exp_biased;
+        r_significand   <= dut_significand;
+        r_guard         <= dut_guard;
+        r_sticky        <= dut_sticky;
+        r_partial_rem   <= dut_partial_rem;
+    end
+endmodule
+
+`default_nettype wire
+""")
+
+
+def write_sqrt_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    params = _verilog_params(spec)
+    path.write_text(f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                 clk,
+    input  wire                 rst,
+    input  wire                 in_valid,
+    input  wire [{wfull - 1}:0] x,
+    output wire                 out_valid,
+    output wire [{wfull - 1}:0] y,
+    output wire                 domain_error
+);
+    // Measurement harness: put real registers on every DUT input and output so the timing report includes
+    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_x;
+
+    wire                 dut_out_valid;
+    wire [{wfull - 1}:0] dut_y;
+    wire                 dut_domain_error;
+
+    {SYNTH_REG_ATTR}
+    reg                 r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_y;
+    {SYNTH_REG_ATTR}
+    reg                 r_domain_error;
+
+    assign out_valid    = r_out_valid;
+    assign y            = r_y;
+    assign domain_error = r_domain_error;
+
+    zkf_sqrt #(
+        {params}
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .x(r_x),
+        .out_valid(dut_out_valid),
+        .y(dut_y),
+        .domain_error(dut_domain_error)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_x            <= x;
+        r_y            <= dut_y;
+        r_domain_error <= dut_domain_error;
+    end
+endmodule
+
+`default_nettype wire
+""")
+
+
 def write_cmp_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     params = _verilog_params(spec)
@@ -1372,6 +1552,10 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_div_core_wrapper(spec, path)
     elif spec.kind == "div":
         write_div_wrapper(spec, path)
+    elif spec.kind == "sqrt_core":
+        write_sqrt_core_wrapper(spec, path)
+    elif spec.kind == "sqrt":
+        write_sqrt_wrapper(spec, path)
     elif spec.kind == "cmp":
         write_cmp_wrapper(spec, path)
     elif spec.kind == "sort":

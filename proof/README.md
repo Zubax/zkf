@@ -63,6 +63,9 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 | `zkf_mul`               | WEXP=5, WMAN=10 | yices     | one bit shy of binary16's mantissa; yices stalls indefinitely at WMAN=11 with no obvious progress past step 5; rounding heart still covered by the pack proof at full width |
 | `zkf_add`               | WEXP=4, WMAN=6  | yices     | 8-stage BMC; reference uses wide-integer summation |
 | `zkf_div`               | WEXP=4, WMAN=6  | yices     | wraps core+pack; reference uses wide unsigned division |
+| `zkf_sqrt`              | WEXP=4, WMAN=6  | yices     | even WMAN (guard from the recurrence); reference uses radix-2 isqrt + midpoint-square rounding |
+| `zkf_sqrt` (odd)        | WEXP=4, WMAN=7  | yices     | odd WMAN: the strict rem>raw guard path (rem==raw is reachable and must give guard 0) |
+| `_zkf_sqrt_radix4_step` | WQ=1,3,5,17,51  | yices     | one composite harness; greedy digit + rem'<=2Q' + M'=3Q'+1 at the end-to-end proof widths (incl. the WQ=1 decode-stage fold) plus the w6m18 (WQ=17) and WMAN=53-class (WQ=51) late-stage widths |
 
 Combinational/sequential and trivial-wrapper consolidation rule applied:
 
@@ -75,6 +78,9 @@ Combinational/sequential and trivial-wrapper consolidation rule applied:
 - `_zkf_div_radix4_step` IS proved standalone at default `WMAN=18` because its correctness is
   independent of the surrounding pipeline parameters — proving it at production width narrows
   the parameter-genericity gap that the divider's reduced-width proof would otherwise leave open.
+- `_zkf_sqrt_core` is **not** separately proved; `zkf_sqrt` covers it (both WMAN parities, since the
+  guard-extraction path differs). `_zkf_sqrt_radix4_step` IS proved standalone at the production
+  late-stage widths for the same genericity reason as the div step.
 
 ## How to run
 
@@ -91,11 +97,12 @@ on failure it embeds links to the SBY counter-example VCDs.
 
 ## Known limitations and design decisions
 
-- Heavy arithmetic (`zkf_mul`, `zkf_add`, `zkf_div`) is proved at reduced widths because SBY's QF_BV instance at
-  default `(WEXP=6, WMAN=18)` is currently intractable on yices in any reasonable wall-clock.
+- Heavy arithmetic (`zkf_mul`, `zkf_add`, `zkf_div`, `zkf_sqrt`) is proved at reduced widths because SBY's QF_BV
+  instance at default `(WEXP=6, WMAN=18)` is currently intractable on yices in any reasonable wall-clock.
   The parameter-genericity gap is mitigated by:
   1. The full-width `_zkf_pack` proof (rounding logic shared by every arithmetic module).
-  2. The full-width `_zkf_div_radix4_step` proof (digit primitive shared by every divider width).
+  2. The full-width `_zkf_div_radix4_step` and late-stage-width `_zkf_sqrt_radix4_step` proofs (the digit
+     primitives shared by every divider/rooter width).
   3. The simulation matrix in `../tb/`, which spans default widths up to binary64.
   4. The `zkf_mul` proof at near-binary16 widths `(WEXP=5, WMAN=10)`, exercising the full
      hidden-bit-product-high vs. product-low normalisation split that the reduced widths exercise

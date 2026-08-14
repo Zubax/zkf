@@ -1,0 +1,18 @@
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal zkf_sqrt.v
+read -formal zkf_sqrt_radix4_step_ref.v
+read -formal zkf_sqrt_radix4_step_eq.v
+prep -top zkf_sqrt_radix4_step_eq
+
+[files]
+zkf/rtl/zkf_sqrt.v
+proof/refs/zkf_sqrt_radix4_step_ref.v
+proof/harness/zkf_sqrt_radix4_step_eq.v

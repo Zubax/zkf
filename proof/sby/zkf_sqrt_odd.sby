@@ -1,0 +1,23 @@
+[options]
+mode bmc
+depth 10
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal _zkf_pack.v
+read -formal zkf_pipe.v
+read -formal zkf_sqrt.v
+read -formal zkf_sqrt_ref.v
+read -formal zkf_sqrt_eq.v
+chparam -set WEXP 4 -set WMAN 7 zkf_sqrt_eq
+prep -top zkf_sqrt_eq
+
+[files]
+zkf/rtl/_zkf_pack.v
+zkf/rtl/zkf_pipe.v
+zkf/rtl/zkf_sqrt.v
+proof/refs/zkf_sqrt_ref.v
+proof/harness/zkf_sqrt_eq.v

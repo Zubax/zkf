@@ -9,6 +9,7 @@ are excluded: ZKF does not support them and NaN payload/sign handling is not por
 from __future__ import annotations
 
 from fractions import Fraction
+from math import isqrt
 from pathlib import Path
 import random
 import sys
@@ -21,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # tb/ (harness sibling
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root (the zkf package)
 
 from zkf import RoundMode, Zkf, ZkfFormat  # noqa: E402
-from zkf.oracle import add, div, mul  # noqa: E402
+from zkf.oracle import add, div, mul, sqrt  # noqa: E402
 from zkf_bits import hex_bits, mask, pow2_fraction  # noqa: E402
 from zkf_operands import canonical_inf, normal, pack_bits, zero  # noqa: E402
 
@@ -233,13 +234,20 @@ class ZkfModelLayoutTest(unittest.TestCase):
 
     def test_model_operations_match_numpy(self) -> None:
         """
-        Cross-check the model's mul/add/div against the IEEE FPU (NumPy) for the two IEEE-754-coincident
+        Cross-check the model's mul/add/div/sqrt against the IEEE FPU (NumPy) for the two IEEE-754-coincident
         formats. The model is the oracle for every other format, so a mismatch here means the oracle is wrong.
         """
         for fmt, seed in ((BINARY32, 0x32A11), (BINARY64, 0x64A11)):
             w = fmt.wfull
             ops = self._canonical_operands(fmt, seed, n_random=28)
             for a in ops:
+                za_u = fmt.wrap(a)
+                want_sqrt = sqrt(za_u)
+                if want_sqrt is not None:
+                    sr = za_u.sqrt()
+                    got = (sr.root.bits, int(sr.domain_error))
+                    want = (want_sqrt.root.bits, int(want_sqrt.domain_error))
+                    self.assertEqual(got, want, f"sqrt {hex_bits(a, w)}: model={got} numpy={want}")
                 for b in ops:
                     za, zb = fmt.wrap(a), fmt.wrap(b)
                     want_mul = mul(za, zb)
@@ -268,6 +276,38 @@ class ZkfModelLayoutTest(unittest.TestCase):
                         self.assertEqual(
                             got, want, f"div {hex_bits(a, w)}/{hex_bits(b, w)}: " f"model={got} numpy={want}"
                         )
+
+    def test_sqrt_model_against_midpoint_square(self) -> None:
+        """
+        Exhaustive small-format check of the sqrt model against an independent midpoint-square formulation (the
+        same reference shape the formal proofs use): the WMAN-bit truncated root of Y = S << (WFRAC + r) is
+        rounded by comparing 4*Y against (2*lo+1)^2 directly, not by repeating the model's QFRAC scaling and
+        remainder-guard rule, so a common-mode scaling/rounding bug cannot pass.
+        """
+        for fmt in (ZkfFormat(2, 4), ZkfFormat(3, 5), ZkfFormat(4, 6), ZkfFormat(4, 7)):
+            for bits in range(1 << fmt.wfull):
+                z = fmt.wrap(bits)
+                got = z.sqrt()
+                if z.is_zero:
+                    want, want_de = zero(fmt), False
+                elif z.negative:
+                    want, want_de = canonical_inf(fmt, 1), True
+                elif z.is_inf:
+                    want, want_de = canonical_inf(fmt, 0), False
+                else:
+                    e = z.exp - fmt.bias
+                    r = e & 1
+                    y = z.significand() << (fmt.wfrac + r)  # sqrt(y) = sqrt(m * 2^r) * 2^WFRAC, 2*WMAN bits
+                    lo = isqrt(y)
+                    self.assertTrue(lo * lo <= y < (lo + 1) * (lo + 1))
+                    up = 4 * y > (2 * lo + 1) ** 2 or (4 * y == (2 * lo + 1) ** 2 and (lo & 1))
+                    rounded = lo + (1 if up else 0)
+                    exp_out = (e - r) // 2 + fmt.bias
+                    if rounded >> fmt.wman:  # round-up carry: unreachable, kept for independence
+                        rounded >>= 1
+                        exp_out += 1
+                    want, want_de = normal(fmt, 0, exp_out, rounded & fmt.frac_mask), False
+                self.assertEqual((got.root.bits, got.domain_error), (want, want_de), f"{fmt} bits={bits:#x}")
 
     def test_random_binary32_normal_layout(self) -> None:
         self.assert_random_normal_layout(BINARY32, np.float32, count=5000, seed=0x32F17A)

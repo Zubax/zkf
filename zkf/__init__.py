@@ -24,6 +24,8 @@ from ._operators import (
     SaturateModel as SaturateModel,
     SincosModel as SincosModel,
     SortModel as SortModel,
+    SqrtCoreModel as SqrtCoreModel,
+    SqrtModel as SqrtModel,
     ToIntModel as ToIntModel,
 )
 from ._value import (
@@ -32,6 +34,7 @@ from ._value import (
     DivResult as DivResult,
     Log2Result as Log2Result,
     SinCos as SinCos,
+    SqrtResult as SqrtResult,
     Zkf as Zkf,
 )
 from ._reference import RoundMode as RoundMode

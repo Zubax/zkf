@@ -538,6 +538,19 @@ def _per_pr(sim, out: list) -> None:
             out.append(_binary("div", sim, "pr", cfg, w, m, k, c, si=si))
     out.append(_binary("div", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
     out.append(_binary("div", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, pa=1, so=1))
+    # zkf_sqrt: UNARY plus a w3_m5 exhaustive row so both WMAN/QFRAC parities (the odd-WMAN rows take the strict
+    # rem>raw guard path) and both exponent parities are swept; knob rows mirror div's, on both parities.
+    for si in (0, 1):
+        for cfg, w, m, k, c in UNARY:
+            out.append(_binary("sqrt", sim, "pr", cfg, w, m, k, c, si=si))
+        out.append(_binary("sqrt", sim, "pr", "w3_m5_exhaustive", 3, 5, "exhaustive", 0, si=si))
+    out.append(_binary("sqrt", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
+    out.append(_binary("sqrt", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, so=1))
+    out.append(_binary("sqrt", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, pa=1, so=1))
+    # Exact synthesized configurations (kept in sync with synth/modules.py): w6m18 baseline + si1, w8m36.
+    out.append(_binary("sqrt", sim, "pr", "w6_m18", 6, 18, "random", 768))
+    out.append(_binary("sqrt", sim, "pr", "w6_m18", 6, 18, "random", 768, si=1))
+    out.append(_binary("sqrt", sim, "pr", "w8_m36", 8, 36, "random", 768))
     for cfg, w, m, k, c in FMA:
         out.append(_fma(sim, "pr", cfg, w, m, k, c))
     # Each pipeline knob once (plus all-on) on a fast format; results are staging-independent, so this checks the
@@ -696,8 +709,9 @@ def _per_pr(sim, out: list) -> None:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
     # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks widened input
     # pipes in the latency model. sincos/atan2 excluded (handshake-entangled input stage).
-    for op in ("mul", "div", "cmp", "sort"):
+    for op in ("mul", "div", "sqrt", "cmp", "sort"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
+    out.append(_binary("sqrt", sim, "pr", "w3_m5", 3, 5, "exhaustive", 0, si=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
     out.append(_fma(sim, "pr", "w4_m6", 4, 6, "random", 256, si=2))
     out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
@@ -768,6 +782,13 @@ def _deep_correctness(out: list) -> None:
                 out.append(_binary("div", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, si=si, so=so))
     # div at WMAN=48: no transcendental tables, so a wide format is cheap and otherwise untested.
     out.append(_binary("div", s, "deep", "w8m48_random", 8, 48, "random", 384, si=0, so=0))
+    for w, m, k, c in UNARY_EXT:
+        for si in (0, 1):
+            for so in (0, 1):
+                out.append(_binary("sqrt", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, si=si, so=so))
+    # sqrt at wide even/odd WMAN otherwise untested in deep (w8m48 mirrors div's wide row).
+    out.append(_binary("sqrt", s, "deep", "w8m48_random", 8, 48, "random", 384, si=0, so=0))
+    out.append(_binary("sqrt", s, "deep", "w7m53_random", 7, 53, "random", 384, si=0, so=0))
     for w, m, k, c in UNARY_EXT:
         base = f"w{w}m{m}_{k}"
         for op in ("abs", "neg", "is_finite", "saturate"):
@@ -902,6 +923,7 @@ def _deep_coverage(out: list) -> None:
     for w, m in [(4, 5), (3, 6), (3, 5), (2, 6)]:
         for si in (0, 1):
             out.append(_binary("div", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))
+            out.append(_binary("sqrt", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))
     for w, m in [(4, 5), (3, 6), (2, 6)]:
         base = f"w{w}m{m}"
         for op in ("abs", "neg", "is_finite", "saturate"):
@@ -1029,6 +1051,8 @@ def _deep_coverage(out: list) -> None:
     out.append(_binary("add", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=0, sa=0, so=1))
     out.append(_binary("addsub", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=1, sa=1, so=1))
     out.append(_binary("div", s, "deep", "w3m5", 3, 5, "exhaustive", 0, si=0, so=1))
+    out.append(_binary("sqrt", s, "deep", "w3m5", 3, 5, "exhaustive", 0, si=0, so=1))
+    out.append(_binary("sqrt", s, "deep", "w3m4", 3, 4, "exhaustive", 0, si=0, pa=1))
     out.append(_cast("from_int", s, "deep", "w4m5i7", 4, 5, 7, "exhaustive", 0, 0, so=1))
     # Identity widen (FRAC_PAD=0, BIAS_OFFSET=0): registered s_y has no structurally-zero padding, so every bit
     # toggles; a padding-bearing widen would leave low s_y bits permanently 0.
@@ -1089,6 +1113,8 @@ _FAST = [
     ("mul_si1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 1)]),
     ("div_si0", "div", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 0)]),
     ("div_si1", "div", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 1)]),
+    ("sqrt_m4_si0", "sqrt", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 0)]),
+    ("sqrt_m5_si1", "sqrt", [("WEXP", 2), ("WMAN", 5), ("STAGE_INPUT", 1)]),
     ("from_int_si0", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 0)]),
     ("from_int_si1", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 1)]),
     ("to_int_si0", "to_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 0)]),
