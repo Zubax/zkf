@@ -11,6 +11,7 @@ from ._operators import (
     Exp2Model as Exp2Model,
     FmaModel as FmaModel,
     FromIntModel as FromIntModel,
+    Ilog2Model as Ilog2Model,
     IsFiniteModel as IsFiniteModel,
     Log2Model as Log2Model,
     MulIlog2Model as MulIlog2Model,
@@ -38,4 +39,4 @@ from ._reference import RoundMode as RoundMode
 from ._rtl import get_rtl as get_rtl
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.5.0"
+__version__ = "0.6.0"

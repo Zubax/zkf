@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -139,3 +140,34 @@ def _parametrized():
 @pytest.mark.parametrize("run", list(_parametrized()))
 def test_float(run) -> None:
     _run_cocotb(run)
+
+
+@pytest.mark.parametrize(
+    "overrides,valid",
+    [
+        ({}, True),
+        ({"WEXP": 8, "WINT": 9, "LATENCY": 1}, True),
+        ({"WEXP": 8, "WINT": 8}, False),
+        ({"WEXP": 1}, False),
+        ({"WMAN": 3}, False),
+        ({"STAGE_INPUT": -1}, False),
+        ({"STAGE_INPUT": 2, "LATENCY": 3}, True),
+        ({"STAGE_INPUT": 2, "LATENCY": 2}, False),
+    ],
+)
+def test_ilog2_elaboration(tmp_path, overrides, valid) -> None:
+    result = subprocess.run(
+        [
+            "iverilog",
+            "-s",
+            "zkf_ilog2",
+            "-o",
+            str(tmp_path / "ilog2.vvp"),
+            *[f"-Pzkf_ilog2.{name}={value}" for name, value in overrides.items()],
+            str(REPO_ROOT / "zkf/rtl/zkf_pipe.v"),
+            str(REPO_ROOT / "zkf/rtl/zkf_ilog2.v"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) == valid, result.stderr

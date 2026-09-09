@@ -100,6 +100,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_addsub`          | ⇻ | 1       | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
 | `zkf_mul`             | ⇻ | 1       | `a⋅b`.                                                         |                             |
 | `zkf_mul_ilog2`       | ⇻ | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                   |                             |
+| `zkf_ilog2`           | ⇻ | 1       | Raw exponent minus bias; sign-invariant signed integer.       | Flags zero, infinity, negative |
 | `zkf_div`             | ⇻ | 1       | `a ÷ b`; flags divide-by-zero.                                 |                             |
 | `zkf_fma`             | ⇻ | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
 | `zkf_from_int`        | ⇻ | 1       | Cast signed two's-complement integer to float.                 |                             |

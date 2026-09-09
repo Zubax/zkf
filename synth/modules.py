@@ -52,6 +52,26 @@ class ModuleSpec:
 
 
 MODULES = [
+    *[
+        ModuleSpec(
+            name=name,
+            label=f"zkf_ilog2 (WEXP={wexp}, WMAN={wman}, WINT={wint}, STAGE_INPUT={si})",
+            top=f"{name}_synth_top",
+            kind="ilog2",
+            wexp=wexp,
+            wman=wman,
+            wexp_unbiased=0,
+            wint=wint,
+            stage_input=si,
+        )
+        for name, wexp, wman, wint, si in (
+            ("zkf_ilog2", 6, 18, 32, 0),
+            ("zkf_ilog2_w8m24_i9", 8, 24, 9, 0),
+            ("zkf_ilog2_w8m24", 8, 24, 32, 0),
+            ("zkf_ilog2_w8m24_si1", 8, 24, 32, 1),
+            ("zkf_ilog2_w11m53_i64", 11, 53, 64, 0),
+        )
+    ],
     ModuleSpec(
         name="_zkf_pack",
         label="_zkf_pack (normalized GRS)",
@@ -832,6 +852,8 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
     if spec.kind == "sort":
         return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_sort.v"]
+    if spec.kind == "ilog2":
+        return [hdl / "zkf_pipe.v", hdl / "zkf_ilog2.v"]
     if spec.kind == "mul_ilog2":
         return [hdl / "zkf_pipe.v", hdl / "zkf_mul_ilog2.v"]
     if spec.kind == "from_int":
