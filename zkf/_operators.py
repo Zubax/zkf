@@ -274,6 +274,27 @@ class FmaModel(OperatorModel):
 
 
 @dataclass(frozen=True)
+class Ilog2Model(OperatorModel):
+    module = "zkf_ilog2"
+    wint: int = 32
+    stage_input: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.wint, self.fmt.wexp + 1, None)
+        _check_int_range(self.stage_input, 0, None)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman, "WINT": self.wint, "STAGE_INPUT": self.stage_input}
+        )
+
+    @property
+    def latency(self) -> int:
+        return 1 + self.stage_input
+
+
+@dataclass(frozen=True)
 class MulIlog2Model(OperatorModel):
     module = "zkf_mul_ilog2"
     wk: int | None = None

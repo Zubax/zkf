@@ -98,6 +98,31 @@ def manual_binary64_cases() -> list[LayoutCase]:
 
 
 class ZkfModelLayoutTest(unittest.TestCase):
+    def test_ilog2(self) -> None:
+        from zkf import Ilog2Model
+
+        for wexp, wman in ((2, 4), (6, 18), (8, 24), (11, 53)):
+            fmt = ZkfFormat(wexp, wman)
+            for exp in range(1 << wexp):
+                for sign in (0, 1):
+                    for frac in (0, fmt.frac_mask):
+                        a = fmt.wrap((sign << fmt.sign_shift) | (exp << fmt.wfrac) | frac)
+                        self.assertEqual(a.ilog2(), exp - fmt.bias)
+                        if a.is_normal:
+                            normalized = a.mul_ilog2(-a.ilog2())
+                            self.assertEqual(normalized.exp, fmt.bias)
+                            self.assertEqual((normalized.negative, normalized.frac), (a.negative, frac))
+            for wint in (wexp + 1, 32, 64):
+                for stage_input in (0, 1, 2):
+                    model = fmt.model_of("ilog2")(wint=wint, stage_input=stage_input)
+                    self.assertIsInstance(model, Ilog2Model)
+                    self.assertEqual(model.latency, 1 + stage_input)
+                    self.assertEqual(model.params["LATENCY"], model.latency)
+                    self.assertEqual(model.params["WINT"], wint)
+            for config in ({"wint": wexp}, {"stage_input": -1}):
+                with self.assertRaises(ValueError):
+                    fmt.model_of("ilog2")(**config)
+
     def test_public_api_round_mode(self) -> None:
         self.assertIsInstance(RoundMode.NEAREST_EVEN, int)
         self.assertEqual(RoundMode.NEAREST_EVEN, 0)

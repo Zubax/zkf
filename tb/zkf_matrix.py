@@ -376,6 +376,8 @@ def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None
 
 def _cast(module, sim, tier, base, w, m, wint, kind, count, si, *, sn=None, pa=None, so=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m), ("WINT", wint), ("STAGE_INPUT", si)]
+    if module == "ilog2":
+        vlog.append(("LATENCY", 1 + si))
     suffix = f"_si{si}"
     if sn is not None:
         vlog.append(("STAGE_NORMALIZE", sn))
@@ -683,6 +685,10 @@ def _per_pr(sim, out: list) -> None:
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=6, sd=1))
     out.append(_ilog2(sim, "pr", "w8_m36", 8, 36, "random", 512, wk=44, sd=0))
+    for si in (0, 1, 2):
+        for w, m, wint in ((2, 4, 3), (3, 4, 8), (6, 18, 7), (8, 24, 9), (8, 24, 32), (11, 53, 64)):
+            kind = "exhaustive" if w + m <= 7 else "random"
+            out.append(_cast("ilog2", sim, "pr", f"w{w}_m{m}_i{wint}", w, m, wint, kind, 512, si))
     for si in (0, 1):
         for cfg, w, m, wint, k, c in FROM_INT:
             out.append(_cast("from_int", sim, "pr", cfg, w, m, wint, k, c, si))
@@ -795,6 +801,9 @@ def _deep_correctness(out: list) -> None:
             out.append(_binary(op, s, "deep", base, w, m, k, c))
         for sd in (0, 1):
             out.append(_ilog2(s, "deep", base, w, m, k, c, sd=sd))
+        for si in (0, 1, 2):
+            for wint in (w + 1, 32):
+                out.append(_cast("ilog2", s, "deep", f"{base}_i{wint}", w, m, wint, k, c, si))
     # exp2/log2 staging (one knob at a time off the baseline) across the deep transcendental formats.
     for w, m, k, c in TRANS_EXPLOG_EXT:
         base = f"w{w}m{m}_{k}"
@@ -930,6 +939,9 @@ def _deep_coverage(out: list) -> None:
             out.append(_binary(op, s, "deep", base, w, m, "exhaustive", 0))
         for sd in (0, 1):
             out.append(_ilog2(s, "deep", base, w, m, "exhaustive", 0, sd=sd))
+        for si in (0, 1, 2):
+            for wint in (w + 1, 32):
+                out.append(_cast("ilog2", s, "deep", f"{base}_i{wint}", w, m, wint, "exhaustive", 0, si))
     # exp2/log2 coverage: WMAN=16 exhaustive toggles the ROM/Horner; so=1 covers the registered pack output;
     # sp=2/3/4 toggle the shared _zkf_pmul split-product paths; split-final exercises log2's final f*C(f) multiply.
     for w, m in [(2, 16), (3, 16)]:
@@ -1107,6 +1119,8 @@ _FAST = [
     ("addsub_sd1_sa1", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
     ("ilog2rt_sd0", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 0)]),
     ("ilog2rt_sd1", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 1)]),
+    ("ilog2_si0", "ilog2", [("WEXP", 2), ("WMAN", 4), ("WINT", 3), ("STAGE_INPUT", 0), ("LATENCY", 1)]),
+    ("ilog2_si1", "ilog2", [("WEXP", 2), ("WMAN", 4), ("WINT", 8), ("STAGE_INPUT", 1), ("LATENCY", 2)]),
     ("mul_sp0", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_PRODUCT", 0)]),
     ("mul_sp1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_PRODUCT", 1)]),
     ("mul_so1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_OUTPUT", 1)]),
