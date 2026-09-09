@@ -1,6 +1,7 @@
-/// Raw exponent minus bias for every encoding, including zero (-bias) and infinity (bias+1).
+/// Extracts the raw unbiased exponent as an integer, including limit cases of zero (-bias) and infinity (bias+1).
+/// In principle follows C++'s std::ilogb() modulo edge case handling.
 /// Result and zero/infinity ignore sign and fraction; negative reports the raw sign bit, including negative zero.
-/// WINT >= WEXP+1. Outputs are meaningful with out_valid; latency is 1 + STAGE_INPUT cycles.
+/// WINT >= WEXP+1. Outputs are meaningful with out_valid; II=1; latency is 1 + STAGE_INPUT cycles.
 
 `default_nettype none
 
@@ -15,13 +16,13 @@ module zkf_ilog2 #(
     input wire rst,
 
     input wire                 in_valid,
-    input wire [WEXP+WMAN-1:0] a,
+    input wire [WEXP+WMAN-1:0] a,  // the input float to extract the exponent from
 
     output reg                    out_valid,
-    output wire signed [WINT-1:0] y,
-    output reg                    zero,
-    output reg                    infinity,
-    output reg                    negative
+    output wire signed [WINT-1:0] y,        // unbiased exponent of abs(y); well-defined for any inputs
+    output reg                    zero,     // argument is zero (exp=-bias)
+    output reg                    infinity, // argument is a positive or negative infinity (exp=bias+1)
+    output reg                    negative  // argument sign bit
 );
     localparam LATENCY_REF = 1 + STAGE_INPUT;
     localparam signed [WEXP:0] BIAS = {2'b00, {(WEXP-1){1'b1}}};
@@ -56,8 +57,8 @@ module zkf_ilog2 #(
         end
         result   <= $signed({1'b0, a_q[WEXP-1:0]}) - BIAS;
         zero     <= ~|a_q[WEXP-1:0];
-        infinity <= &a_q[WEXP-1:0];
-        negative <= a_q[WEXP];
+        infinity <=  &a_q[WEXP-1:0];
+        negative <=   a_q[WEXP];
     end
 
     assign y = result;
