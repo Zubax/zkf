@@ -4,7 +4,7 @@
 ///
 ///   exp2(-inf)   = +0
 ///   exp2(+0)     = 1.0
-///   exp2(finite) = 2**x, faithfully rounded (within 1 ULP)
+///   exp2(finite) = 2**x, faithfully rounded
 ///   exp2(+inf)   = +inf
 ///   tiny finite results follow the zero/MIN_NORMAL boundary rule; overflow maps to +inf
 ///

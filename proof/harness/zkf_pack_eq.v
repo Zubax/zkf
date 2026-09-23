@@ -5,7 +5,8 @@
 `default_nettype none
 
 module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNBIASED = WEXP + 2,
-                     parameter STAGE_INPUT = 0, parameter STAGE_OUTPUT = 0, parameter LATENCY = 0) (
+                     parameter STAGE_INPUT = 0, parameter STAGE_OUTPUT = 0, parameter LATENCY = 0,
+                     parameter EXP_IS_BIASED = 0, parameter SATURATE_ROUND_CARRY = 0) (
     input wire clk,
     input wire rst,
     input wire in_valid,
@@ -63,8 +64,10 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
         .WEXP(WEXP),
         .WMAN(WMAN),
         .WEXP_UNBIASED(WEXP_UNBIASED),
+        .EXP_IS_BIASED(EXP_IS_BIASED),
         .STAGE_INPUT(STAGE_INPUT),
-        .STAGE_OUTPUT(STAGE_OUTPUT)
+        .STAGE_OUTPUT(STAGE_OUTPUT),
+        .SATURATE_ROUND_CARRY(SATURATE_ROUND_CARRY)
     ) u_dut (
         .clk(clk), .rst(rst), .in_valid(in_valid),
         .sign(sign), .force_zero(force_zero), .force_inf(force_inf),
@@ -83,7 +86,8 @@ module zkf_pack_eq #(parameter WEXP = 6, parameter WMAN = 18, parameter WEXP_UNB
     wire                            r_sticky       = LATENCY ? sh_sticky       : sticky;
 
     wire [WFULL-1:0] ref_y;
-    zkf_pack_ref #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED)) u_ref (
+    zkf_pack_ref #(.WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEXP_UNBIASED),
+                   .EXP_IS_BIASED(EXP_IS_BIASED), .SATURATE_ROUND_CARRY(SATURATE_ROUND_CARRY)) u_ref (
         .sign(r_sign), .force_zero(r_force_zero), .force_inf(r_force_inf),
         .exp_unbiased(r_exp_unbiased), .significand(r_significand),
         .guard(r_guard), .round_bit(r_round_bit), .sticky(r_sticky),

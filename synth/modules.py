@@ -905,7 +905,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_fixed_to_float.v"]
         return sources + [hdl / "_zkf_horner.v", *tables, hdl / f"zkf_{spec.kind}.v"]
     if spec.kind == "sincos":
-        # Left-shift turns reducer (inline) + octant fold + the shared CORDIC engine (_zkf_cordic) bound per WMAN
+        # Left-shift turns reducer (inline) + octant fold + the shared CORDIC engine (_zkf_cordic_core) bound per WMAN
         # (_zkf_cordic_m<WMAN>) + the shared correction multiply (_zkf_pmul) + one shared _zkf_fixed_to_float back end.
         # Include both the default-WMAN (18) core and this spec's WMAN, deduped, so Yosys's hierarchy -check is
         # satisfied for the generic zkf_sincos too.
@@ -919,12 +919,12 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_fixed_to_float.v",
             hdl / "_zkf_pmul.v",
-            hdl / "_zkf_cordic.v",
+            hdl / "_zkf_cordic_core.v",
             *cores,
             hdl / "zkf_sincos.v",
         ]
     if spec.kind == "atan2":
-        # Two-input vectoring CORDIC: the shared engine (_zkf_cordic) bound per WMAN, one shared _zkf_fixed_to_float
+        # Two-input vectoring CORDIC: the shared _zkf_cordic_core engine bound per WMAN, one shared _zkf_fixed_to_float
         # back-end (time-multiplexed over magnitude then theta), the folded radix-4 divider (the _zkf_div_core
         # primitives), and the shared _zkf_pmul (magnitude + correction products). Include both the default-WMAN (18)
         # core and this spec's WMAN, deduped, so Yosys's hierarchy -check is satisfied for the generic.
@@ -937,7 +937,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_fixed_to_float.v",
-            hdl / "_zkf_cordic.v",
+            hdl / "_zkf_cordic_core.v",
             hdl / "_zkf_div_core.v",
             hdl / "_zkf_pmul.v",
             *cores,

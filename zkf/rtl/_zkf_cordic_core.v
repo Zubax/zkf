@@ -38,7 +38,7 @@
 
 `default_nettype none
 
-module _zkf_cordic #(
+module _zkf_cordic_core #(
     parameter integer N           = 14,  // iterations
     parameter integer UNROLL100   = 100, // iters/cycle x100: 50=half-rate, 100/200/300/400=1/2/3/4 per cycle
     parameter integer PARALLEL    = (UNROLL100 < 100) ? 1 : 0,  // MODE=0: run the z-path ahead

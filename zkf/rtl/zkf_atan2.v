@@ -4,18 +4,19 @@
 /// This is NOT a throughput-1 pipeline. A transaction is accepted when `in_ready` is high; the module then runs for a
 /// fixed data-invariant latency and holds `out_valid` with a stable result until `out_ready` accepts it.
 /// LATENCY is accept-to-out_valid latency; with out_ready high, in_ready reasserts one cycle after retirement.
-/// Faithful rounding: each finite output is within <= 1 ULP of the correctly-rounded result.
+/// Faithful rounding, magnitude overflow excepted.
 ///
 /// Behavior (no NaN, only +0; tiny negative results flush to +0):
 ///   theta = atan2(y, x) / (2*pi)   [turns]; mag = hypot(y, x). Axis/diagonal specials:
 ///     y=+0,x>0 -> +0 ; y=+0,x<0 -> 1/2 ; y>0,x=0 -> 1/4 ; y<0,x=0 -> -1/4 ; y=0,x=0 -> +0 (mag +0).
 ///     |y|=inf,x finite -> +-1/4 ; x=+inf,y finite -> +-0 -> +0 ; x=-inf,y finite -> +1/2 ;
 ///     (inf,inf) -> +-1/8 (x>0) / +-3/8 (x<0).  mag = +inf whenever any input is inf.
-/// mag overflow is faithfully rounded, not hard-clamped: a finite-input hypot whose true value lands within 1 ULP of
-/// the overflow threshold may round to max-finite rather than +inf (the <= 1 ULP bound above). +inf is never produced
-/// for an in-range result, so the rounding only ever errs toward finite -- there is no spurious infinity.
+/// The magnitude's overflow behavior is held by SATURATE_ROUND_CARRY=1 on the shared back-end -- the magnitude error is
+/// two-sided at every GUARD_ITER_ATAN2, so a deeper CORDIC is no substitute. The exponent routes are held only by
+/// margin (the pre-rounding error stays well under the 0.5 ULP that would trip them), so widening the datapath error
+/// threatens that contract, not just the ULP figure. For theta, see GUARD_DIV.
 ///
-/// Algorithm (vectoring mixed CORDIC; the engine is in _zkf_cordic):
+/// Algorithm (vectoring mixed CORDIC; the engine is in _zkf_cordic_core):
 ///
 ///  1. Decode (y, x); order den=max(|x|,|y|), num=min; align num down to den's binade. The vector is seeded into the
 ///     engine pre-scaled by 1/4 (den in [0.25, 0.5)*2**XF) so the CORDIC magnitude growth x_K = gain*hypot stays
@@ -38,10 +39,10 @@
 /// _zkf_pmul computes the magnitude product x_K*KINV (issued DURING the divide, so it costs no latency) and the
 /// post-divide Q*INV_TAU (the residual correction, and the bypass theta -- single-rounded via the divide sticky).
 ///
-/// Tuning knobs follow zkf_sincos. UNROLL100 is forwarded to _zkf_cordic. STAGE_INPUT latches the inputs (+1 cycle);
-/// STAGE_PRODUCT / WMULTIPLIER tune the shared _zkf_pmul (depth 1+STAGE_PRODUCT; WMULTIPLIER sizes the DSP-tile grid);
-/// STAGE_NORMALIZE / STAGE_PACK tune the one shared _zkf_fixed_to_float back-end.
-/// STAGE_OUTPUT registers the public theta/mag/out_valid outputs.
+/// Tuning knobs follow zkf_sincos. UNROLL100 is forwarded to _zkf_cordic_core. STAGE_INPUT latches the inputs
+/// (+1 cycle); STAGE_PRODUCT / WMULTIPLIER tune the shared _zkf_pmul (depth 1+STAGE_PRODUCT; WMULTIPLIER sizes the
+/// DSP-tile grid); STAGE_NORMALIZE / STAGE_PACK tune the one shared _zkf_fixed_to_float back-end. STAGE_OUTPUT
+/// registers the public theta/mag/out_valid outputs.
 
 `default_nettype none
 
@@ -74,7 +75,7 @@ module zkf_atan2 #(
     localparam WFULL = WEXP + WMAN;
     localparam WE    = WEXP + 1;
     // CORDIC geometry MUST match zkf_trig.py (n_atan2, GUARD_*, XF/ZF) and the per-WMAN _zkf_cordic_m tables.
-    // N here is atan2's iteration count (GUARD_ITER_ATAN2 == 1); XF is atan2's x/y width (GUARD_XY == 6,
+    // N here is atan2's iteration count (GUARD_ITER_ATAN2); XF is atan2's x/y width (GUARD_XY == 6,
     // the shared-engine guard -- atan2's theta accuracy is XF-bound and sets this floor) and MUST equal the table's
     // baked WX-2 (the engine's x0/y0/xn/yn ports are sized by the table), so the engine and divider share one width.
     localparam integer GUARD_FF   = (12 > (WMAN / 2 + 2)) ? 12 : (WMAN / 2 + 2);
@@ -83,7 +84,7 @@ module zkf_atan2 #(
     localparam integer GUARD_DIV  = 8;                  // residual/bypass quotient guard (mirrors zkf_trig GUARD_DIV)
     localparam integer FF   = WMAN + GUARD_FF;
     localparam integer WT   = FF - 2;
-    localparam integer N    = ((WMAN+1)/2)+1;
+    localparam integer N    = ((WMAN+1)/2)+2;           // GUARD_ITER_ATAN2
     localparam integer XF   = ((3*WMAN+1)/2)+6;         // x/y fractional scale
     localparam integer WX   = XF + 2;                   // signed x/y width (engine)
     localparam integer ZF   = WT + 2 + GUARD_ZF;        // angle (turns) fractional scale
@@ -140,7 +141,10 @@ module zkf_atan2 #(
     localparam LATENCY_REF =
         BASE + STAGE_INPUT + XYCYC + DIVCYC + STAGE_PRODUCT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT;
     generate
-        if ((WEXP < 2) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wexp_or_wman
+        // Narrow exponents are out of scope for this library's trigonometry.
+        // Dropping it below 4 would also be unsound: turn8's octant constants are normal only while BIAS-3 >= 1,
+        // and at WEXP 2 theta's whole codomain sits below min_normal.
+        if ((WEXP < 5) || (WMAN < 4) || (WEXP >= 31)) begin : g_invalid_wexp_or_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
@@ -154,69 +158,25 @@ module zkf_atan2 #(
         end
     endgenerate
 
-    // k/8 of a turn (k in {0:+0, 1:1/8, 2:1/4, 3:3/8, 4:+1/2}) with sign s, correctly rounded to ZKF. The half-turn
-    // endpoint is canonical +1/2; signed -1/2 is normalized there. The constants are exact dyadics, but for very small
-    // WEXP they can underflow the normal range -- so this mirrors
-    // round_fraction_to_zkf / _zkf_pack: a normal result when the biased exponent is >= 1, else MIN_NORMAL when it is
-    // exactly 0 (each k/8 is a normalized 1.f, so biased == 0 means the value is in [0.5*MIN_NORMAL, MIN_NORMAL)
-    // and rounds up), else flush to +0. (For WEXP >= 4 all four constants are normal, so only the tiny WEXP {2,3}
-    // ever reach the underflow branches.)
-    //
-    // Each octant's unbiased exponent (eunb) and fraction (f) are compile-time literals, so the biased exponent and
-    // the >=1 / ==0 underflow resolution are ELABORATION-TIME constants -- precomputed here as the packed {exp, frac}
-    // body (TURN8_K*) plus a +0 flag (TURN8_Z*). turn8() is then a pure 5-way select of a constant body with the
-    // runtime sign ORed in: no runtime adder/comparator, so no carry chain on whatever cone evaluates it (it is
-    // evaluated at the output stage). The bodies mirror the (eunb, f) table: 1/8 -> eunb -3; 1/4, 3/8 -> -2
-    // (3/8 sets the top frac bit); 1/2 -> -1. TURN8_BODY(eunb, f) packs the normal field when biased>=1,
-    // MIN_NORMAL when biased==0, else marks +0. A k/8 body, packed {exp[WEXP-1:0], frac[WFRAC-1:0]} into WFULL-1
-    // bits, computed at elaboration from constants: biased exponent EB = EUNB + BIAS (EUNB the octant's literal
-    // unbiased exponent), MANTHI = (1<<(WFRAC-1)) for 3/8 (which carries the leading fraction bit) else 0.
-    // Normal when EB>=1: body = EB*2**WFRAC + MANTHI (no field overlap, so the multiply-add equals the
-    // {exp, frac} concatenation). When EB==0: MIN_NORMAL (exp field == 1, frac 0). The body is unused when the value
-    // underflows (EB<0), flagged by TURN8_Z* so turn8() returns +0 instead. TURN8_ONE is a SIZED (WFULL-1-bit)
-    // constant 1, so `TURN8_ONE << WFRAC` is a WFULL-1-bit shift (== 2**WFRAC). An unsized `1 << WFRAC` is
-    // self-determined to 32 bits and overflows to 0 for WFRAC >= 32 (WMAN >= 33: 36/48/53): a tool-dependent
-    // elaboration hazard (some elaborators widen the literal, others fold it to 0) -- so size it explicitly.
-    localparam [WFULL-2:0] TURN8_ONE = {{(WFULL-2){1'b0}}, 1'b1};
-    `define TURN8_EB(EUNB)      ((EUNB) + BIAS)
-    `define TURN8_BODY(EUNB, MANTHI) \
-        ((`TURN8_EB(EUNB) >= 1) ? (`TURN8_EB(EUNB) * (TURN8_ONE << WFRAC) + (MANTHI)) \
-                                : (TURN8_ONE << WFRAC))   /* EB==0 -> MIN_NORMAL: exp field 1, frac 0 (== 2**WFRAC) */
-    `define TURN8_ISZERO(EUNB)  (`TURN8_EB(EUNB) < 0)
-    localparam [WFULL-2:0] TURN8_K1  = `TURN8_BODY(-3, 0);                          // 1/8
-    localparam [WFULL-2:0] TURN8_K2  = `TURN8_BODY(-2, 0);                          // 1/4
-    localparam [WFULL-2:0] TURN8_K3  = `TURN8_BODY(-2, (TURN8_ONE << (WFRAC-1)));   // 3/8 (leading fraction bit set)
-    localparam [WFULL-2:0] TURN8_K4  = `TURN8_BODY(-1, 0);                          // 1/2
-    localparam [WFULL-2:0] TURN8_KNZ = `TURN8_BODY(0, 0);                           // eunb 0 (==1.0): unused k>=5
-    localparam             TURN8_Z1  = `TURN8_ISZERO(-3);
-    localparam             TURN8_Z2  = `TURN8_ISZERO(-2);
-    localparam             TURN8_Z3  = `TURN8_ISZERO(-2);
-    localparam             TURN8_Z4  = `TURN8_ISZERO(-1);
-    `undef TURN8_EB
-    `undef TURN8_BODY
-    `undef TURN8_ISZERO
-    // Pure 5-way select of the precomputed constant bodies; no runtime add/compare -> no carry chain on the evaluating
-    // cone. k == 0 -> +0; k in 1..4 -> the octant body (or +0 when it underflowed, via TURN8_Z*); k == 4 forces the
-    // sign clear because the half-turn endpoint is canonical +1/2; the unused k >= 5 codes mirror the former eunb == 0
-    // fall-through (TURN8_KNZ, never +0 for WEXP >= 2).
+    // k/8 of a turn (k in {0:+0, 1:1/8, 2:1/4, 3:3/8, 4:+1/2}) with sign s, exactly representable in ZKF. Each
+    // octant's biased exponent is an elaboration constant, so this is a pure select over sized {sign, exp, frac}
+    // concatenations: no runtime adder or comparator, hence no carry chain on whatever cone evaluates it (the
+    // output stage). They need no underflow resolution because the WEXP guard keeps them all normal. k == 4 clears
+    // the sign because the half-turn endpoint is canonical +1/2; signed -1/2 is normalized there.
+    localparam [WEXP-1:0] TURN8_X1  = BIAS - 3;   // 1/8
+    localparam [WEXP-1:0] TURN8_X2  = BIAS - 2;   // 1/4, and 3/8 with the leading fraction bit set
+    localparam [WEXP-1:0] TURN8_X4  = BIAS - 1;   // 1/2
     function automatic [WFULL-1:0] turn8;
-        input               s;
-        input [2:0]         k;
-        reg [WFULL-2:0]     body;          // packed {exp, frac}, selected per k from the precomputed constants
-        reg                 zero;          // result is +0 (k == 0, or the constant underflowed the normal range)
+        input       s;
+        input [2:0] k;
         begin
             case (k)
-                3'd0:    begin body = {(WFULL-1){1'b0}}; zero = 1'b1; end   // +0
-                3'd1:    begin body = TURN8_K1;  zero = TURN8_Z1; end
-                3'd2:    begin body = TURN8_K2;  zero = TURN8_Z2; end
-                3'd3:    begin body = TURN8_K3;  zero = TURN8_Z3; end
-                3'd4:    begin body = TURN8_K4;  zero = TURN8_Z4; end
-                // k>=5 never occurs (turn8 indices are 0..4); generate-completeness arm.
-                // verilator coverage_off
-                default: begin body = TURN8_KNZ; zero = 1'b0;     end       // unused k >= 5 (mirrors old eunb 0)
-                // verilator coverage_on
+                3'd1:    turn8 = {s,    TURN8_X1, {WFRAC{1'b0}}};
+                3'd2:    turn8 = {s,    TURN8_X2, {WFRAC{1'b0}}};
+                3'd3:    turn8 = {s,    TURN8_X2, 1'b1, {(WFRAC-1){1'b0}}};
+                3'd4:    turn8 = {1'b0, TURN8_X4, {WFRAC{1'b0}}};
+                default: turn8 = {WFULL{1'b0}};   // k == 0 is +0; k >= 5 never occurs
             endcase
-            turn8 = zero ? {WFULL{1'b0}} : {(k == 3'd4) ? 1'b0 : s, body};
         end
     endfunction
 
@@ -269,7 +229,7 @@ module zkf_atan2 #(
     wire             f0_swap  = f0_hi_gt | (f0_hi_eq & f0_lo_gt);
     // Per-operand class flags (each a single-operand reduction of one input's exponent field) -- registered into D0
     // as a NARROW descriptor. The special-case theta (turn8) and magnitude are then built in D1 from these few
-    // registered bits, so neither the turn8 carry chain nor a wide |x|/|y| select sits on the cone that reads the
+    // registered bits, so neither turn8's select nor a wide |x|/|y| select sits on the cone that reads the
     // wide inputs.
     wire             f0_sx = si_x[WFULL-1], f0_sy = si_y[WFULL-1];
     wire [WEXP-1:0]  f0_xe = si_x[WFULL-2:WFRAC], f0_ye = si_y[WFULL-2:WFRAC];
@@ -353,7 +313,7 @@ module zkf_atan2 #(
                             :                   3'd0;
     wire             f1_sp_sign  = d0_yz ? 1'b0 : d0_sy;
     // turn8(f1_sp_sign, f1_spk) is NOT assembled here -- the descriptor (spk, sp_sign) is carried narrow and turn8 is
-    // evaluated at the output stage, keeping its biased-add carry chain off the front-end's D-register cone.
+    // evaluated at the output stage, off the front-end's D-register cone.
     wire [WEXP-1:0]  f1_den_exp  = f1_swap ? f1_ye : f1_xe;             // biased exponent of the larger operand
     wire [WFULL-1:0] f1_sp_mag   = (d0_xi | d0_yi) ? {1'b0, {WEXP{1'b1}}, {WFRAC{1'b0}}}        // +inf
                                  : (d0_xz & d0_yz) ? {WFULL{1'b0}}                               // +0
@@ -755,7 +715,7 @@ module zkf_atan2 #(
     // descriptor {special, sp_sign, spk, sp_mag} does NOT ride the f2f delay: it is read directly from the
     // held dv_* regs at the output (single-in-flight keeps them stable through the THETA emergence), and drives the
     // special-case override for BOTH outputs (the engine/divide ran on garbage during specials); turn8(sp_sign, spk)
-    // is assembled AFTER the back-end (off every register cone) so its biased-add carry lands with huge slack.
+    // is assembled AFTER the back-end, off every register cone.
     // ================================================================================================================
     // Magnitude exponent, formed at MAG-issue from the cd_done-latched den binade (dv_eden, BIASED). value = M *
     // 2**(e_den + 2 - (XF+KINV_S)): M = x_K*kinv_mag at scale 2**-(XF+KINV_S), the 1/4 pre-scale undone (+2). No +BIAS
@@ -789,7 +749,7 @@ module zkf_atan2 #(
     wire [WSB2-1:0]  be_sbo;
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG), .WEU(WEU),
-        .EXP_IS_BIASED(1), .ASSUME_NO_OVERFLOW(0), .WSB(WSB2),
+        .EXP_IS_BIASED(1), .ASSUME_NO_OVERFLOW(0), .SATURATE_ROUND_CARRY(1), .WSB(WSB2),
         .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(0)
     ) u_f2f (
         .clk(clk), .rst(rst),
@@ -817,11 +777,8 @@ module zkf_atan2 #(
     always @(posedge clk) begin
         if (be_ov && !out_tag) mag_num_r <= be_num;
     end
-    // Deferred special-case theta: turn8's biased-exponent add runs here, off every register cone. Equivalent to the
-    // previous front-end turn8 (the inputs are unchanged). The special override (from the held dv_* descriptor) selects
-    // the exact special-case theta/mag for BOTH outputs.
-    // Special-case theta is turn8 of a per-special-case octant/sign code: it selects among a fixed set of constant
-    // turn bodies (0, +/-1/8, +/-1/4, +/-1/2).
+    // Deferred special-case theta, off every register cone. The special override (from the held dv_* descriptor)
+    // selects the exact special-case theta/mag for BOTH outputs.
     wire [WFULL-1:0] out_sp_theta = turn8(out_sp_sign, out_spk);
     wire             be_valid = be_ov & out_tag;            // theta emergence == the (unchanged) output-valid cycle
     // Canonicalize the generic half-turn. Near the negative-x axis (finite x<0, |y| -> 0) the generic magnitude rounds
@@ -831,10 +788,8 @@ module zkf_atan2 #(
     // same magnitude), so the wide magnitude datapath into the registered output stays a plain mux; (b) the generic
     // magnitude is <= 1/2, so its exponent field equals the 1/2-turn exponent ONLY for the exact 1/2-turn (any smaller
     // magnitude has a strictly smaller exponent) -- a WEXP-wide exponent compare suffices, no full-width equality.
-    // turn8(0,4) is the config-correct +1/2 body (computed identically to the live k==4 special path; its TURN8_Z4
-    // underflow branch is unreachable for the legal WEXP>=2), so its exponent field is the correct reference.
-    wire [WFULL-1:0] half_pos     = turn8(1'b0, 3'd4);
-    wire             be_neg_half  = be_num[WFULL-1] & (be_num[WFULL-2:WFRAC] == half_pos[WFULL-2:WFRAC]);
+    // TURN8_X4 is that 1/2-turn exponent, shared with turn8's own k==4 body.
+    wire             be_neg_half  = be_num[WFULL-1] & (be_num[WFULL-2:WFRAC] == TURN8_X4);
     wire [WFULL-1:0] be_num_canon = {be_num[WFULL-1] & ~be_neg_half, be_num[WFULL-2:0]};
     wire [WFULL-1:0] be_theta = out_special ? out_sp_theta : be_num_canon;
     wire [WFULL-1:0] be_mag_o = out_special ? out_sp_mag   : mag_num_r;

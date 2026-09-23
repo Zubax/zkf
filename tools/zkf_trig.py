@@ -6,8 +6,8 @@ Phase ``x`` is in turns (``sin = sin(2*pi*x)``). The module reduces ``x`` mod 1 
 two bits as the ``quadrant`` and folds the rest to one octant angle ``t' in [0, pi/4]``, runs a fixed-point CORDIC
 rotation, then unmaps and packs. Why CORDIC: faithful sin/cos needs relative accuracy near each zero, and CORDIC gets it
 with adds/shifts only (no small-coefficient cancellation; inverse-gain folded into the seed). KEY DESIGN: the SAME
-engine (``zkf/rtl/_zkf_cordic.v``), run in *vectoring* mode, computes ``atan2`` + the vector magnitude -- reusing the arctan
-LUT (stored in *turns*), datapath, iteration count, and quadrant pre/post-processing; only MODE differs.
+engine (``zkf/rtl/_zkf_cordic_core.v``), run in *vectoring* mode, computes ``atan2`` + the vector magnitude -- reusing
+the arctan LUT (stored in *turns*), datapath, iteration count, and quadrant pre/post-processing; only MODE differs.
 
 Angle units: the arctan LUT is ``L[i] = atan(2**-i)/(2*pi)`` at scale ``2**-ZF``, ``ZF = WT + 2 + GUARD_ZF``. The octant
 coordinate ``t'`` is at scale ``2**-WT``, so the angle accumulator seed is ``z0 = t' << GUARD_ZF`` (no multiply).
@@ -16,8 +16,10 @@ Tiny angles: below the CORDIC's smallest resolvable step a linear path returns `
 generated ``2*pi``), ``cos = +1``; ``GUARD_FF(WMAN)`` places that handoff where it holds <= 1 ULP. After the octant fold
 ``cos`` is never small, so only sin needs it.
 
-``--emit`` writes the per-WMAN Verilog cores and the Python data table; ``--check`` verifies both (and the quadrant)
-against an ``mpmath`` ground truth (<= 1 ULP).
+``--emit`` writes the per-WMAN Verilog cores and the Python data table and ``--check-emit`` fails if the checked-in
+copies have drifted from a fresh run; ``--check`` verifies both operators (and the quadrant) against an ``mpmath``
+ground truth, asserting FAITHFUL rounding -- the result must be one of the two representables bracketing the
+unrounded truth, which near a binade boundary is strictly stronger than a fractional-ULP bound.
 """
 
 from __future__ import annotations
@@ -26,11 +28,17 @@ import argparse
 import multiprocessing
 import os
 from dataclasses import dataclass, field
+from fractions import Fraction
 from math import ceil
 from pathlib import Path
 from textwrap import dedent
 
 import mpmath as mp
+
+if __package__:  # python -m tools.<generator>
+    from . import zkf_emit
+else:  # python tools/<generator>.py, or tools/ on sys.path
+    import zkf_emit
 
 mp.mp.prec = 400  # generous headroom for the gain/LUT constants and ground-truth rounding
 
@@ -38,8 +46,6 @@ REPO = Path(__file__).resolve().parents[1]
 HDL = REPO / "zkf" / "rtl"
 TABLES = HDL / "_tables"
 PKG_TABLES = REPO / "zkf" / "_tables"
-
-FUNC = "sincos"
 
 # MIXED CORDIC: run K ~ WMAN/2 rotation iterations, then ONE linear rotation for the residual (cos = x_K - y_K*phi,
 # sin = y_K + x_K*phi). The dropped phi^2/2 term is < 1 ULP once the residual is <= ~2**-(WMAN/2), so the pipeline is
@@ -52,22 +58,50 @@ GUARD_XY = 6  # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-roun
 # below). WMAN=11 would have needed GUARD_XY=7 (XF=24) and was therefore dropped from the trig operators rather than
 # widen the shared engine for every format; it is still supported by the algebraic operators, which use no CORDIC table.
 # Do not lower GUARD_XY, or add a smaller trig WMAN, without re-running --check for all supported WMAN.
-# Iterations before termination: N = (WMAN+1)//2 + GUARD_ITER_*. Kept PER OPERATOR (both +1 today) because the two
-# terminations leave residuals of different order -- sincos's linear rotation drops a QUADRATIC term, atan2's residual
-# divide a CUBIC one; separate guards let them diverge later without silently coupling the shared table's depth.
-GUARD_ITER_SINCOS = 1
-GUARD_ITER_ATAN2 = 1
+# Iterations before termination: N = (WMAN+1)//2 + GUARD_ITER_*. Named per operator but kept EQUAL (n_iters()
+# enforces it): one table bakes one LUT depth, so splitting them splits the table.
+# Both are 2 because all three outputs miss faithful rounding at 1, each for its own dropped term -- sincos and
+# atan2's MAGNITUDE a quadratic one, atan2's THETA the cubic one dropped by the RESIDUAL correction's arctan
+# series. (The small-ratio bypass drops a cubic term too, but more CORDIC iterations cannot move a bypass result;
+# GUARD_DIV governs that path.) The regression corpora pin one input of each kind.
+GUARD_ITER_SINCOS = 2
+GUARD_ITER_ATAN2 = 2
 # Angle accumulator integer headroom above the ZF fractional bits (z stays within +-(1/4 turn) through the rotation).
 GUARD_Z = 3
 # Extra angle fractional bits past the coordinate's (WT+2) turns bits: the rotation sums K LUT entries each rounded to
 # 2**-ZF (~K*2**-ZF error) and the residual feeds the correction multiply, so it must keep full small-angle precision.
 GUARD_ZF = 6
-# atan2 residual-divide guard: extra quotient fractional bits so the divide-termination and small-ratio bypass round to
-# <= 1 ULP. Consumed by the atan2 model and zkf_atan2.v.
+# atan2 residual-divide guard: extra quotient fractional bits so the divide-termination and small-ratio bypass round
+# to <= 1 ULP. Consumed by the atan2 model and zkf_atan2.v.
+# NOT MONOTONE -- raising it does not buy accuracy. It also sets the small-ratio bypass threshold, and the bypass
+# drops a term cubic in the ratio (at 9, (11,53) theta exceeds 2 ULP). This, not GUARD_ITER_ATAN2, binds theta, the
+# output with the least headroom.
 GUARD_DIV = 8
+
+# Inputs each once more than 1 ULP off. Keyed (wexp, wman); always swept, so a regression cannot hide behind the
+# random draws.
+SINCOS_REGRESSIONS = {(8, 24): [0x3EFFFBD1], (6, 18): [0x3E0044]}
+# Same, for atan2, keyed (wexp, wman) -> [(y, x)]. Pinned on BOTH output axes, since a pair can miss on one and
+# pass on the other: at GUARD_ITER 1, (6,16) misses on theta and the first (6,18) entry on magnitude. The next three
+# (6,18) entries sit just below the overflow threshold, where a spurious +inf would break the README's overflow
+# contract. The last (6,18) entry and the (5,16) one straddle the min_normal/2 midpoint from BELOW and ABOVE
+# respectively, so narrowing _ulp_error's midpoint band to one side fails here.
+ATAN2_REGRESSIONS = {
+    (6, 16): [(0x38967F, 0x1DEA13)],
+    (6, 18): [
+        (0x7BEC6A, 0x7D7C61),
+        (0x6BFFFF, 0x7DFFFF),
+        (0x786922, 0x7DF44F),
+        (0x6BF359, 0x7DFFFF),
+        (0x05F9A3, 0x3E87D9),
+    ],
+    (5, 16): [(0x016E79, 0x0797D1)],
+}
 
 WMAN_MIN, WMAN_MAX = 16, 53
 SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]
+# --check formats: every supported WMAN. Each operator appends its own narrow-exponent case.
+CHECK_CASES = [(6, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53), (11, 53)]
 
 # Random --check samples per (format, operator) for non-exhaustive formats. UNSEEDED, so repeated runs accumulate
 # coverage; override with ZKF_CHECK_SAMPLES=<n>.
@@ -101,15 +135,12 @@ def n_atan2(wman: int) -> int:
 
 
 def n_iters(wman: int) -> int:
-    """
-    Shared CORDIC depth baked into the per-WMAN table (LUT length, KINV, gain). REQUIRES the two operators' depths to
-    agree (they do, both guards +1); if they diverge the table can no longer be shared -- split emission per operator.
-    """
+    """The one CORDIC depth both operators run to, baked into the shared per-WMAN table as its LUT length."""
     ns, na = n_sincos(wman), n_atan2(wman)
     if ns != na:
         raise ValueError(
-            f"per-operator CORDIC depths diverge at WMAN={wman}: n_sincos={ns} n_atan2={na}; the shared "
-            f"_zkf_cordic_m table can no longer carry one LUT/KINV -- split the table per operator before emitting"
+            f"GUARD_ITER_SINCOS/GUARD_ITER_ATAN2 diverge at WMAN={wman} ({ns} vs {na}); the shared table carries "
+            f"one LUT depth, so splitting them means splitting the table. See the GUARD_ITER_* comment."
         )
     return ns
 
@@ -126,22 +157,21 @@ def cordic_module(wman: int) -> str:
     return f"_zkf_cordic_m{wman}"
 
 
-@dataclass
+@dataclass(kw_only=True)
 class Spec:
     wman: int
-    n: int  # shared CORDIC iterations baked into the table (==n_sincos==n_atan2 while table shared)
+    n: int  # shared CORDIC depth baked into the table (== n_sincos == n_atan2; see GUARD_ITER_*)
     xf: int  # x/y fractional bits baked into the table (scale 2**-xf); == max operator XF (table width)
     xw: int  # x/y signed width (1 sign + 1 integer + xf)
     wt: int  # quadrant-local coordinate width (FF - 2); angle in turns is t'/4 at scale 2**-(WT+2)
     zf: int  # angle accumulator fractional bits (scale 2**-zf) = WT + 2 + GUARD_ZF (finer than WT+2)
     zw: int  # angle signed width
     kinv: int  # round(1/gain * 2**xf), gain = prod sqrt(1+2**-2i)
-    n_sincos: int  # zkf_sincos iterations: (WMAN+1)//2 + GUARD_ITER_SINCOS (quadratic-residual termination)
-    n_atan2: int  # zkf_atan2 iterations: (WMAN+1)//2 + GUARD_ITER_ATAN2 (cubic-residual termination)
+    n_sincos: int  # zkf_sincos iterations: (WMAN+1)//2 + GUARD_ITER_SINCOS
+    n_atan2: int  # zkf_atan2 iterations: (WMAN+1)//2 + GUARD_ITER_ATAN2
     xf_atan2: int  # zkf_atan2 x/y fractional bits (drives the divider F/STEPS); == xf atm (shared engine width)
     tsa: int = 0  # small-angle handoff: t' < tsa uses the linear path (TSA_BITS = log2)
     lut: list = field(default_factory=list)  # L[i] = round(atan(2**-i)/(2*pi) * 2**zf), i = 0..n-1
-    c2: int = 0  # small-angle 2*pi constant scale (== xf)
     # The multiplier constants are EMITTED PRE-NARROWED to WMAN+5 bits, each at its own native scale 2**-S; every
     # dependent shift/exp-offset derives from that scale, so the datapath needs no DROP correction tokens.
     const2pi: int = 0  # round(2*pi * 2**CONST2PI_S), narrowed to WMAN+5 bits (sincos small-angle / linear-rotation)
@@ -182,26 +212,25 @@ def choose_spec(wman: int) -> Spec:
     inv_tau = int(mp.nint((mp.mpf(1) / (2 * mp.pi)) * (mp.mpf(2) ** invtau_s)))  # narrowed 1/(2*pi), WMAN+5 bits
     kinv_mag = int(mp.nint((1 / cordic_gain(n)) * (mp.mpf(2) ** kinv_s)))  # narrowed 1/gain, WMAN+5 bits
     return Spec(
-        wman,
-        n,
-        xf,
-        xw,
-        wt_bits(wman),
-        zf,
-        zw,
-        kinv,
-        n_sincos(wman),
-        n_atan2(wman),
-        xf,
-        1 << tsa_bits(wman),
-        lut,
-        xf,
-        const2pi,
-        const2pi_s,
-        inv_tau,
-        invtau_s,
-        kinv_mag,
-        kinv_s,
+        wman=wman,
+        n=n,
+        xf=xf,
+        xw=xw,
+        wt=wt_bits(wman),
+        zf=zf,
+        zw=zw,
+        kinv=kinv,
+        n_sincos=n_sincos(wman),
+        n_atan2=n_atan2(wman),
+        xf_atan2=xf,
+        tsa=1 << tsa_bits(wman),
+        lut=lut,
+        const2pi=const2pi,
+        const2pi_s=const2pi_s,
+        inv_tau=inv_tau,
+        invtau_s=invtau_s,
+        kinv_mag=kinv_mag,
+        kinv_s=kinv_s,
     )
 
 
@@ -243,11 +272,6 @@ class _Writer:
 
 
 def _emit_consts(s: Spec) -> str:
-    """
-    Per-WMAN CORDIC constants bound to the generic engine zkf/rtl/_zkf_cordic.v. The MODE parameter is passed straight
-    through (ROTATION for zkf_sincos, VECTORING for zkf_atan2) so all operators reuse the same LUT, gain seed, widths,
-    and engine -- only the mode differs.
-    """
     mod = cordic_module(s.wman)
     cwb = s.const2pi.bit_length()  # narrowed 2*pi width == WMAN+5 (scale 2**-CONST2PI_S)
     itwb = s.inv_tau.bit_length()  # narrowed 1/(2*pi) width == WMAN+5 (scale 2**-INVTAU_S)
@@ -255,12 +279,11 @@ def _emit_consts(s: Spec) -> str:
     w = _Writer()
     w("/// GENERATED by zkf_trig.py -- DO NOT EDIT.")
     w(f"/// Per-WMAN CORDIC constants (WMAN={s.wman}): arctan(2^-i)/2pi LUT in turns, inverse-gain seed, widths.")
-    w(
-        "/// Binds the generic engine _zkf_cordic; MODE selects rotation (sin/cos) vs vectoring (atan2). Also exposes the"
-    )
-    w("/// pre-narrowed multiplier constants (each at its own native fixed-point scale): the 2*pi constant for the")
-    w("/// sin/cos small-angle/linear-rotation path, and 1/(2*pi) + 1/gain for the atan2 turns-scaling and magnitude")
-    w("/// descale. Unused outputs are simply left unconnected per mode.")
+    w("/// Binds the shared _zkf_cordic_core engine; MODE selects rotation (sin/cos) vs vectoring (atan2). Both modes")
+    w("/// run to the same depth N, so one LUT and one inverse gain serve either. Also exposed are the pre-narrowed")
+    w("/// multiplier constants, each at its own native fixed-point scale: the 2*pi constant for the sin/cos")
+    w("/// small-angle and linear-rotation path, and 1/(2*pi) + 1/gain for the atan2 turns-scaling and magnitude")
+    w("/// descale. Unused outputs per mode are simply left unconnected.")
     w("")
     w("`default_nettype none")
     w("")
@@ -329,11 +352,11 @@ def _emit_consts(s: Spec) -> str:
         // Geometry contract: the consuming RTL passes its locally-computed dimensions and constant scales here. If a
         // formula drifts away from zkf_trig.py, elaboration fails before any port truncation/extension can hide it.
         generate
-            if ((EXPECT_WMAN       != %d) || (EXPECT_N          != N)    || (EXPECT_XF       != XF) ||
-                (EXPECT_WX         != WX) || (EXPECT_WT         != WT)   || (EXPECT_ZF       != ZF) ||
-                (EXPECT_WZ         != WZ) || (EXPECT_CONST2PI_W != CWB)  || (EXPECT_CONST2PI_S != CONST2PI_S) ||
-                (EXPECT_INVTAU_W   != ITWB) || (EXPECT_INVTAU_S != INVTAU_S) ||
-                (EXPECT_KINV_MAG_W != KMW)  || (EXPECT_KINV_S   != KINV_S)) begin : g_invalid_geometry_contract
+            if ((EXPECT_WMAN       != %-2d)   || (EXPECT_N          != N)    || (EXPECT_XF         != XF)   ||
+                (EXPECT_WX         != WX)   || (EXPECT_WT         != WT)   || (EXPECT_ZF         != ZF)   ||
+                (EXPECT_WZ         != WZ)   || (EXPECT_CONST2PI_W != CWB)  || (EXPECT_CONST2PI_S != CONST2PI_S) ||
+                (EXPECT_INVTAU_W   != ITWB) || (EXPECT_INVTAU_S   != INVTAU_S) ||
+                (EXPECT_KINV_MAG_W != KMW)  || (EXPECT_KINV_S     != KINV_S)) begin : g_invalid_geometry_contract
                 _zkf_invalid_cordic_geometry_contract u_invalid();
             end
         endgenerate
@@ -359,7 +382,7 @@ def _emit_consts(s: Spec) -> str:
         // the x0/y0 inputs are then ignored. Vectoring mode (atan2) uses the x0/y0 vector inputs as given.
         wire signed [WX-1:0] seed_x = (MODE == 0) ? KINV       : x0;
         wire signed [WX-1:0] seed_y = (MODE == 0) ? {WX{1'b0}} : y0;
-        _zkf_cordic #(
+        _zkf_cordic_core #(
             .N(N), .UNROLL100(UNROLL100), .PARALLEL(PARALLEL), .WX(WX), .WZ(WZ), .MODE(MODE), .WSB(WSB)
         ) u_cordic (
             .clk(clk), .rst(rst), .start(start), .sb_in(sb_in),
@@ -387,7 +410,7 @@ def _emit_python(all_specs: dict[int, Spec]) -> str:
         w.push()
         w(
             f"n={s.n}, xf={s.xf}, xw={s.xw}, wt={s.wt}, zf={s.zf}, zw={s.zw}, kinv={s.kinv}, tsa={s.tsa}, "
-            f"c2={s.c2}, const2pi={s.const2pi}, const2pi_s={s.const2pi_s}, inv_tau={s.inv_tau}, invtau_s={s.invtau_s},"
+            f"const2pi={s.const2pi}, const2pi_s={s.const2pi_s}, inv_tau={s.inv_tau}, invtau_s={s.invtau_s},"
         )
         w(
             f"kinv_mag={s.kinv_mag}, kinv_s={s.kinv_s}, n_sincos={s.n_sincos}, n_atan2={s.n_atan2}, xf_atan2={s.xf_atan2},"
@@ -403,15 +426,17 @@ def _emit_python(all_specs: dict[int, Spec]) -> str:
     return w.render()
 
 
+def _artifacts(all_specs: dict[int, Spec]) -> dict[Path, str]:
+    arts = {TABLES / f"{cordic_module(wman)}.v": _emit_consts(s) for wman, s in sorted(all_specs.items())}
+    return arts | {PKG_TABLES / "trig.py": _emit_python(all_specs)}
+
+
 def emit(all_specs: dict[int, Spec]) -> None:
-    TABLES.mkdir(parents=True, exist_ok=True)
-    for wman, s in sorted(all_specs.items()):
-        path = TABLES / f"{cordic_module(wman)}.v"
-        path.write_text(_emit_consts(s))
-        print(f"wrote {path.relative_to(REPO)}")
-    path = PKG_TABLES / "trig.py"
-    path.write_text(_emit_python(all_specs))
-    print(f"wrote {path.relative_to(REPO)}")
+    zkf_emit.write(_artifacts(all_specs))
+
+
+def check_emit(all_specs: dict[int, Spec]) -> None:
+    zkf_emit.verify(_artifacts(all_specs), sorted(TABLES.glob("_zkf_cordic_m*.v")), "zkf_trig.py --emit")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -431,8 +456,8 @@ _MP_CONTEXT = multiprocessing.get_context("fork" if "fork" in multiprocessing.ge
 # One worker process per (format) case over a fork pool spreads the mpmath sweep across all cores. Each unit
 # regenerates its own inputs (random draws are unseeded either way) and returns only its summary; the helper
 # functions and freshly-emitted tables come from the forked parent.
-def _sincos_unit(case: tuple[int, int]) -> tuple[int, int, int, int, str, tuple | None]:
-    """One (wexp, wman) sincos sweep -> (worst_sin, worst_cos, quad_mismatches, count, tag, first_bad)."""
+def _sincos_unit(case: tuple[int, int]) -> tuple[float, float, int, int, int, str, tuple | None]:
+    """One (wexp, wman) sweep -> (worst_sin, worst_cos, quad_mismatches, violations, count, tag, first_bad)."""
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
@@ -442,22 +467,35 @@ def _sincos_unit(case: tuple[int, int]) -> tuple[int, int, int, int, str, tuple 
     n = 1 << fmt.wfull
     exhaustive = n <= (1 << 22)
     inputs = list(range(n)) if exhaustive else _stratified_inputs(fmt)
-    worst_sin = worst_cos = nq = 0
+    worst_sin = worst_cos = 0.0
+    nq = nbad = 0
     bad = None
     for b in inputs:
-        r = zkf.Zkf(fmt, b).sincos()
-        t = zkf.oracle.sincos(zkf.Zkf(fmt, b))
-        ds, dc = _ulp_diff(fmt, r.sin.bits, t.sin.bits), _ulp_diff(fmt, r.cos.bits, t.cos.bits)
-        if (ds > 1 or dc > 1 or r.quadrant != t.quadrant) and bad is None:
-            bad = (b, ds, dc, r.quadrant, t.quadrant)
+        z = zkf.Zkf(fmt, b)
+        r = z.sincos()
+        if z.is_inf or z.is_zero:  # exact contract values, not transcendental truth
+            t = zkf.oracle.sincos(z)
+            tq = t.quadrant
+            ok = (r.sin.bits, r.cos.bits) == (t.sin.bits, t.cos.bits)
+            ds = dc = 0.0 if ok else float("inf")
+            sok = cok = ok
+        else:
+            ts, tc, tq = zkf.oracle._sincos_exact(z)
+            ds, sok = _ulp_error(fmt, r.sin.bits, ts)
+            dc, cok = _ulp_error(fmt, r.cos.bits, tc)
+        qok = r.quadrant == tq
+        if not (sok and cok and qok):
+            nbad += 1
+            if bad is None:
+                bad = (hex(b), ds, dc, r.quadrant, tq)
         worst_sin, worst_cos = max(worst_sin, ds), max(worst_cos, dc)
-        nq += int(r.quadrant != t.quadrant)
+        nq += int(not qok)
     tag = "exhaustive" if exhaustive else f"sampled({len(inputs)})"
-    return worst_sin, worst_cos, nq, len(inputs), tag, bad
+    return worst_sin, worst_cos, nq, nbad, len(inputs), tag, bad
 
 
-def _check() -> None:
-    """End-to-end faithful-rounding check vs mpmath via the bit-exact model (imports only the public zkf package)."""
+def _check() -> list[str]:
+    """End-to-end faithful-rounding check vs mpmath via the bit-exact model. Returns the per-format failures."""
     import sys
     from concurrent.futures import ProcessPoolExecutor
 
@@ -468,18 +506,30 @@ def _check() -> None:
     import zkf.oracle  # noqa: F401
 
     print("end-to-end faithful-rounding check (model vs mpmath):")
-    cases = [(6, 16), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
-    sincos_cases = [(we, wm) for we, wm in cases if wm in SUPPORTED_WMAN]
+    # (6,36) carries sincos's underflow decision, which no case above reaches: the smallest representable |sin| is
+    # ~2*pi*2**-WFRAC (at x = 1/2 +- 1 ULP), so it drops below min_normal only when BIAS < WFRAC. (8,36) yields zero
+    # such truths; (6,36) yields 280, 148 of them flushing to +0.
+    sincos_cases = [*CHECK_CASES, (6, 36)]
+    # A regression keyed to a format nothing sweeps would never run and never say so.
+    assert not (
+        SINCOS_REGRESSIONS.keys() - set(sincos_cases)
+    ), f"SINCOS_REGRESSIONS entries for unchecked formats: {sorted(SINCOS_REGRESSIONS.keys() - set(sincos_cases))}"
+    failures = []
     with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=_MP_CONTEXT) as ex:
-        for (wexp, wman), (worst_sin, worst_cos, nq, count, tag, bad) in zip(
+        for (wexp, wman), (worst_sin, worst_cos, nq, nbad, count, tag, bad) in zip(
             sincos_cases, ex.map(_sincos_unit, sincos_cases)
         ):
-            ok = worst_sin <= 1 and worst_cos <= 1 and nq == 0
+            ok = nbad == 0
             print(
-                f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} sin_ulp={worst_sin} cos_ulp={worst_cos} "
-                f"quad_mismatch={nq} ({tag})"
+                f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} sin_ulp={worst_sin:.3f} cos_ulp={worst_cos:.3f} "
+                f"quad_mismatch={nq} not_faithful={nbad} ({tag})"
             )
-            assert ok, f"{wexp}/{wman}: sin_ulp={worst_sin} cos_ulp={worst_cos} quad_mismatch={nq} first_bad={bad}"
+            if not ok:
+                failures.append(
+                    f"{wexp}/{wman}: sin_ulp={worst_sin:.4f} cos_ulp={worst_cos:.4f} quad_mismatch={nq} "
+                    f"not_faithful={nbad}/{count} first_bad={bad}"
+                )
+    return [f"sincos {f}" for f in failures]
 
 
 def _stratified_inputs(fmt) -> list[int]:
@@ -533,38 +583,88 @@ def _stratified_inputs(fmt) -> list[int]:
                 if 0 <= f < nf:
                     for sign in (0, 1):
                         out.append(fmt.pack(sign, biased, f).bits)
+
+    # Quadrant boundary x octant-local BINADE sweep. The +-K-ULP neighborhoods above probe only the boundary
+    # itself, while the corner where the CORDIC path meets the small-angle handoff sits whole binades away, at
+    # k/4 +- 2**-j for j around the TSA threshold.
+    j0 = (wt_bits(fmt.wman) + 2) - tsa_bits(fmt.wman)  # turns exponent of the small-angle handoff
+    for k in range(5):  # k = 4 is not k = 0 again: only it approaches a full turn from below with a positive input
+        # Past WMAN+1 the offset is below an ULP of 1/4 and the point collapses back onto k/4, which the +-K-ULP
+        # block above already sweeps.
+        for j in range(max(1, j0 - 4), min(j0 + 10, fmt.wman + 2)):
+            for off in (1, -1):
+                offsets = [Fraction(1, 1 << j)]
+                offsets += [Fraction(int(rng.integers(1 << 20, 1 << 21)), 1 << (20 + j)) for _ in range(4)]
+                for u in offsets:
+                    v = Fraction(k, 4) + off * u
+                    if v > 0:  # both input signs: the model reduces negative turns down a different branch
+                        out.extend(fmt.encode(sgn * v).bits for sgn in (1, -1))
+
+    out.extend(SINCOS_REGRESSIONS.get((fmt.wexp, fmt.wman), []))
     return out
 
 
-def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
-    # Linear signed-magnitude distance. Correct for the bounded, non-wrapping codomains -- sin/cos in [-1,1] and the
-    # non-negative hypot magnitude. NOT used for atan2 THETA, whose turns wrap at the +-0.5 boundary (+0.5 == -0.5 as
-    # an angle): use _theta_ulp_diff there.
-    return 0 if a_bits == b_bits else abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
+def _ulp_error(fmt, got_bits: int, truth, wrap: bool = False) -> tuple[float, bool]:
+    """
+    (error in ULP of the truth's binade, contract-satisfied) against the UNROUNDED truth.
 
+    The two range ends are judged by ENCODING, not by ratio, and report 0.0 on a pass -- so a caller's worst-ULP
+    headline structurally excludes them and the violation COUNT is the load-bearing number, not the maximum.
 
-def _ordered_index(fmt, bits: int) -> int:
+    Measured against the UNROUNDED truth: comparing encodings with the rounded oracle yields only whole ULPs, which
+    cannot express the margin left. `wrap` measures the circular distance for turns, where +1/2 and -1/2 are one
+    angle.
+    """
     from zkf import Zkf
+    from zkf.oracle import _round_mpf, _to_mpf, atan2_canon_half
 
-    bits = Zkf(fmt, bits).canonicalize().bits
-    sign = (bits >> fmt.sign_shift) & 1
-    mag = bits & ((1 << fmt.sign_shift) - 1)
-    # ZKF has no subnormals: magnitude jumps from 0 straight to 1<<wfrac (min normal). Collapse that gap to a dense rank
-    # so a 1-ULP straddle of the zero/min-normal boundary (a tiny angle rounding to +-MIN_NORMAL vs 0) measures 1, not a
-    # full binade. The shift is identical for both operands, so non-boundary distances are unchanged.
-    dense = 0 if mag == 0 else mag - ((1 << fmt.wfrac) - 1)
-    return -dense if sign else dense
+    got = Zkf(fmt, got_bits)
+    with mp.workprec(4 * fmt.wman + 80):
+        rn = _round_mpf(fmt, truth)  # exact only because this workprec block covers the truth's precision
+        min_normal = mp.power(2, 1 - fmt.bias)
+        # A ULP at the truth's own binade is meaningless at the two ends of the range, so compare encodings there.
+        if rn.is_inf or got.is_zero or got.is_inf or abs(truth) < min_normal:
+            ok = got.canonicalize().bits == rn.bits
+            if not ok and rn.is_inf:
+                # Per the README's overflow contract, a truth up to one ULP past the overflow threshold
+                # (max_finite + 1/2 ULP) may come back as max_finite.
+                top = fmt.pack(int(rn.negative), fmt.exp_inf - 1, fmt.frac_mask)
+                tm = abs(_to_mpf(top))
+                ok = got.canonicalize().bits == top.bits and abs(truth) < tm + mp.mpf(1.5) * (
+                    tm - abs(_to_mpf(_adjacent(fmt, top, False)))
+                )
+            elif not ok and truth != 0 and abs(truth) < min_normal:
+                # No subnormals, so +0 and +-min_normal are the only representables bracketing a truth in
+                # (0, min_normal) and both are faithful -- but accepting the pair across the WHOLE band would hide a
+                # result that is wildly wrong yet technically adjacent. Relax only NEAR the midpoint (see the
+                # README). Narrowing by SIDE instead does not work: the operator lands on either, and
+                # ATAN2_REGRESSIONS pins one case of each.
+                near_midpoint = abs(abs(truth) - min_normal / 2) < 2 * min_normal * mp.power(2, -fmt.wfrac)
+                span = {fmt.zero().bits, fmt.pack(int(truth < 0), 1, 0).bits} if near_midpoint else {rn.bits}
+                ok = got.canonicalize().bits in span
+            return (0.0 if ok else float("inf")), ok
+        d = _to_mpf(got) - truth
+        if wrap:
+            d -= mp.nint(d)
+        err = float(abs(d) / mp.power(2, mp.mag(truth) - fmt.wman))  # mag-1 is floor(log2|truth|)
+        # Faithful (see the module docstring) is NOT err < 1: across a power-of-two boundary the spacing halves, so
+        # a result two steps away can measure half an ULP of the truth's coarser binade. Compare encodings instead.
+        span = {rn.bits} if _to_mpf(rn) == truth else {rn.bits, _adjacent(fmt, rn, abs(truth) > abs(_to_mpf(rn))).bits}
+        if wrap:  # -1/2 and +1/2 are one angle, and the contract emits the positive encoding
+            span = {atan2_canon_half(fmt, b) for b in span}
+    return err, got.canonicalize().bits in span
 
 
-def _theta_ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
-    # Circular ULP distance for atan2 THETA (turns): +0.5 and -0.5 are the same angle, so a 1-ULP straddle of that wrap
-    # must measure 1, not full-scale via the linear index. The representable thetas form a ring of 2*index(+0.5) values
-    # over (-0.5, +0.5]; take the short way. A genuine >1-ULP miss still measures its true distance. (Needs WEXP >= 3.)
-    if a_bits == b_bits:
-        return 0
-    d = abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
-    ring = 2 * _ordered_index(fmt, (fmt.bias - 1) << fmt.wfrac)  # 2 * (dense) ordered index of +0.5 turns
-    return min(d, ring - d)
+def _adjacent(fmt, z, outward: bool):
+    """The neighboring representable of a finite nonzero value, away from zero or toward it (ZKF has no subnormals)."""
+    sign, e, f = int(z.negative), z.exp, z.bits & fmt.frac_mask
+    if outward:
+        if f < fmt.frac_mask:
+            return fmt.pack(sign, e, f + 1)
+        return fmt.inf(sign) if e + 1 >= fmt.exp_inf else fmt.pack(sign, e + 1, 0)
+    if f > 0:
+        return fmt.pack(sign, e, f - 1)
+    return fmt.zero() if e <= 1 else fmt.pack(sign, e - 1, fmt.frac_mask)
 
 
 def _atan2_pairs(fmt) -> list[tuple[int, int]]:
@@ -573,7 +673,13 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
     "fans" (each operand swept vs central-binade anchors of the other): since atan2 depends on the exponent DIFFERENCE,
     the fans cross every bypass threshold and quadrant boundary, and the diagonals exercise the |y|==|x| octant edge.
     """
+    import sys
+
     import numpy as np
+
+    if str(REPO / "tb") not in sys.path:  # saturating_y is a bench fixture
+        sys.path.append(str(REPO / "tb"))
+    from zkf_operands import saturating_y
 
     rng = np.random.default_rng()  # unseeded: true randomness, fresh pairs each run
 
@@ -631,32 +737,87 @@ def _atan2_pairs(fmt) -> list[tuple[int, int]]:
                     for yf in yfr:
                         for xf in (0, nf // 2, nf - 1):
                             pairs.add((fmt.normal(sy, ey, yf).bits, fmt.normal(0, xe, xf).bits))
+
+    # Near-axis ladder |y| = |x| * 2**-j over the whole range, with random mantissas. The straddles above pin the two
+    # known seams; this walks the corridor between them, where theta's relative accuracy degrades smoothly rather
+    # than at a named threshold.
+    xe = fmt.bias
+    for j in range(0, fmt.wman + 7):
+        ye = xe - j
+        if ye < 1:  # a narrow WEXP runs out of exponents before the ladder runs out of decades
+            break
+        for _ in range(6):
+            yf, xf = int(rng.integers(0, nf)), int(rng.integers(0, nf))
+            for sy in (0, 1):
+                for sx in (0, 1):
+                    pairs.add((fmt.normal(sy, ye, yf).bits, fmt.normal(sx, xe, xf).bits))
+
+    # --- the two ends of the range, which random pairs reach with probability ~0 but the gate has rules for ---
+    # OVERFLOW: with x = max_finite, hypot exceeds max_finite for ANY y > 0, and stays below the round-to-inf
+    # threshold while y**2 < max*ulp, i.e. y < 2**(emax+1-wman/2). The sweep starts a few binades under that bound
+    # and runs to the largest finite exponent, so it covers both sides: the low end has RN == max_finite (a +inf
+    # there is the spurious kind the README's overflow contract rules out) and the high end genuinely overflows.
+    top = fmt.normal(0, fmt.exp_inf - 1, fmt.frac_mask).bits
+    for ye in range(max(1, fmt.exp_inf - 1 - (fmt.wman // 2) - 3), fmt.exp_inf):
+        for yf in (0, 1, nf // 2, nf - 1):
+            pairs.add((fmt.normal(0, ye, yf).bits, top))
+    pairs.add((top, top))  # hypot = sqrt(2)*max: a GENUINE overflow, which must still come back +inf
+    # Four mantissas per exponent reaches the packer's round-carry window only by luck -- at several formats it
+    # never fired. Solve for one instead, so SATURATE_ROUND_CARRY is what keeps the pair finite.
+    pairs.add((saturating_y(fmt), top))
+
+    # UNDERFLOW: theta inside [min_normal/2, min_normal), where the two bracketing encodings are +0 and min_normal.
+    for k in (Fraction(1, 2), Fraction(3, 4), Fraction(1, 1)):
+        for xe in {e for e in (fmt.bias, fmt.bias + 2, fmt.exp_inf - 2) if 1 <= e < fmt.exp_inf}:
+            x = fmt.normal(0, xe, 0)
+            target = k * Fraction(1, 1 << (fmt.bias - 1))  # k * min_normal, in turns
+            ratio = mp.tan(2 * mp.pi * mp.mpf(target.numerator) / target.denominator)
+            y = fmt.encode(x.to_fraction() * Fraction(mp.nstr(ratio, 40)))
+            if not (y.is_zero or y.is_inf):
+                for sy in (0, 1):
+                    pairs.add((fmt.pack(sy, y.exp, y.bits & fmt.frac_mask).bits, x.bits))
+
+    pairs.update(ATAN2_REGRESSIONS.get((fmt.wexp, fmt.wman), []))
     return list(pairs)
 
 
-def _atan2_unit(case: tuple[int, int]) -> tuple[int, int, int, tuple | None]:
-    """One (wexp, wman) atan2 sweep -> (worst_theta_ulp, worst_mag_ulp, count, first_bad)."""
+def _atan2_unit(case: tuple[int, int]) -> tuple[float, float, int, int, tuple | None]:
+    """One (wexp, wman) sweep -> (worst_theta_ulp, worst_mag_ulp, violations, count, first_bad)."""
     import zkf
     import zkf.oracle
     from zkf import ZkfFormat
+    from zkf.oracle import _to_mpf
 
     wexp, wman = case
     fmt = ZkfFormat(wexp, wman)
     pairs = _atan2_pairs(fmt)
-    worst_t = worst_m = 0
+    worst_t = worst_m = 0.0
+    nbad = 0
     bad = None
     for yb, xb in pairs:
-        r = zkf.Zkf(fmt, yb).atan2(zkf.Zkf(fmt, xb))
-        t = zkf.oracle.atan2(zkf.Zkf(fmt, yb), zkf.Zkf(fmt, xb))
-        dt, dm = _theta_ulp_diff(fmt, r.theta.bits, t.theta.bits), _ulp_diff(fmt, r.magnitude.bits, t.magnitude.bits)
-        if (dt > 1 or dm > 1) and bad is None:
-            bad = (hex(yb), hex(xb), dt, dm)
+        y, x = zkf.Zkf(fmt, yb), zkf.Zkf(fmt, xb)
+        r = y.atan2(x)
+        # The wrap-aware metric folds whole turns, so a theta off by a full turn would score 0. Pin the range here.
+        assert not r.theta.is_inf and abs(_to_mpf(r.theta)) <= mp.mpf(0.5), f"theta out of range at {yb:#x},{xb:#x}"
+        if zkf.oracle.atan2_special(fmt, yb, xb) is not None:  # exact axis/infinity constants, not truth
+            t = zkf.oracle.atan2(y, x)
+            ok = (r.theta.bits, r.magnitude.bits) == (t.theta.bits, t.magnitude.bits)
+            dt = dm = 0.0 if ok else float("inf")
+            tok = mok = ok
+        else:
+            tt, tm = zkf.oracle._atan2_exact(y, x)
+            dt, tok = _ulp_error(fmt, r.theta.bits, tt, wrap=True)  # turns wrap: +1/2 and -1/2 are one angle
+            dm, mok = _ulp_error(fmt, r.magnitude.bits, tm)
+        if not (tok and mok):
+            nbad += 1
+            if bad is None:
+                bad = (hex(yb), hex(xb), dt, dm)
         worst_t, worst_m = max(worst_t, dt), max(worst_m, dm)
-    return worst_t, worst_m, len(pairs), bad
+    return worst_t, worst_m, nbad, len(pairs), bad
 
 
-def _check_atan2() -> None:
-    """End-to-end faithful-rounding check for zkf_atan2 (theta and mag) vs mpmath via the bit-exact model."""
+def _check_atan2() -> list[str]:
+    """Same for zkf_atan2 (theta and mag). Returns the per-format failures."""
     import sys
     from concurrent.futures import ProcessPoolExecutor
 
@@ -667,37 +828,55 @@ def _check_atan2() -> None:
     import zkf.oracle  # noqa: F401
 
     print("atan2 end-to-end faithful-rounding check (model vs mpmath):")
-    cases = [(6, 16), (6, 18), (8, 24), (8, 36), (8, 48), (8, 53), (11, 53)]
-    atan2_cases = [(we, wm) for we, wm in cases if wm in SUPPORTED_WMAN]
+    # (5,16) is atan2's WEXP floor, so the accuracy of the narrowest configuration it will elaborate is measured
+    # rather than assumed. It stays cheap because the corpus fans over the exponent range, i.e. it is O(2**WEXP) --
+    # which is also why nothing above WEXP=11 belongs here: _ulp_error alone costs ~2.6 s/call at WEXP=30.
+    atan2_cases = [*CHECK_CASES, (5, 16)]
+    assert not (
+        ATAN2_REGRESSIONS.keys() - set(atan2_cases)
+    ), f"ATAN2_REGRESSIONS entries for unchecked formats: {sorted(ATAN2_REGRESSIONS.keys() - set(atan2_cases))}"
+    failures = []
     with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=_MP_CONTEXT) as ex:
-        for (wexp, wman), (worst_t, worst_m, count, bad) in zip(atan2_cases, ex.map(_atan2_unit, atan2_cases)):
-            ok = worst_t <= 1 and worst_m <= 1
+        for (wexp, wman), (worst_t, worst_m, nbad, count, bad) in zip(atan2_cases, ex.map(_atan2_unit, atan2_cases)):
+            ok = nbad == 0
             print(
-                f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} theta_ulp={worst_t} mag_ulp={worst_m} "
-                f"(sampled({count}))"
+                f"  {'OK ' if ok else 'BAD'} {wexp}/{wman:<3} theta_ulp={worst_t:.3f} mag_ulp={worst_m:.3f} "
+                f"not_faithful={nbad} (sampled({count}))"
             )
-            assert ok, f"{wexp}/{wman}: theta_ulp={worst_t} mag_ulp={worst_m} first_bad={bad}"
+            if not ok:
+                failures.append(
+                    f"{wexp}/{wman}: theta_ulp={worst_t:.4f} mag_ulp={worst_m:.4f} not_faithful={nbad}/{count} "
+                    f"first_bad={bad}"
+                )
+    return [f"atan2 {f}" for f in failures]
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--emit", action="store_true", help="write the per-WMAN CORDIC constant cores and Python data")
+    gen = ap.add_mutually_exclusive_group()  # --check-emit after --emit would compare the files just written
+    gen.add_argument("--emit", action="store_true", help="write the per-WMAN CORDIC constant cores and Python data")
     ap.add_argument(
         "--check", action="store_true", help="verify sincos AND atan2 accuracy vs mpmath (uses the bit-exact model)"
     )
+    gen.add_argument(
+        "--check-emit", action="store_true", help="fail if the checked-in generated artifacts differ from a fresh run"
+    )
     ap.add_argument("--report", action="store_true", help="print the chosen CORDIC shapes (iterations, widths, LUT)")
     args = ap.parse_args()
-    if not (args.emit or args.check or args.report):
-        ap.error("nothing to do: pass --emit, --check, and/or --report")
+    if not (args.emit or args.check or args.check_emit or args.report):
+        ap.error("nothing to do: pass --emit, --check, --check-emit, and/or --report")
 
     all_specs = generate_all()
     if args.report or args.emit:
         _report(all_specs)
     if args.emit:
         emit(all_specs)
+    if args.check_emit:
+        check_emit(all_specs)
     if args.check:
-        _check()
-        _check_atan2()
+        failures = _check() + _check_atan2()  # both run to completion first: one bad format must hide nothing
+        if failures:
+            raise SystemExit("not faithfully rounded:\n  " + "\n  ".join(failures))
 
 
 if __name__ == "__main__":

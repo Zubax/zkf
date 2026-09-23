@@ -63,20 +63,28 @@ def log2(z: Zkf) -> Log2Result:
 
 
 def sincos(z: Zkf) -> SinCos:
-    """
-    Correctly-rounded (sin(2*pi*z), cos(2*pi*z), quadrant).
-
-    The phase is reduced mod 1 exactly with integer arithmetic before the transcendental, so the periodic identity holds
-    without the large-argument cancellation of a direct sin(2*pi*x); the local angle is folded into one octant so mpmath
-    only ever evaluates an angle <= pi/4, keeping the quadrant-boundary zeros exact.
-    """
+    """Correctly-rounded (sin(2*pi*z), cos(2*pi*z), quadrant)."""
     fmt = z.fmt
     if z.is_inf:
         s = fmt.inf(z.negative)
         return SinCos(s, s, 0)
     if z.is_zero:
         return SinCos(fmt.zero(), fmt.normal(0, fmt.bias, 0), 0)  # sin(0)=+0, cos(0)=+1
+    sin_v, cos_v, quadrant = _sincos_exact(z)
+    with _mpmath.workprec(4 * fmt.wman + 80):
+        return SinCos(_round_mpf(fmt, sin_v), _round_mpf(fmt, cos_v), quadrant)
 
+
+def _sincos_exact(z: Zkf) -> tuple[Any, Any, int]:
+    """
+    (sin, cos, quadrant) UNROUNDED, at the oracle's working precision -- the values sincos() rounds. Finite nonzero z.
+    Exact only while the caller's mpmath precision is at least that working precision.
+
+    The phase is reduced mod 1 exactly with integer arithmetic before the transcendental, so the periodic identity holds
+    without the large-argument cancellation of a direct sin(2*pi*x); the local angle is folded into one octant so mpmath
+    only ever evaluates an angle <= pi/4, keeping the quadrant-boundary zeros exact.
+    """
+    fmt = z.fmt
     e = z.exp - fmt.bias
     rsh = fmt.wfrac - e  # |x| = sig / 2**rsh
     frac_abs = _Fraction(0) if rsh <= 0 else _Fraction(z.significand() % (1 << rsh), 1 << rsh)
@@ -95,13 +103,14 @@ def sincos(z: Zkf) -> SinCos:
         sin_mag, cos_mag = (c0, s0) if (quadrant & 1) else (s0, c0)
         sin_v = -sin_mag if (quadrant >> 1) & 1 else sin_mag
         cos_v = -cos_mag if ((quadrant >> 1) ^ quadrant) & 1 else cos_mag
-        return SinCos(_round_mpf(fmt, sin_v), _round_mpf(fmt, cos_v), quadrant)
+        return sin_v, cos_v, quadrant
 
 
 def atan2(y: Zkf, x: Zkf) -> Atan2Result:
     """
     Correctly-rounded (theta, magnitude) of atan2(y, x). Shares the exact special-case table with the model; the
-    generic path evaluates mpmath atan2/hypot at high precision (bounded ratios, no cancellation) and rounds.
+    generic path rounds _atan2_exact. Deliberately carries no WEXP floor, unlike the operator and its model: this is
+    ground truth, and being able to evaluate it where the operator refuses to elaborate is the point.
     """
     _require_same(y, x)
     fmt = y.fmt
@@ -109,12 +118,19 @@ def atan2(y: Zkf, x: Zkf) -> Atan2Result:
     if special is not None:
         theta_bits, mag_bits = special
         return Atan2Result(fmt.wrap(theta_bits), fmt.wrap(mag_bits))
+    theta, mag = _atan2_exact(y, x)
     with _mpmath.workprec(4 * fmt.wman + 80):
-        yv = _to_mpf(y)
-        xv = _to_mpf(x)
-        theta = _mpmath.atan2(yv, xv) / (2 * _mpmath.pi)  # turns, (-0.5, 0.5]
         theta_bits = atan2_canon_half(fmt, _round_mpf(fmt, theta).bits)
-        return Atan2Result(fmt.wrap(theta_bits), _round_mpf(fmt, _mpmath.hypot(yv, xv)))
+        return Atan2Result(fmt.wrap(theta_bits), _round_mpf(fmt, mag))
+
+
+def _atan2_exact(y: Zkf, x: Zkf) -> tuple[Any, Any]:
+    """(theta in turns, hypot) UNROUNDED -- the values atan2() rounds. Both operands finite and nonzero. Exact only
+    while the caller's mpmath precision is at least 4*WMAN + 80 bits."""
+    _require_same(y, x)
+    with _mpmath.workprec(4 * y.fmt.wman + 80):
+        yv, xv = _to_mpf(y), _to_mpf(x)
+        return _mpmath.atan2(yv, xv) / (2 * _mpmath.pi), _mpmath.hypot(yv, xv)
 
 
 def mul(a: Zkf, b: Zkf) -> Zkf | None:

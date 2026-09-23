@@ -31,6 +31,7 @@ module _zkf_fixed_to_float #(
     parameter WEU                    = 8,   // internal signed exponent width, also passed to _zkf_pack as WEXP_UNBIASED
     parameter EXP_IS_BIASED          = 0,
     parameter ASSUME_NO_OVERFLOW     = 0,   // forwarded to _zkf_pack; 1 prunes overflow detect
+    parameter SATURATE_ROUND_CARRY   = 0,   // forwarded to _zkf_pack; 1 saturates a round-carry to max-finite
     parameter WSB                    = 1,   // generic sideband width carried alongside the pipeline
     parameter STAGE_NORMALIZE        = 0,   // {0,1,2} direct forward to _zkf_normshift.STAGE_SPLIT
     parameter STAGE_NORMALIZE_OUTPUT = 0,   // {0,1} direct forward to _zkf_normshift.STAGE_OUTPUT
@@ -136,6 +137,7 @@ module _zkf_fixed_to_float #(
         .WEXP_UNBIASED(WEU),
         .EXP_IS_BIASED(EXP_IS_BIASED),
         .ASSUME_NO_OVERFLOW(ASSUME_NO_OVERFLOW),
+        .SATURATE_ROUND_CARRY(SATURATE_ROUND_CARRY),
         .STAGE_INPUT(STAGE_PACK),
         .STAGE_OUTPUT(STAGE_OUTPUT)
     ) u_pack (

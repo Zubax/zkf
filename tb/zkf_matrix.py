@@ -29,6 +29,7 @@ CORE = "zubax:kulibin:float"
 PACK = [
     ("w2_m4_u4_exhaustive", 2, 4, 4, "exhaustive", 0),
     ("w3_m4_u5_exhaustive", 3, 4, 5, "exhaustive", 0),
+    ("w4_m5_u4_exhaustive", 4, 5, 4, "exhaustive", 0),  # WEXP_UNBIASED == WEXP, the narrowest legal (zkf_exp2's)
     ("w5_m8_u8_random", 5, 8, 8, "random", 768),
     ("w8_m24_u12_random", 8, 24, 12, "random", 2048),
 ]
@@ -359,7 +360,7 @@ def _fma(
     return _run("fma", sim, tier, base + suffix, vlog, kind=kind, count=count)
 
 
-def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None) -> Run:
+def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None, sat=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m), ("WEXP_UNBIASED", u)]
     suffix = ""
     if so is not None:
@@ -371,6 +372,9 @@ def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None
     if nov is not None:
         vlog.append(("ASSUME_NO_OVERFLOW", nov))
         suffix += f"_nov{nov}"
+    if sat is not None:
+        vlog.append(("SATURATE_ROUND_CARRY", sat))
+        suffix += f"_sat{sat}"
     return _run("pack", sim, tier, config + suffix, vlog, kind=kind, count=count)
 
 
@@ -608,6 +612,9 @@ def _per_pr(sim, out: list) -> None:
     # published latency; the test asserts measured == model.
     out.append(_trans("sincos", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=50))
     out.append(_trans("sincos", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=200))
+    # WMAN=18 has N=11, odd: at U>1 the final lane group is PARTIAL, so the en=0 pass-through lanes stay covered.
+    # WMAN=16's N is even, so it has no partial group at un=200.
+    out.append(_trans("sincos", sim, "pr", "w6_m18_unroll", 6, 18, "random", 256, un=200))
     # sincos staging knobs, bit-transparent vs the unstaged path (the test checks bit-exactness + latency). si/so are
     # the standard sequential register stages; the decode and wide-datapath stages are always-on.
     out.append(_trans("sincos", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, si=1))
@@ -649,14 +656,15 @@ def _per_pr(sim, out: list) -> None:
     # checks bit-exactness + latency; directed alone hits every special/axis/diagonal/bypass-boundary pair.
     for cfg, w, m, k, c in TRANS_ATAN2:
         out.append(_trans("atan2", sim, "pr", cfg, w, m, k, c))
-    # Tiny WEXP (2, 3): random covers the narrow exponent-difference path plus the axis/diagonal turn constants that
-    # underflow the normal range at small BIAS.
-    out.append(_trans("atan2", sim, "pr", "w2_m16_random", 2, 16, "random", 512))
-    out.append(_trans("atan2", sim, "pr", "w3_m16_random", 3, 16, "random", 512))
+    # atan2's WEXP floor (5): the narrowest elaborable exponent, covering the short exponent-difference path where
+    # alignment and the small-ratio bypass interact. Narrower is refused at elaboration.
+    out.append(_trans("atan2", sim, "pr", "w5_m16_narrow", 5, 16, "random", 512))
+    out.append(_trans("atan2", sim, "pr", "w5_m53_narrow", 5, 53, "random", 384))  # the floor at the widest WMAN
     out.append(_trans("atan2", sim, "pr", "w6_m18_directed", 6, 18, "directed", 0))
     out.append(_trans("atan2", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=50))
     out.append(_trans("atan2", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=200))
     out.append(_trans("atan2", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=400))
+    out.append(_trans("atan2", sim, "pr", "w6_m18_unroll", 6, 18, "random", 256, un=200))
     out.append(_trans("atan2", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, si=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, so=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, si=1, so=1))
@@ -986,6 +994,7 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("atan2", s, "deep", "atan2_w5m16", 5, 16, "random", 4000))
     out.append(_trans("atan2", s, "deep", "atan2_w5m16_directed", 5, 16, "directed", 0))
     out.append(_trans("atan2", s, "deep", "atan2_w5m16", 5, 16, "random", 2000, un=200))
+    out.append(_trans("atan2", s, "deep", "atan2_w6m18", 6, 18, "random", 2000, un=300))  # the only UNROLL100=300
     out.append(_trans("atan2", s, "deep", "atan2_w5m16", 5, 16, "random", 2000, sn=1, pa=1))
     # Wide-format atan2: at the small format some divider / shamt / significand / magnitude high bits sit above the
     # format ceiling; w8m24 makes them ordinary toggling mid-bits. (The exact net set shifts with WMAN, so this row
@@ -1075,6 +1084,11 @@ def _deep_coverage(out: list) -> None:
     # ASSUME_NO_OVERFLOW=1 prunes the overflow detector (exp_overflow forced to 0): the case generator drops
     # out-of-range exponents, so the surviving in-range / force_inf / round-carry cases must still match the reference.
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, nov=1))
+    # SATURATE_ROUND_CARRY diverts the round-carry-to-infinity path, which only zkf_atan2 arms in anger.
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, sat=1))
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, sat=1, nov=1))
+    # The combination zkf_atan2 actually ships: a biased exponent input alongside the saturating round-carry.
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, sat=1, eb=1))
 
 
 def _properties(out: list) -> None:

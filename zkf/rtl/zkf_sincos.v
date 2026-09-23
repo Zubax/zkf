@@ -4,15 +4,14 @@
 /// This is NOT a throughput-1 pipeline. A transaction is accepted when `in_ready` is high; the module then runs for a
 /// fixed data-invariant latency and holds `out_valid` with a stable result until `out_ready` accepts it.
 /// LATENCY is accept-to-out_valid latency; with out_ready high, in_ready reasserts one cycle after retirement.
-/// Faithful rounding: each finite output is within <= 1 ULP of the correctly-rounded result.
-/// Behavior:
+/// Faithful rounding. Behavior:
 ///
 ///   x finite : sin = sin(2*pi*x), cos = cos(2*pi*x); quadrant = floor(frac(x)*4) mod 4
 ///              Exact boundaries take the upper quadrant: 0->0, 1/4->1, 1/2->2, 3/4->3); exact-zero outputs are +0.
 ///   x = +inf : sin = +inf, cos = +inf, quadrant = 0.
 ///   x = -inf : sin = -inf, cos = -inf, quadrant = 0.
 ///
-/// Algorithm (mixed CORDIC; the engine is in _zkf_cordic):
+/// Algorithm (mixed CORDIC; the engine is in _zkf_cordic_core):
 ///
 ///  1. Reduce x mod 1 to the FF-bit fraction frac(x) (FF = WMAN + GUARD_FF): top 2 bits = |x| quadrant, low WT = FF-2
 ///     bits = quadrant-local coordinate t (local angle (pi/2)*t). Reduce |x| and use the sin sign flip / quadrant
@@ -36,7 +35,7 @@
 ///     WMULTIPLIER-bit tile. This can significantly reduce DSP usage and may improve f_max.
 ///
 /// UNROLL100={50,100,200,...}: CORDIC iterations per engine cycle x100. Values <100 split operations across cycles.
-///     Choose the maximum value that closes timings. It is forwarded to _zkf_cordic; refer there for details.
+///     Choose the maximum value that closes timings. It is forwarded to _zkf_cordic_core; refer there for details.
 ///
 /// STAGE_INPUT={0,1}: Latch the input x before the decode, isolating it from upstream (+1 cycle).
 ///
@@ -77,7 +76,7 @@ module zkf_sincos #(
     output wire [WEXP+WMAN-1:0] cos,
     output wire [1:0]           quadrant
 );
-    localparam integer K      = ((WMAN + 1) / 2) + 1;          // CORDIC iterations
+    localparam integer K      = ((WMAN + 1) / 2) + 2;          // CORDIC iterations (GUARD_ITER_SINCOS)
     localparam integer XYCYC  = (K * 100 + UNROLL100 - 1) / UNROLL100;
     localparam integer ZGAP   = XYCYC - K;
     localparam integer PMUL_L = 1 + STAGE_PRODUCT;

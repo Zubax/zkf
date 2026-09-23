@@ -29,6 +29,11 @@ from textwrap import dedent
 
 import mpmath as mp
 
+if __package__:  # python -m tools.<generator>
+    from . import zkf_emit
+else:  # python tools/<generator>.py, or tools/ on sys.path
+    import zkf_emit
+
 mp.mp.prec = 280  # generous headroom for coefficient fitting and ground-truth rounding
 
 REPO = Path(__file__).resolve().parents[1]
@@ -585,15 +590,18 @@ def _emit_python(all_specs: dict[tuple[str, int], Spec]) -> str:
     return w.render()
 
 
+def _artifacts(all_specs: dict[tuple[str, int], Spec]) -> dict[Path, str]:
+    arts = {TABLES / f"{table_module(func, wman)}.v": _emit_table(s) for (func, wman), s in sorted(all_specs.items())}
+    return arts | {PKG_TABLES / "trans.py": _emit_python(all_specs)}
+
+
 def emit(all_specs: dict[tuple[str, int], Spec]) -> None:
-    TABLES.mkdir(parents=True, exist_ok=True)
-    for (func, wman), s in sorted(all_specs.items()):
-        path = TABLES / f"{table_module(func, wman)}.v"
-        path.write_text(_emit_table(s))
-        print(f"wrote {path.relative_to(REPO)}")
-    path = PKG_TABLES / "trans.py"
-    path.write_text(_emit_python(all_specs))
-    print(f"wrote {path.relative_to(REPO)}")
+    zkf_emit.write(_artifacts(all_specs))
+
+
+def check_emit(all_specs: dict[tuple[str, int], Spec]) -> None:
+    found = sorted(p for f in FUNCS for p in TABLES.glob(f"_zkf_{f}_m*.v"))
+    zkf_emit.verify(_artifacts(all_specs), found, "zkf_transcendental.py --emit")
 
 
 # --------------------------------------------------------------------------------------------------
@@ -783,18 +791,24 @@ def _ordered_index(fmt, bits: int) -> int:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--emit", action="store_true", help="write the per-table Verilog cores and Python data table")
+    gen = ap.add_mutually_exclusive_group()  # --check-emit after --emit would compare the files just written
+    gen.add_argument("--emit", action="store_true", help="write the per-table Verilog cores and Python data table")
     ap.add_argument("--check", action="store_true", help="verify accuracy vs mpmath (uses the bit-exact model)")
+    gen.add_argument(
+        "--check-emit", action="store_true", help="fail if the checked-in generated artifacts differ from a fresh run"
+    )
     ap.add_argument("--report", action="store_true", help="print the chosen table shapes and the degree map")
     args = ap.parse_args()
-    if not (args.emit or args.check or args.report):
-        ap.error("nothing to do: pass --emit, --check, and/or --report")
+    if not (args.emit or args.check or args.check_emit or args.report):
+        ap.error("nothing to do: pass --emit, --check, --check-emit, and/or --report")
 
     all_specs = generate_all()
     if args.report or args.emit:
         _report(all_specs)
     if args.emit:
         emit(all_specs)
+    if args.check_emit:
+        check_emit(all_specs)
     if args.check:
         _check()
 

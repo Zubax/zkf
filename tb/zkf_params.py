@@ -44,6 +44,7 @@ class TestContext:
     parallel: int = 0  # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
     exp_is_biased: int = 0  # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees in-range exponent)
+    saturate_round_carry: int = 0  # _zkf_pack: 1 = a round-carry out of range saturates to max-finite, not inf
     shard_index: int = 0  # strided-slice index of the exhaustive sweep
     shard_count: int = 1  # >1 splits the sweep into parallel slices (union == full)
 
@@ -76,6 +77,8 @@ class TestContext:
             knob_suffix += f" EB={self.exp_is_biased}"
         if self.assume_no_overflow:
             knob_suffix += f" NOV={self.assume_no_overflow}"
+        if self.saturate_round_carry:
+            knob_suffix += f" SAT={self.saturate_round_carry}"
         if self.wk is not None:
             knob_suffix += f" WK={self.wk}"
         if self.wexp_in is not None and self.wman_in is not None:
@@ -225,17 +228,11 @@ def _parallel(unroll100: int) -> int:
     return value
 
 
-def _exp_is_biased() -> int:
-    value = plusarg_int("ZKF_EXP_IS_BIASED", 0)
+def _flag(name: str) -> int:
+    """A 0/1 plusarg, defaulting to 0 -- the shape every boolean _zkf_pack knob shares."""
+    value = plusarg_int(name, 0)
     if value not in (0, 1):
-        raise ValueError(f"ZKF_EXP_IS_BIASED must be 0 or 1, got {value}")
-    return value
-
-
-def _assume_no_overflow() -> int:
-    value = plusarg_int("ZKF_ASSUME_NO_OVERFLOW", 0)
-    if value not in (0, 1):
-        raise ValueError(f"ZKF_ASSUME_NO_OVERFLOW must be 0 or 1, got {value}")
+        raise ValueError(f"{name} must be 0 or 1, got {value}")
     return value
 
 
@@ -255,7 +252,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         raise ValueError(f"ZKF_WEXP must be at least 2, got {wexp}")
     if wman < 4:
         raise ValueError(f"ZKF_WMAN must be at least 4, got {wman}")
-    if wexp_unbiased is not None and wexp_unbiased < wexp + 1:
+    if wexp_unbiased is not None and wexp_unbiased < wexp + _flag("ZKF_EXP_IS_BIASED"):  # _zkf_pack's floor
         raise ValueError(f"ZKF_WEXP_UNBIASED={wexp_unbiased} is too narrow for ZKF_WEXP={wexp}")
     stage_product = _stage_product()
     unroll100 = _unroll100()
@@ -284,8 +281,9 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_output=_stage_output(),
         unroll100=unroll100,
         parallel=_parallel(unroll100) if suite == "sincos" else 0,
-        exp_is_biased=_exp_is_biased(),
-        assume_no_overflow=_assume_no_overflow(),
+        exp_is_biased=_flag("ZKF_EXP_IS_BIASED"),
+        assume_no_overflow=_flag("ZKF_ASSUME_NO_OVERFLOW"),
+        saturate_round_carry=_flag("ZKF_SATURATE_ROUND_CARRY"),
     )
 
 

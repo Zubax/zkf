@@ -41,7 +41,7 @@ for _p in (str(TB_DIR), str(MODEL_DIR)):
 
 from zkf_matrix import build_matrix  # noqa: E402
 from zkf_results import check_results  # noqa: E402
-from zkf_targets import TARGETS  # noqa: E402
+from zkf_targets import FILESETS, TARGETS  # noqa: E402
 
 # Per-tool build flags. -DSIMULATION=1 is passed as a define (below) so it applies to both tools; these lists
 # mirror the historical FuseSoC flow_options. Verilator collects line+toggle coverage; the runtime coverage file
@@ -171,3 +171,102 @@ def test_ilog2_elaboration(tmp_path, overrides, valid) -> None:
         text=True,
     )
     assert (result.returncode == 0) == valid, result.stderr
+
+
+@pytest.mark.parametrize("wexp,valid", [(2, False), (4, False), (5, True), (6, True)])
+def test_atan2_wexp_floor(tmp_path, wexp, valid) -> None:
+    """zkf_atan2 requires WEXP >= 5; 4 pins the boundary, 2 the case where theta's codomain is sub-normal."""
+    sources = FILESETS["rtl_atan2"]
+    result = subprocess.run(
+        [
+            "iverilog",
+            "-s",
+            "zkf_atan2",
+            "-o",
+            str(tmp_path / "atan2.vvp"),
+            f"-Pzkf_atan2.WEXP={wexp}",
+            "-Pzkf_atan2.WMAN=16",
+            *[str(REPO_ROOT / src) for src in sources],
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) == valid, result.stderr
+    assert valid or "_zkf_invalid_wexp_or_wman" in result.stderr, result.stderr  # refused by THIS guard
+
+
+@pytest.mark.parametrize("wexp,valid", [(4, False), (5, True)])
+def test_atan2_wexp_floor_model(wexp, valid) -> None:
+    """The RTL guard, the operator model and the public entry point must agree on the floor, not just the RTL."""
+    import zkf
+    from zkf._operators import Atan2Model
+
+    fmt = zkf.ZkfFormat(wexp, 16)
+    one = fmt.encode(1)
+    if valid:
+        Atan2Model(fmt=fmt)
+        one.atan2(one)
+    else:
+        with pytest.raises(ValueError):
+            Atan2Model(fmt=fmt)
+        with pytest.raises(ValueError):
+            one.atan2(one)
+
+
+@pytest.mark.parametrize("model", ["SincosModel", "Atan2Model", "Exp2Model", "Log2Model"])
+def test_model_wexp_ceiling(model) -> None:
+    """A model describes a buildable instance, so it refuses the WEXP >= 31 its RTL refuses."""
+    import zkf
+    import zkf._operators
+
+    cls = getattr(zkf._operators, model)
+    cls(fmt=zkf.ZkfFormat(30, 16))
+    with pytest.raises(ValueError):
+        cls(fmt=zkf.ZkfFormat(31, 16))
+
+
+@pytest.mark.parametrize("generator", ["zkf_trig", "zkf_transcendental"])
+def test_generator_module_entry_point(generator) -> None:
+    """`python -m tools.<generator>` must work too; nox runs the generators only by script path."""
+    cmd = [sys.executable, "-m", f"tools.{generator}", "--help"]
+    result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+# _zkf_pack's WEXP_UNBIASED floor at WEXP=4: 4 bits unbiased, 5 biased.
+_PACK_WU_CASES = [(4, 0, True), (3, 0, False), (5, 1, True), (4, 1, False)]
+
+
+@pytest.mark.parametrize("wu,eb,valid", _PACK_WU_CASES)
+def test_pack_wexp_unbiased_floor(tmp_path, wu, eb, valid) -> None:
+    result = subprocess.run(
+        [
+            "iverilog",
+            "-s",
+            "_zkf_pack",
+            "-o",
+            str(tmp_path / "pack.vvp"),
+            "-P_zkf_pack.WEXP=4",
+            "-P_zkf_pack.WMAN=5",
+            f"-P_zkf_pack.WEXP_UNBIASED={wu}",
+            f"-P_zkf_pack.EXP_IS_BIASED={eb}",
+            str(REPO_ROOT / "zkf/rtl/_zkf_pack.v"),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert (result.returncode == 0) == valid, result.stderr
+    assert valid or "_zkf_invalid_wexp_unbiased_too_narrow" in result.stderr, result.stderr  # refused by THIS guard
+
+
+@pytest.mark.parametrize("wu,eb,valid", _PACK_WU_CASES)
+def test_pack_wexp_unbiased_floor_model(wu, eb, valid) -> None:
+    import zkf
+    from zkf._operators import PackModel
+
+    fmt = zkf.ZkfFormat(4, 5)
+    if valid:
+        PackModel(fmt=fmt, wexp_unbiased=wu, exp_is_biased=eb)
+    else:
+        with pytest.raises(ValueError):
+            PackModel(fmt=fmt, wexp_unbiased=wu, exp_is_biased=eb)

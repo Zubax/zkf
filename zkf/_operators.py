@@ -67,14 +67,20 @@ class PackModel(OperatorModel):
     wexp_unbiased: int | None = None
     exp_is_biased: int = 0
     assume_no_overflow: int = 0
+    saturate_round_carry: int = 0
     stage_input: int = 0
     stage_output: int = 0
 
     def __post_init__(self) -> None:
-        if self.wexp_unbiased is not None:
-            _check_int_range(self.wexp_unbiased, 1, None)
-        _check_int_range(self._wexp_unbiased, self.fmt.wexp + 1, None)
-        for value in (self.exp_is_biased, self.assume_no_overflow, self.stage_input, self.stage_output):
+        # Mirrors _zkf_pack's WEXP_UNBIASED floor.
+        _check_int_range(self._wexp_unbiased, self.fmt.wexp + (1 if self.exp_is_biased else 0), None)
+        for value in (
+            self.exp_is_biased,
+            self.assume_no_overflow,
+            self.saturate_round_carry,
+            self.stage_input,
+            self.stage_output,
+        ):
             _check_int_range(value, 0, 1)
 
     @property
@@ -87,6 +93,7 @@ class PackModel(OperatorModel):
             "wexp_unbiased": self._wexp_unbiased,
             "exp_is_biased": self.exp_is_biased,
             "assume_no_overflow": self.assume_no_overflow,
+            "saturate_round_carry": self.saturate_round_carry,
             "stage_input": self.stage_input,
             "stage_output": self.stage_output,
         }
@@ -99,6 +106,7 @@ class PackModel(OperatorModel):
             "WEXP_UNBIASED": self._wexp_unbiased,
             "EXP_IS_BIASED": self.exp_is_biased,
             "ASSUME_NO_OVERFLOW": self.assume_no_overflow,
+            "SATURATE_ROUND_CARRY": self.saturate_round_carry,
             "STAGE_INPUT": self.stage_input,
             "STAGE_OUTPUT": self.stage_output,
         }
@@ -592,6 +600,7 @@ class Exp2Model(OperatorModel):
     wmultiplier: int = 0
 
     def __post_init__(self) -> None:
+        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_exp2.v's WEXP guard
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_product, 0, 4)
         for value in (self.stage_reduce, self.stage_pack, self.stage_output):
@@ -641,6 +650,7 @@ class Log2Model(OperatorModel):
 
     def __post_init__(self) -> None:
         spec = trans_spec("log2", self.fmt.wman)
+        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_log2.v's WEXP guard
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_product, 0, 4)
         if self.stage_product_final is not None:
@@ -719,6 +729,7 @@ class SincosModel(OperatorModel):
 
     def __post_init__(self) -> None:
         spec = trig_spec(self.fmt.wman)
+        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_sincos.v's WEXP guard
         _check_int_range(self.unroll100, 100, None, {50})
         _check_int_range(self.stage_product, 0, 4)
         norm_width = spec["const2pi"].bit_length() + spec["wt"] + 1
@@ -792,6 +803,7 @@ class Atan2Model(OperatorModel):
 
     def __post_init__(self) -> None:
         spec = trig_spec(self.fmt.wman)
+        _check_int_range(self.fmt.wexp, 5, 30)  # mirrors zkf_atan2.v's WEXP guard
         _check_int_range(self.unroll100, 100, None, {50})
         _check_int_range(self.stage_product, 0, 4)
         xf = spec["xf"]

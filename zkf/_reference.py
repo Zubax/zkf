@@ -92,6 +92,8 @@ def pack_reference(
     guard: int,
     round_bit: int,
     sticky: int,
+    *,
+    saturate_round_carry: bool = False,
 ) -> int:
     exp_biased = exp_unbiased + fmt.bias
     exp_underflow_zero = exp_unbiased < (fmt.min_exp_unbiased - 1)
@@ -103,7 +105,9 @@ def pack_reference(
     round_carry = (rounded_ext >> fmt.wman) & 1
     rounded_significand = (rounded_ext >> 1) if round_carry else (rounded_ext & mask(fmt.wman))
     exp_round_overflow = (exp_biased == fmt.exp_max_finite) and bool(round_carry)
-    infinity = bool(force_inf or exp_overflow or exp_round_overflow)
+    # saturate_round_carry mirrors _zkf_pack's SATURATE_ROUND_CARRY.
+    saturated = saturate_round_carry and exp_round_overflow
+    infinity = bool(force_inf or exp_overflow or (exp_round_overflow and not saturate_round_carry))
 
     result_zero = bool(force_zero or ((not force_inf) and exp_underflow_zero))
     result_infinity = (not result_zero) and infinity
@@ -115,6 +119,8 @@ def pack_reference(
         return canonical_inf(fmt, sign)
     if result_min_normal:
         return normal(fmt, sign, 1, 0)
+    if saturated:
+        return pack_bits(fmt, sign, fmt.exp_max_finite, fmt.frac_mask)
 
     exp_rounded = (exp_biased + round_carry) & mask(fmt.wexp)
     return pack_bits(fmt, sign, exp_rounded, rounded_significand & fmt.frac_mask)
@@ -240,7 +246,16 @@ def atan2_bypass_shift(fmt: ZkfFormat) -> int:
     return trig_spec(fmt.wman)["zf"] - fmt.wman - trig.GUARD_DIV
 
 
-def fixed_to_float_ref(fmt: ZkfFormat, sign: int, mag: int, exp_offset: int, wmag: int, *, force_inf: int = 0) -> int:
+def fixed_to_float_ref(
+    fmt: ZkfFormat,
+    sign: int,
+    mag: int,
+    exp_offset: int,
+    wmag: int,
+    *,
+    force_inf: int = 0,
+    saturate_round_carry: bool = False,
+) -> int:
     """
     Mirror zkf/rtl/_zkf_fixed_to_float.v: normalize the unsigned magnitude, extract G/R/S, exp = exp_offset - count,
     and pack (RTNE). mag == 0 forces +0 unless force_inf is set.
@@ -252,15 +267,26 @@ def fixed_to_float_ref(fmt: ZkfFormat, sign: int, mag: int, exp_offset: int, wma
     sticky = 1 if (aligned & mask(wmag - fmt.wman - 2)) else 0
     exp_unbiased = exp_offset - count
     force_zero = 0 if force_inf else (1 if zero_flag else 0)
-    return pack_reference(fmt, sign, force_zero, force_inf, exp_unbiased, significand_value, guard, round_bit, sticky)
+    return pack_reference(
+        fmt,
+        sign,
+        force_zero,
+        force_inf,
+        exp_unbiased,
+        significand_value,
+        guard,
+        round_bit,
+        sticky,
+        saturate_round_carry=saturate_round_carry,
+    )
 
 
 def cordic_rotate(spec: dict, z0: int, n: int) -> tuple[int, int, int]:
     """
-    Fixed-point CORDIC rotation (n ~= WMAN/2 iterations), mirroring zkf/rtl/_zkf_cordic.v. Returns (x_K, y_K, z_K): the
-    partially rotated vector at scale 2**-xf and the residual angle z_K at scale 2**-zf (turns); the caller finishes
-    with one linear step. Inverse gain is folded into the x seed. Shifts truncate toward -inf (Verilog >>>); the
-    N-iteration truncation bias stays below the result ULP.
+    Fixed-point CORDIC rotation (n ~= WMAN/2 iterations), mirroring zkf/rtl/_zkf_cordic_core.v. Returns (x_K, y_K,
+    z_K): the partially rotated vector at scale 2**-xf and the residual angle z_K at scale 2**-zf (turns); the caller
+    finishes with one linear step. Inverse gain is folded into the x seed. Shifts truncate toward -inf (Verilog >>>);
+    the N-iteration truncation bias stays below the result ULP.
     """
     kinv, lut = spec["kinv"], spec["lut"]
     x, y, z = kinv, 0, z0
@@ -274,11 +300,11 @@ def cordic_rotate(spec: dict, z0: int, n: int) -> tuple[int, int, int]:
 
 def cordic_vector(spec: dict, x0: int, y0: int, n: int) -> tuple[int, int, int]:
     """
-    Fixed-point CORDIC in VECTORING mode (n = N_atan2 iterations), mirroring zkf/rtl/_zkf_cordic.v MODE=1. Drives y -> 0
-    and returns (x_K, y_K, z_K): the residual vector at scale 2**-xf (x_K ~= gain*hypot) and the accumulated angle z_K
-    at scale 2**-zf (turns, ~= atan2(y0, x0)). Same update as cordic_rotate but sigma follows sign(y), and there is no
-    inverse-gain seed (the gain stays in x_K for the magnitude path). x/y/z wrap to the engine widths (xw/zw); the
-    caller pre-scales the seed by 1/4 so that wrap never fires.
+    Fixed-point CORDIC in VECTORING mode (n = N_atan2 iterations), mirroring zkf/rtl/_zkf_cordic_core.v MODE=1.
+    Drives y -> 0 and returns (x_K, y_K, z_K): the residual vector at scale 2**-xf (x_K ~= gain*hypot) and the
+    accumulated angle z_K at scale 2**-zf (turns, ~= atan2(y0, x0)). Same update as cordic_rotate but sigma follows
+    sign(y), and there is no inverse-gain seed (the gain stays in x_K for the magnitude path). x/y/z wrap to the
+    engine widths (xw/zw); the caller pre-scales the seed by 1/4 so that wrap never fires.
     """
     lut, xw, zw = spec["lut"], spec["xw"], spec["zw"]
     x = bits_to_signed(x0 & mask(xw), xw)

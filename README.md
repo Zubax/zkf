@@ -116,11 +116,11 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 
 #### Notably absent functions
 
-The transcendental/trigonometric functions offer high accuracy ≤1 ULP. This is desirable for many applications,
-but often one would accept a lower accuracy (common in control systems) to save fabric and/or cycle latency.
-There is interest in extending the module set with approximate trans/trig functions built on a simple
-piecewise function approximation kernel that offer II=1, low cycle latency, and low fabric usage:
-`zkf_exp2_approx`, `zkf_sincos_approx`, etc.
+The transcendental/trigonometric functions offer high accuracy (faithful rounding). This is desirable for many
+applications, but often one would accept a lower accuracy (common in control systems) to save fabric and/or cycle
+latency. There is interest in extending the module set with approximate trans/trig functions built on a simple piecewise
+function approximation kernel that offer II=1, low cycle latency, and low fabric usage: `zkf_exp2_approx`,
+`zkf_sincos_approx`, etc.
 
 ### Derived functions
 
@@ -215,6 +215,10 @@ Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; 
 round to +0; magnitudes in `[min_normal/2, min_normal)` round to signed min_normal), no −0, no exceptions,
 overflow produces ±∞.
 
+`zkf_atan2`'s magnitude errs toward finite within one ULP of the overflow threshold rather than inventing an infinity.
+Any faithfully-rounded operator may return either +0 or ±min_normal for a result landing very near the `min_normal/2`
+midpoint, since which side is correct is decided by bits a faithful operator does not carry.
+
 Infinity cases that would be NaN in IEEE 754:
 
 | Expression          | Result                         |
@@ -247,7 +251,8 @@ of certain basic operators.
 
 ### Accuracy of the transcendental functions
 
-The exp2 and log2 transcendentals deliver faithful rounding (≤1 ULP guaranteed) with a 0.5 ULP correctly-rounded target,
+The exp2 and log2 transcendentals deliver faithful rounding, meaning that every finite result is one of the two
+representable values bracketing the exact result, with a 0.5 ULP correctly-rounded target,
 enforced by two paired headroom budgets.
 
 The per-segment Chebyshev fit + truncating Horner is sized to clear `< 2^-(WMAN+ERR_GUARD)` relative error with
@@ -259,15 +264,14 @@ A mis-round against round-to-nearest-ties-to-even is possible only when the true
 ULP of a midpoint between adjacent representable values, bounding the worst-case mis-round rate at `≈2^-7 ≈ 0.8%`;
 raising ERR_GUARD by one bit halves that rate at the cost of bumping the polynomial degree (and a Horner stage)
 at some WMAN, but the Table-Maker's Dilemma rules out correctly-rounded-everywhere at WMAN = 53 regardless of budget,
-so the 0.5 ULP target is best-effort while the ≤ 1 ULP bound is the hard contract.
+so the 0.5 ULP target is best-effort while faithful rounding is the hard contract.
 
 The fixed-point datapath then carries GUARD = ERR_GUARD + 4 = 12 extra fractional bits below the WMAN significand
 — eight bits of polynomial-noise headroom plus four bits to host the guard/round/sticky positions and absorb the
 truncating Horner's LSB noise — which is the smallest split that keeps the round bit clear of the noise floor under
 truncating arithmetic; widening it further has no accuracy benefit and just pays in DSP/LUT/FF area.
 
-The trigonometric modules (sincos, atan2) carry the same ≤1 ULP contract and are built on a shared CORDIC core instead
-of polynomials, with post-refinement to achieve the accuracy target trading a few DSP tiles for a lower cycle latency.
+The trigonometric modules (sincos, atan2) carry the same faithful-rounding contract.
 
 <img src="docs/zkf_transcendental_accuracy.svg">
 
@@ -278,8 +282,8 @@ timings, check your synthesis settings first, and if necessary override `ZKF_ATT
 
 ## Sizing the exponent and the significand (WEXP/WMAN)
 
-WEXP can be chosen freely depending on the required range, while WMAN is sensitive to the chip's DSP capabilities
-and thus requires careful selection to achieve best resource utilization.
+WEXP can be chosen freely, subject to any floor the operator's header documents, while WMAN is sensitive to the chip's
+DSP capabilities and thus requires careful selection to achieve best resource utilization.
 
 |WMAN |≈ε (interval)| Description                                                                                 |
 |-----|-------------|---------------------------------------------------------------------------------------------|

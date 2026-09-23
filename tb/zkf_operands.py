@@ -3,9 +3,13 @@
 
 from __future__ import annotations
 
+import math
+from fractions import Fraction
+
 import numpy as np
 
 from zkf import ZkfFormat
+from zkf._reference import floor_log2_fraction
 from zkf_bits import mask
 
 
@@ -195,3 +199,28 @@ def random_integer(wint: int, rng: np.random.Generator) -> int:
         return -candidate if int(rng.integers(0, 2)) else candidate
     bits = random_bits(wint, rng)
     return bits - (1 << wint) if bits & (1 << (wint - 1)) else bits
+
+
+_SATURATING_SQRT_SHIFT = 64  # fixed-point bits for the sqrt; far more than the ~WMAN the encode consumes
+
+
+def saturating_y(fmt: ZkfFormat) -> int:
+    """
+    The y that, against x = max_finite, puts hypot in the middle of the round-up window (max + 1/2 ULP, max + 1 ULP]
+    -- so the magnitude's rounding increment carries into the exponent and only _zkf_pack's SATURATE_ROUND_CARRY
+    keeps the result finite. y is normal at every format zkf_atan2 accepts.
+
+    Worked in ULP units with the encoding built rather than computed, so nothing scales with WEXP (materializing y
+    would need a 2**(2**WEXP)-sized rational): with max = U*ulp and U = 2**WMAN - 1,
+    (max + 3/4 ulp)**2 - max**2 = (3U/2 + 9/16) * ulp**2, so y = sqrt(24U + 9)/4 ULP.
+    """
+    u = (1 << fmt.wman) - 1
+    shift = _SATURATING_SQRT_SHIFT
+    y_in_ulp = Fraction(math.isqrt((24 * u + 9) << (2 * shift)), 4 << shift)
+    k = floor_log2_fraction(y_in_ulp)
+    frac = round((y_in_ulp / Fraction(2) ** k - 1) * (1 << fmt.wfrac))  # ties to even, as Zkf rounds
+    exp = k + fmt.exp_max_finite - fmt.wfrac
+    if frac > fmt.frac_mask:  # a round-up that carried into the exponent
+        frac, exp = 0, exp + 1
+    assert 1 <= exp <= fmt.exp_max_finite, f"saturating y leaves the normal range at {fmt}"
+    return normal(fmt, 0, exp, frac)
