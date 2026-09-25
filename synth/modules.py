@@ -652,26 +652,24 @@ MODULES = [
     # needs a 19-bit operand (18 magnitude + sign), one bit past the MULT18X18 limit, so Lattice synthesis can drop the
     # whole Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives DSP-fit
     # grids for the signed*unsigned products (3x3 for exp2 Horner, 3x2 for log2 Horner, 3x3 for log2's final f*C(f)),
-    # so every multiply maps to DSP on both Yosys and Diamond. exp2 needs STAGE_PRODUCT=4 to split the final
-    # reduction, relieving the near-full-DSP placement bind. log2's final f*C(f) multiply is now fully UNSIGNED (|f|*C(f)
-    # with the sign folded into
-    # the back-end add/subtract), which cuts its grid from a signed 3x3 to an unsigned 2x3 -- 27 DSPs -> 24 -- and that
-    # relieves the LFE5U-12F placement bind. With the lighter DSP load and the biased-EXP/direct-magnitude back-end,
-    # STAGE_DECODE, STAGE_OUTPUT, and STAGE_NORMALIZE_OUTPUT all come back out; log2 still needs STAGE_NORMALIZE=2
-    # (the x->1 normalize) and STAGE_PACK=1.
+    # so every multiply maps to DSP on both Yosys and Diamond. exp2's STAGE_PRODUCT=3 splits the flat 9-term column sum
+    # (STAGE_PRODUCT=2: 64 MHz); its 27 of 28 DSPs then leave the capture-FF->DSP->partial-product hop as the limiter,
+    # which no stage splits and only placement moves (Yosys ~85-118 MHz across seeds): STAGE_PRODUCT=4 and the
+    # STAGE_INPUT/REDUCE/PACK/OUTPUT stages merely reshuffle it. log2's final f*C(f) multiply is now fully UNSIGNED
+    # (|f|*C(f) with the sign folded into the back-end add/subtract), which cuts its grid from a signed 3x3 to an
+    # unsigned 2x3 -- 27 DSPs -> 24 -- and that relieves the LFE5U-12F placement bind. With the lighter DSP load and the
+    # biased-EXP/direct-magnitude back-end, STAGE_DECODE, STAGE_OUTPUT, and STAGE_NORMALIZE_OUTPUT all come back out;
+    # log2 still needs STAGE_NORMALIZE=2 (the x->1 normalize) and STAGE_PACK=1.
     ModuleSpec(
         name="zkf_exp2_w8m36",
-        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + "
-        "STAGE_PRODUCT=4 + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_OUTPUT=1)",
+        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid)",
         top="zkf_exp2_w8m36_synth_top",
         kind="exp2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
-        stage_input=1,
-        stage_product=4,
+        stage_product=3,
         wmultiplier=18,
-        stage_output=1,
         emit_schematic=False,
     ),
     ModuleSpec(

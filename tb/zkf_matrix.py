@@ -837,7 +837,7 @@ def _deep_correctness(out: list) -> None:
     # flow needs). WMULTIPLIER is bit-transparent, but pinning the shipped grid exercises the full datapath at the
     # operating point synthesis actually builds, not just the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
-    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
+    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, wm=18))
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, spf=3, wm=18, sn=2, pa=1))
     # zkf_atan2 deep: baseline per format, UNROLL100 sweep + full staging on 5/16, and the synthesized 6/18 + 8/36
     # operating points. Each asserts latency.
