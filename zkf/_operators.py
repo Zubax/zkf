@@ -6,9 +6,7 @@ from ._reference import trans_spec, trig_spec
 
 
 @dataclass(frozen=True)
-class AbsModel(OperatorModel):
-    module = "zkf_abs"
-
+class _UnaryCombModel(OperatorModel):
     @property
     def params(self) -> dict[str, int]:
         return {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman}
@@ -19,17 +17,22 @@ class AbsModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class NegModel(AbsModel):
+class AbsModel(_UnaryCombModel):
+    module = "zkf_abs"
+
+
+@dataclass(frozen=True)
+class NegModel(_UnaryCombModel):
     module = "zkf_neg"
 
 
 @dataclass(frozen=True)
-class IsFiniteModel(AbsModel):
+class IsFiniteModel(_UnaryCombModel):
     module = "zkf_is_finite"
 
 
 @dataclass(frozen=True)
-class SaturateModel(AbsModel):
+class SaturateModel(_UnaryCombModel):
     module = "zkf_saturate"
 
 
@@ -117,8 +120,7 @@ class PackModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class CmpModel(OperatorModel):
-    module = "zkf_cmp"
+class _CompareModel(OperatorModel):
     stage_input: int = 0
 
     def __post_init__(self) -> None:
@@ -136,13 +138,17 @@ class CmpModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class SortModel(CmpModel):
+class CmpModel(_CompareModel):
+    module = "zkf_cmp"
+
+
+@dataclass(frozen=True)
+class SortModel(_CompareModel):
     module = "zkf_sort"
 
 
 @dataclass(frozen=True)
-class AddModel(OperatorModel):
-    module = "zkf_add"
+class _AdderModel(OperatorModel):
     stage_input: int = 0
     stage_decode: int = 0
     stage_align: int = 0
@@ -188,7 +194,12 @@ class AddModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class AddSubModel(AddModel):
+class AddModel(_AdderModel):
+    module = "zkf_add"
+
+
+@dataclass(frozen=True)
+class AddSubModel(_AdderModel):
     module = "zkf_addsub"
 
 
@@ -717,8 +728,7 @@ class Log2Model(OperatorModel):
 
 
 @dataclass(frozen=True)
-class SincosModel(OperatorModel):
-    module = "zkf_sincos"
+class _TrigModel(OperatorModel):
     unroll100: int = 100
     stage_input: int = 0
     stage_product: int = 0
@@ -727,30 +737,15 @@ class SincosModel(OperatorModel):
     stage_output: int = 0
     wmultiplier: int = 0
 
-    def __post_init__(self) -> None:
-        spec = trig_spec(self.fmt.wman)
-        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_sincos.v's WEXP guard
+    def _check_knobs(self, norm_width: int) -> None:
         _check_int_range(self.unroll100, 100, None, {50})
         _check_int_range(self.stage_product, 0, 4)
-        norm_width = spec["const2pi"].bit_length() + spec["wt"] + 1
         _check_int_range(self.stage_normalize, 0, 2)
         if self.stage_normalize == 2 and norm_width < 17:
             raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
         for value in (self.stage_input, self.stage_pack, self.stage_output):
             _check_int_range(value, 0, 1)
         _check_int_range(self.wmultiplier, 0, None)
-
-    @property
-    def config(self) -> dict[str, int]:
-        return {
-            "unroll100": self.unroll100,
-            "stage_input": self.stage_input,
-            "stage_product": self.stage_product,
-            "stage_normalize": self.stage_normalize,
-            "stage_pack": self.stage_pack,
-            "stage_output": self.stage_output,
-            "wmultiplier": self.wmultiplier,
-        }
 
     @property
     def params(self) -> dict[str, int]:
@@ -767,6 +762,20 @@ class SincosModel(OperatorModel):
                 "STAGE_OUTPUT": self.stage_output,
             }
         )
+
+    @property
+    def initiation_interval(self) -> int:
+        return self.latency + 1
+
+
+@dataclass(frozen=True)
+class SincosModel(_TrigModel):
+    module = "zkf_sincos"
+
+    def __post_init__(self) -> None:
+        spec = trig_spec(self.fmt.wman)
+        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_sincos.v's WEXP guard
+        self._check_knobs(spec["const2pi"].bit_length() + spec["wt"] + 1)
 
     @property
     def latency(self) -> int:
@@ -785,54 +794,19 @@ class SincosModel(OperatorModel):
             + self.stage_output
         )
 
-    @property
-    def initiation_interval(self) -> int:
-        return self.latency + 1
-
 
 @dataclass(frozen=True)
-class Atan2Model(OperatorModel):
+class Atan2Model(_TrigModel):
     module = "zkf_atan2"
-    unroll100: int = 100
-    stage_input: int = 0
-    stage_product: int = 0
-    stage_normalize: int = 0
-    stage_pack: int = 0
-    stage_output: int = 0
-    wmultiplier: int = 0
 
     def __post_init__(self) -> None:
         spec = trig_spec(self.fmt.wman)
         _check_int_range(self.fmt.wexp, 5, 30)  # mirrors zkf_atan2.v's WEXP guard
-        _check_int_range(self.unroll100, 100, None, {50})
-        _check_int_range(self.stage_product, 0, 4)
         xf = spec["xf"]
         zf = spec["zf"]
         wx = xf + 2
         wquo = 2 * ((xf + 1) // 2) + 1
-        norm_width = max((wx - 1) + self.fmt.wman + 5, wquo + self.fmt.wman + 5, zf + 5)
-        _check_int_range(self.stage_normalize, 0, 2)
-        if self.stage_normalize == 2 and norm_width < 17:
-            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
-        for value in (self.stage_input, self.stage_pack, self.stage_output):
-            _check_int_range(value, 0, 1)
-        _check_int_range(self.wmultiplier, 0, None)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {
-                "WEXP": self.fmt.wexp,
-                "WMAN": self.fmt.wman,
-                "WMULTIPLIER": self.wmultiplier,
-                "UNROLL100": self.unroll100,
-                "STAGE_INPUT": self.stage_input,
-                "STAGE_PRODUCT": self.stage_product,
-                "STAGE_NORMALIZE": self.stage_normalize,
-                "STAGE_PACK": self.stage_pack,
-                "STAGE_OUTPUT": self.stage_output,
-            }
-        )
+        self._check_knobs(max((wx - 1) + self.fmt.wman + 5, wquo + self.fmt.wman + 5, zf + 5))
 
     @property
     def latency(self) -> int:
@@ -852,10 +826,6 @@ class Atan2Model(OperatorModel):
             + self.stage_pack
             + self.stage_output
         )
-
-    @property
-    def initiation_interval(self) -> int:
-        return self.latency + 1
 
 
 def _check_int_range(value: int, min: int | None, max: int | None, /, extra: set[int] | None = None) -> None:
