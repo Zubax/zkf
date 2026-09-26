@@ -484,7 +484,7 @@ class Zkf:
         spec = trig_spec(fmt.wman)
         xf, zf = spec["xf"], spec["zf"]
         # const2pi arrives PRE-NARROWED from the table (top WMAN+5 bits == round(2*pi * 2**const2pi_s)); const2pi_s is
-        # the single source of scale for every consuming shift / exp-offset. Mirrors zkf/rtl/zkf_sincos.v.
+        # the single source of scale for every consuming shift / exp-offset. Mirrors zkf/rtl/_zkf_cordic_unit.v.
         const2pi, const2pi_s = spec["const2pi"], spec["const2pi_s"]
         n_sincos = spec["n_sincos"]  # sincos iterations (linear-rotation termination); == table n
         wt = spec["wt"]  # quadrant-local coordinate width (FF - 2)
@@ -573,6 +573,8 @@ class Zkf:
         descales x_K by 1/gain (== KINV).
         """
         self._require_same(x)
+        if self.fmt.wexp < 5:
+            raise ValueError(f"atan2 requires WEXP >= 5, got {self.fmt.wexp}")
         fmt, y_bits, x_bits = self.fmt, self.bits, x.bits
         sp = atan2_special(fmt, y_bits, x_bits)
         if sp is not None:
@@ -588,7 +590,7 @@ class Zkf:
 
         # The shared _zkf_pmul multiplies x_K*kinv_mag (magnitude) and Q*inv_tau (residual + bypass theta). Both
         # constants are PRE-NARROWED to WMAN+5 bits at their native scales (kinv_s, invtau_s), so every dependent shift
-        # is "product-scale minus target-scale" with no fold-back. Mirrors zkf/rtl/zkf_atan2.v.
+        # is "product-scale minus target-scale" with no fold-back. Mirrors zkf/rtl/_zkf_cordic_unit.v.
         kinv_mag, kinv_s = spec["kinv_mag"], spec["kinv_s"]  # narrowed 1/gain (MAG product) + its native scale
         inv_tau, invtau_s = spec["inv_tau"], spec["invtau_s"]  # narrowed 1/(2*pi) (residual + bypass) + native scale
 
@@ -618,7 +620,7 @@ class Zkf:
         mag_prod = x_k * kinv_mag  # x_K * kinv_mag -> M at 2**-(xf+kinv_s)
         wmag_m = 2 * xf + 4  # holds M for normshift (value-invariant to field width)
         exp_off_m = (wmag_m - 1) - (xf + kinv_s) + e_den + 2  # read M back; den binade + 1/4 pre-scale undone
-        mag_bits = fixed_to_float_ref(fmt, 0, mag_prod, exp_off_m, wmag_m)
+        mag_bits = fixed_to_float_ref(fmt, 0, mag_prod, exp_off_m, wmag_m, saturate_round_carry=True)
 
         # Quotient fractional budget F = 2*ceil(xf/2): q = floor(|y_K|*2**F/x_K) must carry >= wman significant bits.
         # The divide is truncating floor division (radix-independent), so Python //,% match the radix-4 divider exactly.
@@ -635,7 +637,10 @@ class Zkf:
             prod_j = (r * inv_tau) | sticky  # r * inv_tau; sticky in bit 0 (RTNE)
             wmag_b = 2 * xf + 4  # same renormalize field as residual / magnitude paths
             exp_off_b = (wmag_b - 1) + (e_num - e_den) - f_bits - invtau_s  # read r*inv_tau back at 2**-(F+invtau_s)
-            return Atan2Result(Zkf(fmt, fixed_to_float_ref(fmt, sy, prod_j, exp_off_b, wmag_b)), Zkf(fmt, mag_bits))
+            return Atan2Result(
+                Zkf(fmt, fixed_to_float_ref(fmt, sy, prod_j, exp_off_b, wmag_b, saturate_round_carry=True)),
+                Zkf(fmt, mag_bits),
+            )
 
         # Residual correction: a0 = z_K + (y_K/x_K)*INV_TAU at the angle scale 2**-zf. The divide is truncating (matches
         # the folded radix-4 fixed-point divider); x_K > 0 always, y_K is signed (vectoring drives y through 0).
@@ -656,7 +661,7 @@ class Zkf:
         theta_mag = (half - phi1) if sx else phi1
         wmag_t = zf + 2
         exp_off_t = wmag_t - 1 - zf  # reads theta_mag at scale 2**-zf back as itself
-        theta_bits = fixed_to_float_ref(fmt, sy, theta_mag, exp_off_t, wmag_t)
+        theta_bits = fixed_to_float_ref(fmt, sy, theta_mag, exp_off_t, wmag_t, saturate_round_carry=True)
         # fold the generic negative-x-axis limit -1/2 -> +1/2
         return Atan2Result(Zkf(fmt, atan2_canon_half(fmt, theta_bits)), Zkf(fmt, mag_bits))
 

@@ -28,8 +28,16 @@
 /// ASSUME_NO_OVERFLOW=1: the caller guarantees the biased exponent stays within the finite range [0, EXP_MAX_FINITE]
 ///     for every valid input, so the overflow detector is pruned at elaboration. The force_inf path (still mapped to
 ///     infinity) and the zero / MIN_NORMAL underflow paths are unaffected, and a round-carry from EXP_MAX_FINITE to
-///     EXP_INF still produces canonical infinity (it rides the rounding adder, not the detector). Used by
-///     bounded-output transcendentals such as zkf_log2, whose result is always representable for finite x.
+///     EXP_INF still produces canonical infinity (it rides the rounding adder, not the detector) unless
+///     SATURATE_ROUND_CARRY says otherwise. Used by bounded-output transcendentals such as zkf_log2, whose result is
+///     always representable for finite x.
+///
+/// SATURATE_ROUND_CARRY=0 (default): a round-carry out of the finite range becomes canonical infinity.
+/// SATURATE_ROUND_CARRY=1: that carry saturates to max-finite instead; a value whose exponent is already out of
+///     range still overflows through the detector, which runs before the rounding increment. For callers whose
+///     input carries its own rounding error and must never invent an infinity from an in-range value.
+///     The result is one ULP below the correctly-rounded infinity -- faithful, not exactly rounded, so
+///     do not enable it for an exactly-rounded operator.
 
 `default_nettype none
 
@@ -39,6 +47,7 @@ module _zkf_pack #(
     parameter WEXP_UNBIASED = WEXP + 2,   // signed unbiased exponent width
     parameter EXP_IS_BIASED = 0,
     parameter ASSUME_NO_OVERFLOW = 0,     // 0 = normal behavior; 1 = caller guarantees no overflow, checks removed
+    parameter SATURATE_ROUND_CARRY = 0,   // 1 = a round-carry out of the finite range saturates instead of overflowing
     parameter STAGE_INPUT   = 0,          // 0 = combinational inputs (default); 1 = one register stage at the input
     parameter STAGE_OUTPUT  = 0           // 0 = combinational output (default); 1 = registered output (one stage)
 )(
@@ -65,6 +74,14 @@ module _zkf_pack #(
         if ((ASSUME_NO_OVERFLOW < 0) || (ASSUME_NO_OVERFLOW > 1)) begin : g_invalid_assume_no_overflow
             _zkf_invalid_assume_no_overflow_out_of_range u_invalid();
         end
+        if ((SATURATE_ROUND_CARRY < 0) || (SATURATE_ROUND_CARRY > 1)) begin : g_invalid_saturate_round_carry
+            _zkf_invalid_saturate_round_carry_out_of_range u_invalid();
+        end
+        // Narrowest signed port spanning every valid value: an unbiased exponent fits in WEXP bits (zkf_exp2 ships
+        // exactly that), while a biased one reaches EXP_INF and needs one more.
+        if (WEXP_UNBIASED < WEXP + ((EXP_IS_BIASED != 0) ? 1 : 0)) begin : g_invalid_wexp_unbiased
+            _zkf_invalid_wexp_unbiased_too_narrow u_invalid();
+        end
         if ((STAGE_INPUT != 0) && (STAGE_INPUT != 1)) begin : g_invalid_stage_input
             _zkf_invalid_stage_input u_invalid();
         end
@@ -79,6 +96,7 @@ module _zkf_pack #(
 
     localparam [WEXP-1:0] EXP_BIAS       = {1'b0, {WEXP-1{1'b1}}};
     localparam [WEXP-1:0] EXP_INF        = {WEXP{1'b1}};
+    localparam [WEXP-1:0] EXP_MAX_FINITE = {{(WEXP-1){1'b1}}, 1'b0};
 
     // Optional input register stage. When STAGE_INPUT=1, the input ports are captured here and the rest of the
     // packer's combinational cone runs from the registered copies; this isolates a wide upstream cone (e.g. a
@@ -166,7 +184,8 @@ module _zkf_pack #(
     // significand including the hidden bit - so a true significand carry-out (significand was all-ones) ripples
     // straight into the exponent without a separate incrementer, while a carry that only fills the hidden bit of a
     // denormalized input stays out of the exponent, matching the reference. A round-carry at exp_biased ==
-    // EXP_MAX_FINITE lands the exponent on EXP_INF with fraction 0 - canonical infinity - on the normal path.
+    // EXP_MAX_FINITE lands the exponent on EXP_INF with fraction 0 - canonical infinity - unless
+    // SATURATE_ROUND_CARRY diverts it.
     localparam WEXPSIG = WEXP + WMAN;
     wire               round_increment = i_guard && (i_round || i_sticky || i_significand[0]);
     wire [WEXPSIG-1:0] expsig          = {exp_biased, i_significand};
@@ -174,23 +193,31 @@ module _zkf_pack #(
     wire    [WEXP-1:0] exp_rounded     = expsig_rounded[WEXPSIG-1 -: WEXP];
     wire   [WFRAC-1:0] frac_rounded    = expsig_rounded[WFRAC-1:0];
     wire               infinity        = i_force_inf || exp_overflow;
+    // At 0 this is an elaboration constant and every net below prunes to the original cone. The rounding increment
+    // is not tested: an all-ones significand at EXP_MAX_FINITE gives the saturation value either way. Forms testing
+    // exp_rounded are equivalent but serialize the select behind the WEXPSIG adder; this one runs beside it.
+    wire               round_carry_inf = (SATURATE_ROUND_CARRY != 0) && (&i_significand) &&
+                                         (exp_biased == EXP_MAX_FINITE);
 
     // Result classification. force_zero wins over force_inf; a tiny finite magnitude exactly one exponent below the
     // normal range rounds to signed MIN_NORMAL, anything lower to canonical +0.
     wire result_zero       = i_force_zero || (!i_force_inf && exp_underflow_zero);
     wire result_infinity   = !result_zero && infinity;
     wire result_min_normal = !result_zero && !i_force_inf && exp_one_below_min;
-    wire result_normal     = !result_zero && !result_infinity && !result_min_normal;
+    wire result_saturate   = !result_zero && !result_infinity && round_carry_inf;
+    wire result_normal     = !result_zero && !result_infinity && !result_min_normal && !result_saturate;
 
-    // Canonicalize by masking instead of a full-width 4:1 output mux: the stored fraction is nonzero only for normal
-    // results, so it collapses to an AND-mask; the exponent selects one of three small constants or the rounded
-    // exponent; the sign is forced to 0 only for canonical +0. This keeps the wide fraction field off the mux tree.
+    // Canonicalize by masking instead of a full-width output mux: the stored fraction is nonzero only for normal
+    // and saturated results, so it stays an AND-mask plus an all-ones OR, while the exponent selects one of four
+    // constants or the rounded value. The sign is forced to 0 only for canonical +0. This keeps the wide fraction
+    // field off the mux tree.
     wire             out_sign = i_sign & ~result_zero;
     wire [WEXP-1:0]  out_exp  = result_zero       ? {WEXP{1'b0}} :
                                 result_infinity   ? EXP_INF :
                                 result_min_normal ? {{(WEXP-1){1'b0}}, 1'b1} :
+                                result_saturate   ? EXP_MAX_FINITE :
                                                     exp_rounded;
-    wire [WFRAC-1:0] out_frac = frac_rounded & {WFRAC{result_normal}};
+    wire [WFRAC-1:0] out_frac = (frac_rounded & {WFRAC{result_normal}}) | {WFRAC{result_saturate}};
 
     // Output stage.
     generate
@@ -214,7 +241,7 @@ endmodule
 /// Delay a sideband payload through the same input + output stages as _zkf_pack: pass STAGE_INPUT / STAGE_OUTPUT
 /// to match it. When changing the packer pipeline, update this one as well.
 /// Total delay in cycles = STAGE_INPUT + STAGE_OUTPUT (combinational pass-through when both are 0).
-module _zkf_pack_delay #(parameter W = 1, parameter STAGE_INPUT = 0, parameter STAGE_OUTPUT = 0)(
+module _zkf_pack_delay #(parameter W = 1, parameter integer STAGE_INPUT = 0, parameter integer STAGE_OUTPUT = 0)(
     input wire clk, input wire [W-1:0] x, output wire [W-1:0] y);
     zkf_pipe #(.W(W), .N(STAGE_INPUT + STAGE_OUTPUT)) u_pipe (
         .clk(clk), .rst(1'b0),

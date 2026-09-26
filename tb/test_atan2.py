@@ -8,13 +8,21 @@ import cocotb
 import numpy as np
 from cocotb.triggers import RisingEdge
 
-from zkf import ZkfFormat
+import zkf.oracle
+from zkf import Zkf, ZkfFormat
 from zkf._reference import atan2_bypass_shift
 from zkf_bits import hex_bits, mask
-from zkf_operands import normal
-from zkf_operands import directed_numbers, random_inf, random_normal_near, random_operand, random_zero
+from zkf_operands import (
+    directed_numbers,
+    normal,
+    random_inf,
+    random_normal_near,
+    random_operand,
+    random_zero,
+    saturating_y,
+)
 from zkf_params import check_width, float_context
-from zkf_stream import drive_unsigned, start_clock
+from zkf_stream import drive_unsigned, expect_reaccept, reset_boundaries, start_clock
 
 
 @dataclass(frozen=True)
@@ -73,40 +81,54 @@ def directed_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     for ly, vy in raw:
         for lx, vx in raw:
             out.append((f"raw_{ly}_{lx}", vy, vx))
-    if fmt.wexp >= 3:
-        nums = directed_numbers(fmt)
-        one, mone, two = nums["one"], nums["minus_one"], nums["two"]
-        big = normal(fmt, 0, fmt.exp_max_finite, 0)
-        tiny = normal(fmt, 0, 1, 0)
-        neginf = sgn | inf
-        # Four sign quadrants and the octant diagonals (|y| == |x| -> +-1/8, +-3/8).
-        for sy in (0, 1):
-            for sx in (0, 1):
-                yv = one | (sy << fmt.sign_shift)
-                xv = one | (sx << fmt.sign_shift)
-                out.append((f"diag_{sy}{sx}", yv, xv))
-                out.append((f"q_{sy}{sx}", (two | (sy << fmt.sign_shift)), xv))
-        # Axes (y or x exactly zero), and the just-around boundaries.
-        for s in (0, 1):
-            sb = s << fmt.sign_shift
-            out.append((f"yzero_x+_{s}", 0, one))
-            out.append((f"yzero_x-_{s}", 0, mone))
-            out.append((f"xzero_y_{s}", one | sb, 0))
-            # |y| << |x| (theta -> 0 or near 1/4 after swap) and |x| << |y|.
-            out.append((f"ysmall_{s}", tiny | sb, big))
-            out.append((f"xsmall_{s}", big | sb, tiny))
-            # Finite x<0 with |y| -> 0: theta rounds to the 1/2-turn endpoint and must canonicalize to the in-range
-            # +1/2, never the out-of-range -1/2.
-            out.append((f"xnegbig_ytiny_{s}", tiny | sb, big | sgn))
-            out.append((f"xnegone_ytiny_{s}", tiny | sb, mone))
-            out.append((f"ybig_xone_{s}", big | sb, one))
-            out.append((f"yone_xbig_{s}", one | sb, big | sb))
-        out.append(("xneginf_ypos_finite", one, neginf))
-        out.append(("xneginf_yneg_finite", mone, neginf))
-        # |y/x| straddling the small-ratio bypass boundary across the exponent range (x = +1).
-        for e in bypass_sweep_exponents(fmt):
-            out.append((f"sweep_y_{e}", normal(fmt, 0, e, fmt.frac_mask), one))
-            out.append((f"sweep_x_{e}", one, normal(fmt, 0, e, 1)))
+    nums = directed_numbers(fmt)
+    one, mone, two = nums["one"], nums["minus_one"], nums["two"]
+    big = normal(fmt, 0, fmt.exp_max_finite, 0)
+    tiny = normal(fmt, 0, 1, 0)
+    neginf = sgn | inf
+    # Four sign quadrants and the octant diagonals (|y| == |x| -> +-1/8, +-3/8).
+    for sy in (0, 1):
+        for sx in (0, 1):
+            yv = one | (sy << fmt.sign_shift)
+            xv = one | (sx << fmt.sign_shift)
+            out.append((f"diag_{sy}{sx}", yv, xv))
+            out.append((f"q_{sy}{sx}", (two | (sy << fmt.sign_shift)), xv))
+    # Axes (y or x exactly zero), and the just-around boundaries.
+    for s in (0, 1):
+        sb = s << fmt.sign_shift
+        out.append((f"yzero_x+_{s}", 0, one))
+        out.append((f"yzero_x-_{s}", 0, mone))
+        out.append((f"xzero_y_{s}", one | sb, 0))
+        # |y| << |x| (theta -> 0 or near 1/4 after swap) and |x| << |y|.
+        out.append((f"ysmall_{s}", tiny | sb, big))
+        out.append((f"xsmall_{s}", big | sb, tiny))
+        # Finite x<0 with |y| -> 0: theta rounds to the 1/2-turn endpoint and must canonicalize to the in-range
+        # +1/2, never the out-of-range -1/2.
+        out.append((f"xnegbig_ytiny_{s}", tiny | sb, big | sgn))
+        out.append((f"xnegone_ytiny_{s}", tiny | sb, mone))
+        out.append((f"ybig_xone_{s}", big | sb, one))
+        out.append((f"yone_xbig_{s}", one | sb, big | sb))
+    out.append(("xneginf_ypos_finite", one, neginf))
+    out.append(("xneginf_yneg_finite", mone, neginf))
+    # |y/x| straddling the small-ratio bypass boundary across the exponent range (x = +1).
+    for e in bypass_sweep_exponents(fmt):
+        out.append((f"sweep_y_{e}", normal(fmt, 0, e, fmt.frac_mask), one))
+        out.append((f"sweep_x_{e}", one, normal(fmt, 0, e, 1)))
+    # Magnitude overflow ladder, x = max_finite, over the exponent range derived at tools/zkf_trig.py's _atan2_pairs.
+    # The ladder alone does not prove SATURATE_ROUND_CARRY fires -- that property is anchored by
+    # proof/sby/zkf_pack_sat.sby -- so saturating_y() adds one input that provably reaches the carry, making a lost
+    # SATURATE_ROUND_CARRY(1) visible here too.
+    top = normal(fmt, 0, fmt.exp_max_finite, fmt.frac_mask)
+    for e in range(max(1, fmt.exp_max_finite - (fmt.wman // 2) - 3), fmt.exp_max_finite + 1):
+        for fr in (0, fmt.frac_mask):
+            out.append((f"ovf_band_e{e}_f{fr}", normal(fmt, 0, e, fr), top))
+    y_sat = saturating_y(fmt)
+    # Only meaningful while the magnitude really does reach the carry, so pin it rather than trust the error bound
+    # it rests on. Comparing against the CORRECTLY-ROUNDED answer is what distinguishes "saturated" from "rounded
+    # down and never carried": the truth must round to +inf while the operator returns max-finite.
+    assert zkf.oracle.atan2(Zkf(fmt, y_sat), Zkf(fmt, top)).magnitude.is_inf, "ovf_saturating: truth not +inf"
+    assert Zkf(fmt, y_sat).atan2(Zkf(fmt, top)).magnitude.bits == top, "ovf_saturating no longer saturates"
+    out.append(("ovf_saturating", y_sat, top))
     return out
 
 
@@ -225,6 +247,7 @@ async def atan2_runtime_cases(dut) -> None:
             )
         exp = {"theta": case.theta, "mag": case.mag}
         assert got == exp, f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
+        await expect_reaccept(dut, f"{context.prefix()} case={index}")
         checked += 1
     assert checked == len(cases), f"{context.prefix()} checked {checked}, expected {len(cases)}"
 
@@ -285,3 +308,34 @@ async def atan2_backpressure(dut) -> None:
         await RisingEdge(dut.clk)
         guard += 1
         assert guard < timeout, f"{context.prefix()} bp: in_ready did not recover after consume"
+
+
+@cocotb.test()
+async def atan2_reset_boundaries(dut) -> None:
+    context = float_context("atan2")
+    fmt = ZkfFormat(context.wexp, context.wman)
+    cases = [c for c in cases_for(fmt, "directed", context.seed, 0) if c.theta and c.mag]
+    dropped = cases[0]
+    kept = next(c for c in cases if (c.theta, c.mag) != (dropped.theta, dropped.mag))
+
+    def issue(case: Atan2Case) -> None:
+        dut.in_valid.value = 1
+        drive_unsigned(dut.y, case.y)
+        drive_unsigned(dut.x, case.x)
+
+    def idle() -> None:
+        dut.in_valid.value = 0
+        drive_unsigned(dut.y, mask(fmt.wfull))
+        drive_unsigned(dut.x, mask(fmt.wfull))
+
+    await reset_boundaries(
+        dut,
+        context.prefix(),
+        [(dropped, kept)],
+        issue,
+        idle,
+        lambda: {"theta": int(dut.theta.value), "mag": int(dut.mag.value)},
+        lambda case: {"theta": case.theta, "mag": case.mag},
+        lambda case: case.describe(fmt),
+        8 * (context.wman + 64),
+    )

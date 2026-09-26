@@ -1,13 +1,17 @@
 name: CI
 on:
   push:
-    paths-ignore:
+    paths-ignore: &docs_only
       - '**/*.md'
+      - '**/*.svg'
+      - '**/*.png'
       - 'docs/**'
+      - '.claude/**'
+      - 'LICENSE'
+      - '.gitignore'
+      - '.github/workflows/release.yml'
   pull_request:
-    paths-ignore:
-      - '**/*.md'
-      - 'docs/**'
+    paths-ignore: *docs_only
 env:
   COCOTB_IGNORE_PYTHON_REQUIRES: "1"
 

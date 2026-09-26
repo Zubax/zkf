@@ -45,6 +45,8 @@ def clean(session):
 @nox.session
 def tests(session: nox.Session) -> None:
     session.install("-e", ".[test]")
+    session.run("python", "tools/zkf_trig.py", "--check-emit")
+    session.run("python", "tools/zkf_transcendental.py", "--check-emit")
     session.run("python", "tb/test_zkf_model_layout.py")
     session.run("python", "tb/zkf_pmul_check.py")
     session.run("python", "-m", "pytest", "tb/test_float_matrix.py", *PYTEST_DIST, *session.posargs)

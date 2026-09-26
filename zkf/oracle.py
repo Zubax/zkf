@@ -4,11 +4,11 @@ Independent reference values for verifying the ZKF model. Two families:
 - correctly-rounded (ties-to-even) transcendentals via mpmath: exp2, log2, sincos, atan2;
 - IEEE-754 cross-checks via the hardware FPU: add, mul, div, sqrt (binary32 and binary64) and fma (binary64 only).
 
-The transcendentals run at ~4*WMAN mpmath working precision (correct last-bit rounding even at large WMAN) and prove the
-model's faithful-rounding (<=1 ULP) contract; the IEEE checks catch model bugs for the two formats where ZKF coincides
-with IEEE (WEXP/WMAN = 8/24 and 11/53). The IEEE functions return None where ZKF and IEEE diverge and no independent
-cross-check exists (non-IEEE format, non-canonical inf/zero, a subnormal result, or an IEEE-NaN operation -- inf-inf,
-0*inf, 0/0, inf/inf -- which ZKF instead defines as +0).
+The transcendentals run at ~4*WMAN mpmath working precision (correct last-bit rounding even at large WMAN) and check the
+model's faithful-rounding contract (see the README); the IEEE checks catch model bugs for the two formats where ZKF
+coincides with IEEE (WEXP/WMAN = 8/24 and 11/53). The IEEE functions return None where ZKF and IEEE diverge and no
+independent cross-check exists (non-IEEE format, non-canonical inf/zero, a subnormal result, or an IEEE-NaN operation --
+inf-inf, 0*inf, 0/0, inf/inf -- which ZKF instead defines as +0).
 
 Multi-operand functions require both operands to share a format (a mismatch raises ValueError, as in the model).
 
@@ -46,7 +46,14 @@ def exp2(z: Zkf) -> Zkf:
     if e >= fmt.wexp - 1:  # mirror the model's out-of-range classification
         return fmt.inf(0) if not z.negative else fmt.zero()
     with _mpmath.workprec(4 * fmt.wman + 80):
-        return _round_mpf(fmt, _mpmath.power(2, _to_mpf(z)))
+        return _round_mpf(fmt, _exp2_exact(z))
+
+
+def _exp2_exact(z: Zkf) -> Any:
+    """2**z UNROUNDED -- the value exp2() rounds. Finite nonzero z inside exp2's range. Exact only while the caller's
+    mpmath precision is at least 4*WMAN + 80 bits."""
+    with _mpmath.workprec(4 * z.fmt.wman + 80):
+        return _mpmath.power(2, _to_mpf(z))
 
 
 def log2(z: Zkf) -> Log2Result:
@@ -59,24 +66,39 @@ def log2(z: Zkf) -> Log2Result:
     if z.negative:
         return Log2Result(fmt.inf(1), True, False)  # log2(x<0) = -inf, domain error
     with _mpmath.workprec(4 * fmt.wman + 80):
-        return Log2Result(_round_mpf(fmt, _mpmath.log(_to_mpf(z), 2)), False, False)
+        return Log2Result(_round_mpf(fmt, _log2_exact(z)), False, False)
+
+
+def _log2_exact(z: Zkf) -> Any:
+    """log2(z) UNROUNDED -- the value log2() rounds. Finite z > 0. Exact only while the caller's mpmath precision is at
+    least 4*WMAN + 80 bits."""
+    with _mpmath.workprec(4 * z.fmt.wman + 80):
+        return _mpmath.log(_to_mpf(z), 2)
 
 
 def sincos(z: Zkf) -> SinCos:
-    """
-    Correctly-rounded (sin(2*pi*z), cos(2*pi*z), quadrant).
-
-    The phase is reduced mod 1 exactly with integer arithmetic before the transcendental, so the periodic identity holds
-    without the large-argument cancellation of a direct sin(2*pi*x); the local angle is folded into one octant so mpmath
-    only ever evaluates an angle <= pi/4, keeping the quadrant-boundary zeros exact.
-    """
+    """Correctly-rounded (sin(2*pi*z), cos(2*pi*z), quadrant)."""
     fmt = z.fmt
     if z.is_inf:
         s = fmt.inf(z.negative)
         return SinCos(s, s, 0)
     if z.is_zero:
         return SinCos(fmt.zero(), fmt.normal(0, fmt.bias, 0), 0)  # sin(0)=+0, cos(0)=+1
+    sin_v, cos_v, quadrant = _sincos_exact(z)
+    with _mpmath.workprec(4 * fmt.wman + 80):
+        return SinCos(_round_mpf(fmt, sin_v), _round_mpf(fmt, cos_v), quadrant)
 
+
+def _sincos_exact(z: Zkf) -> tuple[Any, Any, int]:
+    """
+    (sin, cos, quadrant) UNROUNDED, at the oracle's working precision -- the values sincos() rounds. Finite nonzero z.
+    Exact only while the caller's mpmath precision is at least that working precision.
+
+    The phase is reduced mod 1 exactly with integer arithmetic before the transcendental, so the periodic identity holds
+    without the large-argument cancellation of a direct sin(2*pi*x); the local angle is folded into one octant so mpmath
+    only ever evaluates an angle <= pi/4, keeping the quadrant-boundary zeros exact.
+    """
+    fmt = z.fmt
     e = z.exp - fmt.bias
     rsh = fmt.wfrac - e  # |x| = sig / 2**rsh
     frac_abs = _Fraction(0) if rsh <= 0 else _Fraction(z.significand() % (1 << rsh), 1 << rsh)
@@ -95,13 +117,14 @@ def sincos(z: Zkf) -> SinCos:
         sin_mag, cos_mag = (c0, s0) if (quadrant & 1) else (s0, c0)
         sin_v = -sin_mag if (quadrant >> 1) & 1 else sin_mag
         cos_v = -cos_mag if ((quadrant >> 1) ^ quadrant) & 1 else cos_mag
-        return SinCos(_round_mpf(fmt, sin_v), _round_mpf(fmt, cos_v), quadrant)
+        return sin_v, cos_v, quadrant
 
 
 def atan2(y: Zkf, x: Zkf) -> Atan2Result:
     """
     Correctly-rounded (theta, magnitude) of atan2(y, x). Shares the exact special-case table with the model; the
-    generic path evaluates mpmath atan2/hypot at high precision (bounded ratios, no cancellation) and rounds.
+    generic path rounds _atan2_exact. Deliberately carries no WEXP floor, unlike the operator and its model: this is
+    ground truth, and being able to evaluate it where the operator refuses to elaborate is the point.
     """
     _require_same(y, x)
     fmt = y.fmt
@@ -109,12 +132,22 @@ def atan2(y: Zkf, x: Zkf) -> Atan2Result:
     if special is not None:
         theta_bits, mag_bits = special
         return Atan2Result(fmt.wrap(theta_bits), fmt.wrap(mag_bits))
+    theta, mag = _atan2_exact(y, x)
     with _mpmath.workprec(4 * fmt.wman + 80):
-        yv = _to_mpf(y)
-        xv = _to_mpf(x)
-        theta = _mpmath.atan2(yv, xv) / (2 * _mpmath.pi)  # turns, (-0.5, 0.5]
         theta_bits = atan2_canon_half(fmt, _round_mpf(fmt, theta).bits)
-        return Atan2Result(fmt.wrap(theta_bits), _round_mpf(fmt, _mpmath.hypot(yv, xv)))
+        return Atan2Result(fmt.wrap(theta_bits), _round_mpf(fmt, mag))
+
+
+def _atan2_exact(y: Zkf, x: Zkf) -> tuple[Any, Any]:
+    """(theta in turns, hypot) UNROUNDED -- the values atan2() rounds. Both operands finite and nonzero. Exact only
+    while the caller's mpmath precision is at least 4*WMAN + 80 bits."""
+    _require_same(y, x)
+    with _mpmath.workprec(4 * y.fmt.wman + 80):
+        yv, xv = _to_mpf(y), _to_mpf(x)
+        if abs(yv) == abs(xv):  # +-1/8 or +-3/8 turn exactly; the generic quotient can miss 3/8 by an ULP of its own
+            theta = _mpmath.mpf(1 if xv > 0 else 3) / 8
+            return (-theta if yv < 0 else theta), _mpmath.hypot(yv, xv)
+        return _mpmath.atan2(yv, xv) / (2 * _mpmath.pi), _mpmath.hypot(yv, xv)
 
 
 def mul(a: Zkf, b: Zkf) -> Zkf | None:

@@ -6,9 +6,7 @@ from ._reference import trans_spec, trig_spec
 
 
 @dataclass(frozen=True)
-class AbsModel(OperatorModel):
-    module = "zkf_abs"
-
+class _UnaryCombModel(OperatorModel):
     @property
     def params(self) -> dict[str, int]:
         return {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman}
@@ -19,17 +17,22 @@ class AbsModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class NegModel(AbsModel):
+class AbsModel(_UnaryCombModel):
+    module = "zkf_abs"
+
+
+@dataclass(frozen=True)
+class NegModel(_UnaryCombModel):
     module = "zkf_neg"
 
 
 @dataclass(frozen=True)
-class IsFiniteModel(AbsModel):
+class IsFiniteModel(_UnaryCombModel):
     module = "zkf_is_finite"
 
 
 @dataclass(frozen=True)
-class SaturateModel(AbsModel):
+class SaturateModel(_UnaryCombModel):
     module = "zkf_saturate"
 
 
@@ -67,14 +70,20 @@ class PackModel(OperatorModel):
     wexp_unbiased: int | None = None
     exp_is_biased: int = 0
     assume_no_overflow: int = 0
+    saturate_round_carry: int = 0
     stage_input: int = 0
     stage_output: int = 0
 
     def __post_init__(self) -> None:
-        if self.wexp_unbiased is not None:
-            _check_int_range(self.wexp_unbiased, 1, None)
-        _check_int_range(self._wexp_unbiased, self.fmt.wexp + 1, None)
-        for value in (self.exp_is_biased, self.assume_no_overflow, self.stage_input, self.stage_output):
+        # Mirrors _zkf_pack's WEXP_UNBIASED floor.
+        _check_int_range(self._wexp_unbiased, self.fmt.wexp + (1 if self.exp_is_biased else 0), None)
+        for value in (
+            self.exp_is_biased,
+            self.assume_no_overflow,
+            self.saturate_round_carry,
+            self.stage_input,
+            self.stage_output,
+        ):
             _check_int_range(value, 0, 1)
 
     @property
@@ -87,6 +96,7 @@ class PackModel(OperatorModel):
             "wexp_unbiased": self._wexp_unbiased,
             "exp_is_biased": self.exp_is_biased,
             "assume_no_overflow": self.assume_no_overflow,
+            "saturate_round_carry": self.saturate_round_carry,
             "stage_input": self.stage_input,
             "stage_output": self.stage_output,
         }
@@ -99,6 +109,7 @@ class PackModel(OperatorModel):
             "WEXP_UNBIASED": self._wexp_unbiased,
             "EXP_IS_BIASED": self.exp_is_biased,
             "ASSUME_NO_OVERFLOW": self.assume_no_overflow,
+            "SATURATE_ROUND_CARRY": self.saturate_round_carry,
             "STAGE_INPUT": self.stage_input,
             "STAGE_OUTPUT": self.stage_output,
         }
@@ -109,8 +120,7 @@ class PackModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class CmpModel(OperatorModel):
-    module = "zkf_cmp"
+class _CompareModel(OperatorModel):
     stage_input: int = 0
 
     def __post_init__(self) -> None:
@@ -128,13 +138,17 @@ class CmpModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class SortModel(CmpModel):
+class CmpModel(_CompareModel):
+    module = "zkf_cmp"
+
+
+@dataclass(frozen=True)
+class SortModel(_CompareModel):
     module = "zkf_sort"
 
 
 @dataclass(frozen=True)
-class AddModel(OperatorModel):
-    module = "zkf_add"
+class _AdderModel(OperatorModel):
     stage_input: int = 0
     stage_decode: int = 0
     stage_align: int = 0
@@ -180,7 +194,12 @@ class AddModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class AddSubModel(AddModel):
+class AddModel(_AdderModel):
+    module = "zkf_add"
+
+
+@dataclass(frozen=True)
+class AddSubModel(_AdderModel):
     module = "zkf_addsub"
 
 
@@ -592,6 +611,7 @@ class Exp2Model(OperatorModel):
     wmultiplier: int = 0
 
     def __post_init__(self) -> None:
+        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_exp2.v's WEXP guard
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_product, 0, 4)
         for value in (self.stage_reduce, self.stage_pack, self.stage_output):
@@ -641,6 +661,7 @@ class Log2Model(OperatorModel):
 
     def __post_init__(self) -> None:
         spec = trans_spec("log2", self.fmt.wman)
+        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_log2.v's WEXP guard
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_product, 0, 4)
         if self.stage_product_final is not None:
@@ -707,8 +728,8 @@ class Log2Model(OperatorModel):
 
 
 @dataclass(frozen=True)
-class SincosModel(OperatorModel):
-    module = "zkf_sincos"
+class _TrigModel(OperatorModel):
+    _wexp_min = 5  # mirrors _zkf_cordic_unit's WEXP guard (MODE 1/2)
     unroll100: int = 100
     stage_input: int = 0
     stage_product: int = 0
@@ -718,28 +739,15 @@ class SincosModel(OperatorModel):
     wmultiplier: int = 0
 
     def __post_init__(self) -> None:
-        spec = trig_spec(self.fmt.wman)
+        _check_int_range(self.fmt.wexp, self._wexp_min, 30)  # the ceiling mirrors _zkf_cordic_unit's
+        trig_spec(self.fmt.wman)  # refuses a WMAN without a generated table
         _check_int_range(self.unroll100, 100, None, {50})
         _check_int_range(self.stage_product, 0, 4)
-        norm_width = spec["const2pi"].bit_length() + spec["wt"] + 1
         _check_int_range(self.stage_normalize, 0, 2)
-        if self.stage_normalize == 2 and norm_width < 17:
-            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
-        for value in (self.stage_input, self.stage_pack, self.stage_output):
-            _check_int_range(value, 0, 1)
+        _check_int_range(self.stage_pack, 0, 2)
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_output, 0, 1)
         _check_int_range(self.wmultiplier, 0, None)
-
-    @property
-    def config(self) -> dict[str, int]:
-        return {
-            "unroll100": self.unroll100,
-            "stage_input": self.stage_input,
-            "stage_product": self.stage_product,
-            "stage_normalize": self.stage_normalize,
-            "stage_pack": self.stage_pack,
-            "stage_output": self.stage_output,
-            "wmultiplier": self.wmultiplier,
-        }
 
     @property
     def params(self) -> dict[str, int]:
@@ -756,6 +764,16 @@ class SincosModel(OperatorModel):
                 "STAGE_OUTPUT": self.stage_output,
             }
         )
+
+    @property
+    def initiation_interval(self) -> int:
+        return self.latency + 1
+
+
+@dataclass(frozen=True)
+class SincosModel(_TrigModel):
+    module = "zkf_sincos"
+    _wexp_min = 2  # mirrors _zkf_pack's floor
 
     @property
     def latency(self) -> int:
@@ -774,53 +792,10 @@ class SincosModel(OperatorModel):
             + self.stage_output
         )
 
-    @property
-    def initiation_interval(self) -> int:
-        return self.latency + 1
-
 
 @dataclass(frozen=True)
-class Atan2Model(OperatorModel):
+class Atan2Model(_TrigModel):
     module = "zkf_atan2"
-    unroll100: int = 100
-    stage_input: int = 0
-    stage_product: int = 0
-    stage_normalize: int = 0
-    stage_pack: int = 0
-    stage_output: int = 0
-    wmultiplier: int = 0
-
-    def __post_init__(self) -> None:
-        spec = trig_spec(self.fmt.wman)
-        _check_int_range(self.unroll100, 100, None, {50})
-        _check_int_range(self.stage_product, 0, 4)
-        xf = spec["xf"]
-        zf = spec["zf"]
-        wx = xf + 2
-        wquo = 2 * ((xf + 1) // 2) + 1
-        norm_width = max((wx - 1) + self.fmt.wman + 5, wquo + self.fmt.wman + 5, zf + 5)
-        _check_int_range(self.stage_normalize, 0, 2)
-        if self.stage_normalize == 2 and norm_width < 17:
-            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
-        for value in (self.stage_input, self.stage_pack, self.stage_output):
-            _check_int_range(value, 0, 1)
-        _check_int_range(self.wmultiplier, 0, None)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {
-                "WEXP": self.fmt.wexp,
-                "WMAN": self.fmt.wman,
-                "WMULTIPLIER": self.wmultiplier,
-                "UNROLL100": self.unroll100,
-                "STAGE_INPUT": self.stage_input,
-                "STAGE_PRODUCT": self.stage_product,
-                "STAGE_NORMALIZE": self.stage_normalize,
-                "STAGE_PACK": self.stage_pack,
-                "STAGE_OUTPUT": self.stage_output,
-            }
-        )
 
     @property
     def latency(self) -> int:
@@ -831,7 +806,7 @@ class Atan2Model(OperatorModel):
         div_cycles = steps + 1
         xycyc = (n * 100 + self.unroll100 - 1) // self.unroll100
         return (
-            8
+            7
             + self.stage_input
             + xycyc
             + div_cycles
@@ -841,9 +816,29 @@ class Atan2Model(OperatorModel):
             + self.stage_output
         )
 
+
+@dataclass(frozen=True)
+class CordicModel(_TrigModel):
+    module = "zkf_cordic"
+
+    def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
+        return {**params, "LATENCY_ROTATION": self.latency_rotation, "LATENCY_VECTORING": self.latency_vectoring}
+
+    @property
+    def latency_rotation(self) -> int:
+        return SincosModel(self.fmt, **self.config).latency
+
+    @property
+    def latency_vectoring(self) -> int:
+        return Atan2Model(self.fmt, **self.config).latency
+
+    @property
+    def latency(self) -> int:
+        raise ValueError("zkf_cordic's latency depends on the mode: see latency_rotation and latency_vectoring")
+
     @property
     def initiation_interval(self) -> int:
-        return self.latency + 1
+        raise ValueError("zkf_cordic's initiation interval depends on the mode: each mode's latency + 1")
 
 
 def _check_int_range(value: int, min: int | None, max: int | None, /, extra: set[int] | None = None) -> None:

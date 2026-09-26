@@ -58,7 +58,10 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 | `zkf_cmp`               | WEXP=6, WMAN=18 | yices     | references explicit case analysis |
 | `zkf_sort`              | WEXP=6, WMAN=18 | yices     | multiset + ordering via cmp_ref |
 | `zkf_pipe`              | W=24, N=4       | yices     | BMC depth 12 covers full propagation |
-| `_zkf_pack`             | WEXP=6, WMAN=18 | yices     | at the production parameter set |
+| `_zkf_pack`             | WEXP=6, WMAN=18 | yices     | at the production parameter set; also with STAGE_OUTPUT=1 |
+| `_zkf_pack` (biased)    | WEXP=6, WMAN=18 | yices     | EXP_IS_BIASED=1 port |
+| `_zkf_pack` (sat)       | WEXP=6, WMAN=18 | yices     | SATURATE_ROUND_CARRY=1: alone, with the biased port, and with STAGE_OUTPUT=1 |
+| `_zkf_pack` (narrow)    | WEXP=4, WMAN=5  | yices     | narrowest legal WEXP_UNBIASED: WEXP unbiased, WEXP+1 biased |
 | `_zkf_div_radix4_step`  | WMAN=18         | yices     | greedy digit selection invariant |
 | `zkf_mul`               | WEXP=5, WMAN=10 | yices     | one bit shy of binary16's mantissa; yices stalls indefinitely at WMAN=11 with no obvious progress past step 5; rounding heart still covered by the pack proof at full width |
 | `zkf_add`               | WEXP=4, WMAN=6  | yices     | 8-stage BMC; reference uses wide-integer summation |

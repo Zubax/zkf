@@ -2,56 +2,20 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import cocotb
 import numpy as np
 
 from zkf import ZkfFormat
+
+# The bench checks the RTL against the package's packing kernel directly. A second hand-maintained copy here would
+# only drift by copy-paste, never independently; the genuinely independent reference is proof/refs/zkf_pack_ref.v.
+from zkf._reference import pack_reference
 from zkf_bits import hex_bits, mask, signed_range
-from zkf_operands import canonical_inf, normal, pack_bits, random_pack_mag_scale, zero
+from zkf_operands import random_pack_mag_scale
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_signed, drive_unsigned, run_stream_cases, start_clock
-
-
-# Independent bench reference for the RTL _zkf_pack primitive (mirrors zkf/rtl/zkf_pack.v). Separate from the package's
-# own packing kernel so drift between the two is caught by the DUT comparison.
-def pack_reference(
-    fmt: ZkfFormat,
-    sign: int,
-    force_zero: int,
-    force_inf: int,
-    exp_unbiased: int,
-    significand_value: int,
-    guard: int,
-    round_bit: int,
-    sticky: int,
-) -> int:
-    exp_biased = exp_unbiased + fmt.bias
-    exp_underflow_zero = exp_unbiased < (fmt.min_exp_unbiased - 1)
-    exp_one_below_min = exp_unbiased == (fmt.min_exp_unbiased - 1)
-    exp_overflow = exp_unbiased > fmt.max_exp_unbiased
-
-    round_increment = bool(guard and (round_bit or sticky or (significand_value & 1)))
-    rounded_ext = (significand_value & mask(fmt.wman)) + (1 if round_increment else 0)
-    round_carry = (rounded_ext >> fmt.wman) & 1
-    rounded_significand = (rounded_ext >> 1) if round_carry else (rounded_ext & mask(fmt.wman))
-    exp_round_overflow = (exp_biased == fmt.exp_max_finite) and bool(round_carry)
-    infinity = bool(force_inf or exp_overflow or exp_round_overflow)
-
-    result_zero = bool(force_zero or ((not force_inf) and exp_underflow_zero))
-    result_infinity = (not result_zero) and infinity
-    result_min_normal = (not result_zero) and (not result_infinity) and (not force_inf) and exp_one_below_min
-
-    if result_zero:
-        return zero(fmt)
-    if result_infinity:
-        return canonical_inf(fmt, sign)
-    if result_min_normal:
-        return normal(fmt, sign, 1, 0)
-
-    exp_rounded = (exp_biased + round_carry) & mask(fmt.wexp)
-    return pack_bits(fmt, sign, exp_rounded, rounded_significand & fmt.frac_mask)
 
 
 def pack_from_mag_scale(
@@ -261,7 +225,42 @@ def _filter_no_overflow(fmt: ZkfFormat, cases: list[PackCase], assume_no_overflo
     return [case for case in cases if case.force_inf or case.force_zero or case.exp_unbiased <= fmt.max_exp_unbiased]
 
 
+def _apply_saturation(fmt: ZkfFormat, cases: list[PackCase], saturate_round_carry: int) -> list[PackCase]:
+    # Recomputed in one place rather than threaded through every case builder: the knob changes only `expected`.
+    if not saturate_round_carry:
+        return cases
+    out = []
+    for case in cases:
+        args = (
+            fmt,
+            case.sign,
+            case.force_zero,
+            case.force_inf,
+            case.exp_unbiased,
+            case.significand,
+            case.guard,
+            case.round_bit,
+            case.sticky,
+        )
+        out.append(replace(case, expected=pack_reference(*args, saturate_round_carry=True)))
+    return out
+
+
 def cases_for(
+    fmt: ZkfFormat,
+    kind: str,
+    seed: int,
+    count: int,
+    wexp_unbiased: int,
+    exp_is_biased: int = 0,
+    assume_no_overflow: int = 0,
+    saturate_round_carry: int = 0,
+) -> list[PackCase]:
+    built = _cases_for(fmt, kind, seed, count, wexp_unbiased, exp_is_biased, assume_no_overflow)
+    return _apply_saturation(fmt, built, saturate_round_carry)
+
+
+def _cases_for(
     fmt: ZkfFormat,
     kind: str,
     seed: int,
@@ -318,7 +317,17 @@ async def pack_runtime_cases(dut) -> None:
     check_width("exp_unbiased", dut.exp_unbiased, wexp_unbiased, context)
     exp_is_biased = context.exp_is_biased
     assume_no_overflow = context.assume_no_overflow
-    cases = cases_for(fmt, context.kind, context.seed, context.count, wexp_unbiased, exp_is_biased, assume_no_overflow)
+    saturate_round_carry = context.saturate_round_carry
+    cases = cases_for(
+        fmt,
+        context.kind,
+        context.seed,
+        context.count,
+        wexp_unbiased,
+        exp_is_biased,
+        assume_no_overflow,
+        saturate_round_carry,
+    )
 
     start_clock(dut)
     dut.rst.value = 1
@@ -336,6 +345,7 @@ async def pack_runtime_cases(dut) -> None:
         wexp_unbiased=wexp_unbiased,
         exp_is_biased=exp_is_biased,
         assume_no_overflow=assume_no_overflow,
+        saturate_round_carry=saturate_round_carry,
         stage_input=context.stage_input,
         stage_output=context.stage_output,
     ).latency

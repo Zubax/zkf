@@ -17,7 +17,7 @@ import sys
 from common import REPO
 
 sys.path.insert(0, str(REPO))
-from zkf import OperatorModel, ZkfFormat  # noqa: E402  (path set up immediately above)
+from zkf import CordicModel, OperatorModel, ZkfFormat  # noqa: E402  (path set up immediately above)
 
 
 @dataclass(frozen=True)
@@ -652,46 +652,40 @@ MODULES = [
     # needs a 19-bit operand (18 magnitude + sign), one bit past the MULT18X18 limit, so Lattice synthesis can drop the
     # whole Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives DSP-fit
     # grids for the signed*unsigned products (3x3 for exp2 Horner, 3x2 for log2 Horner, 3x3 for log2's final f*C(f)),
-    # so every multiply maps to DSP on both Yosys and Diamond. exp2 needs STAGE_PRODUCT=4 to split the final
-    # reduction, relieving the near-full-DSP placement bind. log2's final f*C(f) multiply is now fully UNSIGNED (|f|*C(f)
-    # with the sign folded into
-    # the back-end add/subtract), which cuts its grid from a signed 3x3 to an unsigned 2x3 -- 27 DSPs -> 24 -- and that
-    # relieves the LFE5U-12F placement bind. With the lighter DSP load and the biased-EXP/direct-magnitude back-end,
-    # STAGE_DECODE, STAGE_OUTPUT, and STAGE_NORMALIZE_OUTPUT all come back out; log2 still needs STAGE_NORMALIZE=2
-    # (the x->1 normalize) and STAGE_PACK=1.
+    # so every multiply maps to DSP on both Yosys and Diamond. exp2's STAGE_PRODUCT=3 splits the flat 9-term column sum
+    # (STAGE_PRODUCT=2: 64 MHz); its 27 of 28 DSPs then leave the capture-FF->DSP->partial-product hop as the limiter,
+    # which no stage splits and only placement moves (Yosys ~85-118 MHz across seeds): STAGE_PRODUCT=4 and the
+    # STAGE_INPUT/REDUCE/PACK/OUTPUT stages merely reshuffle it. log2's final f*C(f) multiply is fully UNSIGNED
+    # (|f|*C(f) with the sign folded into the back-end add/subtract), an unsigned 2x3 grid: 24 DSPs. Lean-first, log2
+    # needs STAGE_NORMALIZE=2 (the x->1 normalize), STAGE_PACK=1 and STAGE_PRODUCT=3 on both multiplies, then meets the
+    # same DSP hop (Yosys ~85-126 MHz across seeds); STAGE_OUTPUT=1 is a placement pick, not a split.
     ModuleSpec(
         name="zkf_exp2_w8m36",
-        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + "
-        "STAGE_PRODUCT=4 + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_OUTPUT=1)",
+        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid)",
         top="zkf_exp2_w8m36_synth_top",
         kind="exp2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
-        stage_input=1,
-        stage_product=4,
+        stage_product=3,
         wmultiplier=18,
-        stage_output=1,
         emit_schematic=False,
     ),
     ModuleSpec(
         name="zkf_log2_w8m36",
-        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_INPUT=1 + STAGE_PRODUCT=3 Horner grid + STAGE_PRODUCT_FINAL=3 final "
-        "unsigned |f|*C(f) grid + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_NORMALIZE=2 (deep normshift split) "
-        "+ STAGE_PACK=1; the unsigned final multiply cut the grid to 24 DSPs, so STAGE_DECODE, STAGE_OUTPUT and "
-        "STAGE_NORMALIZE_OUTPUT all drop out -- fewer back-end FFs raise f_max on this congestion-bound part "
-        "(116.2 MHz on Yosys ECP5))",
+        label="zkf_log2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + STAGE_PRODUCT_FINAL=3 + WMULTIPLIER=18 18-bit DSP-tile "
+        "grid + STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT=1)",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
-        stage_input=1,
         stage_product=3,
         stage_product_final=3,
         wmultiplier=18,
         stage_normalize=2,
         stage_pack=1,
+        stage_output=1,
         emit_schematic=False,
     ),
     # sin/cos of a phase in turns: a turns-reduction front end, an iterative folded CORDIC (one datapath reused), the
@@ -744,27 +738,19 @@ MODULES = [
     ModuleSpec(
         name="zkf_atan2",
         label="zkf_atan2 (atan2(y, x) in turns + hypot(y, x), iterative vectoring CORDIC; one datapath reused over "
-        "ceil(N*100/UNROLL100) engine cycles + a ceil(XF/2)-cycle radix-4 divide; UNROLL100=50 "
-        "half-rate + shared _zkf_pmul STAGE_PRODUCT=2 WMULTIPLIER=18 + STAGE_NORMALIZE=2 + "
-        "STAGE_PACK)",
+        "ceil(N*100/UNROLL100) engine cycles + a ceil(XF/2)-cycle radix-4 divide; UNROLL100=100 full rate "
+        "+ shared _zkf_pmul STAGE_PRODUCT=2 WMULTIPLIER=18 + STAGE_NORMALIZE=2 + STAGE_PACK=1)",
         top="zkf_atan2_synth_top",
         kind="atan2",
         wexp=6,
         wman=18,
         wexp_unbiased=0,
-        unroll100=50,  # half-rate 2-cycle engine: the full-rate vectoring shift+add+angle-LUT recurrence is the
-        #   limiter on BOTH flows (Yosys ~100, Diamond ~75 -- 26 logic levels), insensitive to PAR;
-        #   g_pipe splits the shift-sample from the add, clearing the cone. 2 cycles/iteration.
-        stage_product=2,  # narrowed _zkf_pmul: now a 2x2 grid (KINV->WMAN+5), so the flat 4-term column sum is
-        #   trivial
-        #   and the row/column-sum split of SP=3 is no longer needed. Limiter is the radix-4 divider
-        #   (Yosys) / fixed-to-float normshift (Diamond), not the product.
+        unroll100=100,  # the one-cycle CORDIC iteration is the limiter (Yosys ~109-119 MHz across seeds); only
+        #   UNROLL100=50 splits it (~123-129 MHz, +11 cycles); the other stages sit outside that loop.
+        stage_product=2,  # narrowed _zkf_pmul: a 2x2 grid (KINV->WMAN+5), so the flat 4-term column sum is trivial.
         wmultiplier=18,  # 18-bit DSP-tile grid (MULT18X18D) for the magnitude / correction products.
-        stage_normalize=2,  # split the fixed-to-float close-cancellation normshift (the Diamond back-end limiter).
-        stage_pack=1,  # rounder pack register in the shared fixed-to-float back-end
-        #   (load-bearing: pack->output cone).
-        stage_output=0,  # LATENCY (-1): the wide back-end datapath is mildly over-pipelined here, so dropping the
-        #   packer output register relieves routing congestion (Yosys 112.6 MHz, Diamond >100).
+        stage_normalize=2,  # both fixed-to-float normshift splits are load-bearing (STAGE_NORMALIZE=1: 83 MHz).
+        stage_pack=1,  # rounder pack register in the shared fixed-to-float back-end (load-bearing: 81 MHz without).
     ),
     # WEXP=8, WMAN=36: the wider datapath enables the optional stages needed to close 100 MHz on all flows.
     ModuleSpec(
@@ -781,12 +767,34 @@ MODULES = [
         wexp_unbiased=0,
         unroll100=50,  # half-rate 2-cycle engine for the wide (WX=62) shift+add recurrence.
         stage_input=0,  # LATENCY EXPERIMENT (si 1->0, -1 cyc): Yosys-screened 112.7 MHz; Diamond ECP5 confirmed.
-        stage_product=4,  # narrowed _zkf_pmul: 61x41 product in a 4x3 grid (KINV/INV_TAU->WMAN+5,
-        #   WMAG 124->102). The row-pair staging keeps the product off the limiter after the
-        #   registered public output stage changes the wide design's placement pressure.
+        stage_product=4,  # narrowed _zkf_pmul: 61x41 product in a 4x3 grid (KINV/INV_TAU->WMAN+5, WMAG 124->102).
+        #   The row-pair staging keeps the product off the limiter after the registered public output stage changes
+        #   the wide design's placement pressure (STAGE_PRODUCT=3: Diamond 89-93 MHz).
         wmultiplier=18,  # 18-bit DSP-tile grid -> the 61x41 products fit the default device.
         stage_normalize=2,
         stage_pack=1,
+        stage_output=1,
+        emit_schematic=False,
+    ),
+    # zkf_cordic, compared against the dedicated w8m36 pair on the same part: zkf_atan2_w8m36's knobs leave the shared
+    # rounder -> result select -> STAGE_OUTPUT register path placement-bound (Yosys ~91-105 MHz across seeds), so
+    # STAGE_PACK=2 registers the rounded result and STAGE_INPUT=1 relieves the shared selects (+2 cycles); the radix-4
+    # divider step (~102-110 MHz) sits behind it.
+    ModuleSpec(
+        name="zkf_cordic_w8m36",
+        label="zkf_cordic (WEXP=8, WMAN=36, rotation or vectoring per transaction; one shared engine + _zkf_pmul + "
+        "_zkf_fixed_to_float; zkf_atan2_w8m36's knobs + STAGE_INPUT=1 + STAGE_PACK=2)",
+        top="zkf_cordic_w8m36_synth_top",
+        kind="cordic",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        unroll100=50,
+        stage_input=1,
+        stage_product=4,
+        wmultiplier=18,
+        stage_normalize=2,
+        stage_pack=2,
         stage_output=1,
         emit_schematic=False,
     ),
@@ -904,44 +912,23 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             # pack-input/output pipeline shared with zkf_from_int.
             sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_fixed_to_float.v"]
         return sources + [hdl / "_zkf_horner.v", *tables, hdl / f"zkf_{spec.kind}.v"]
-    if spec.kind == "sincos":
-        # Left-shift turns reducer (inline) + octant fold + the shared CORDIC engine (_zkf_cordic) bound per WMAN
-        # (_zkf_cordic_m<WMAN>) + the shared correction multiply (_zkf_pmul) + one shared _zkf_fixed_to_float back end.
-        # Include both the default-WMAN (18) core and this spec's WMAN, deduped, so Yosys's hierarchy -check is
-        # satisfied for the generic zkf_sincos too.
-        def core(wman: int) -> Path:
-            return hdl / "_tables" / f"_zkf_cordic_m{wman}.v"
-
-        cores = [core(w) for w in sorted({18, spec.wman})]  # 18 = the default WMAN of zkf_sincos
+    if spec.kind in ("sincos", "atan2", "cordic"):
+        # One private datapath (_zkf_cordic_unit) under all three; the default-WMAN (18) table is included as well so
+        # Yosys's hierarchy -check is satisfied for the generic modules.
+        tables = [hdl / "_tables" / f"_zkf_cordic_m{w}.v" for w in sorted({18, spec.wman})]
+        divider = [] if spec.kind == "sincos" else [hdl / "_zkf_div_core.v"]
         return [
             hdl / "_zkf_pack.v",
             hdl / "zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_fixed_to_float.v",
             hdl / "_zkf_pmul.v",
-            hdl / "_zkf_cordic.v",
-            *cores,
-            hdl / "zkf_sincos.v",
-        ]
-    if spec.kind == "atan2":
-        # Two-input vectoring CORDIC: the shared engine (_zkf_cordic) bound per WMAN, one shared _zkf_fixed_to_float
-        # back-end (time-multiplexed over magnitude then theta), the folded radix-4 divider (the _zkf_div_core
-        # primitives), and the shared _zkf_pmul (magnitude + correction products). Include both the default-WMAN (18)
-        # core and this spec's WMAN, deduped, so Yosys's hierarchy -check is satisfied for the generic.
-        def core(wman: int) -> Path:
-            return hdl / "_tables" / f"_zkf_cordic_m{wman}.v"
-
-        cores = [core(w) for w in sorted({18, spec.wman})]  # 18 = the default WMAN of zkf_atan2
-        return [
-            hdl / "_zkf_pack.v",
-            hdl / "zkf_pipe.v",
-            hdl / "_zkf_normshift.v",
-            hdl / "_zkf_fixed_to_float.v",
-            hdl / "_zkf_cordic.v",
-            hdl / "_zkf_div_core.v",
-            hdl / "_zkf_pmul.v",
-            *cores,
-            hdl / "zkf_atan2.v",
+            hdl / "_zkf_cordic_core.v",
+            *tables,
+            hdl / "_zkf_txn.v",
+            hdl / "_zkf_cordic_unit.v",
+            *divider,
+            hdl / f"zkf_{spec.kind}.v",
         ]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
@@ -972,11 +959,16 @@ def model_for(spec: ModuleSpec) -> OperatorModel:
     return factory(**{name: values[name] for name in defaults.config.keys() if name in values})
 
 
-def register_stages(spec: ModuleSpec) -> int:
-    return model_for(spec).latency
+def register_stages(spec: ModuleSpec) -> int | tuple[int, int]:
+    model = model_for(spec)
+    if isinstance(model, CordicModel):
+        return model.latency_rotation, model.latency_vectoring
+    return model.latency
 
 
-def format_register_stages(stages: int) -> str:
+def format_register_stages(stages: int | tuple[int, int]) -> str:
+    if isinstance(stages, tuple):
+        return f"{stages[0]} / {stages[1]} stages (rotation / vectoring)"
     suffix = "stage" if stages == 1 else "stages"
     return f"{stages} {suffix}"
 

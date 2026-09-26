@@ -18,6 +18,18 @@ _EXP2_TABLES = [f"zkf/rtl/_tables/_zkf_exp2_m{w}.v" for w in (16, 18, 24, 27, 32
 _LOG2_TABLES = [f"zkf/rtl/_tables/_zkf_log2_m{w}.v" for w in (16, 18, 24, 27, 32, 36, 48, 53)]
 _CORDIC_TABLES = [f"zkf/rtl/_tables/_zkf_cordic_m{w}.v" for w in (16, 18, 24, 27, 32, 36, 48, 53)]
 
+_TRIG_SOURCES = [
+    "zkf/rtl/_zkf_pack.v",
+    "zkf/rtl/zkf_pipe.v",
+    "zkf/rtl/_zkf_normshift.v",
+    "zkf/rtl/_zkf_fixed_to_float.v",
+    "zkf/rtl/_zkf_pmul.v",
+    "zkf/rtl/_zkf_cordic_core.v",
+    *_CORDIC_TABLES,
+    "zkf/rtl/_zkf_txn.v",
+    "zkf/rtl/_zkf_cordic_unit.v",
+]
+
 FILESETS: dict[str, list[str]] = {
     "rtl_pack": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/_zkf_pack.v"],
     "rtl_mul": ["zkf/rtl/_zkf_pack.v", "zkf/rtl/zkf_pipe.v", "zkf/rtl/_zkf_pmul.v", "zkf/rtl/zkf_mul.v"],
@@ -92,26 +104,13 @@ FILESETS: dict[str, list[str]] = {
         *_LOG2_TABLES,
         "zkf/rtl/zkf_log2.v",
     ],
-    "rtl_sincos": [
-        "zkf/rtl/_zkf_pack.v",
-        "zkf/rtl/zkf_pipe.v",
-        "zkf/rtl/_zkf_normshift.v",
-        "zkf/rtl/_zkf_fixed_to_float.v",
-        "zkf/rtl/_zkf_pmul.v",
-        "zkf/rtl/_zkf_cordic.v",
+    "rtl_sincos": [*_TRIG_SOURCES, "zkf/rtl/zkf_sincos.v"],
+    "rtl_atan2": [*_TRIG_SOURCES, "zkf/rtl/_zkf_div_core.v", "zkf/rtl/zkf_atan2.v"],
+    "rtl_cordic": ["zkf/rtl/zkf_cordic.v"],
+    "rtl_cordic_modes": [
+        "zkf/rtl/_zkf_cordic_core.v",
         *_CORDIC_TABLES,
-        "zkf/rtl/zkf_sincos.v",
-    ],
-    "rtl_atan2": [
-        "zkf/rtl/_zkf_pack.v",
-        "zkf/rtl/zkf_pipe.v",
-        "zkf/rtl/_zkf_normshift.v",
-        "zkf/rtl/_zkf_fixed_to_float.v",
-        "zkf/rtl/_zkf_cordic.v",
-        *_CORDIC_TABLES,
-        "zkf/rtl/_zkf_div_core.v",
-        "zkf/rtl/_zkf_pmul.v",
-        "zkf/rtl/zkf_atan2.v",
+        "tb/_zkf_cordic_modes_tb.v",
     ],
 }
 
@@ -162,6 +161,8 @@ TARGETS: dict[str, Target] = {
     "sim_log2": _t("zkf_log2", "test_log2", "rtl_log2"),
     "sim_sincos": _t("zkf_sincos", "test_sincos", "rtl_sincos"),
     "sim_atan2": _t("zkf_atan2", "test_atan2", "rtl_atan2"),
+    "sim_cordic": _t("zkf_cordic", "test_cordic", "rtl_sincos", "rtl_atan2", "rtl_cordic"),
+    "sim_cordic_modes": _t("_zkf_cordic_modes_tb", "test_cordic_modes", "rtl_cordic_modes"),
     # Algebraic-property suite: same RTL as the direct operator targets, but the test_properties cocotb module.
     "sim_properties_mul": _t("zkf_mul", "test_properties", "rtl_mul"),
     "sim_properties_add": _t("zkf_add", "test_properties", "rtl_add"),

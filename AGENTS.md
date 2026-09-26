@@ -2,10 +2,12 @@
 
 Read the `README.md`.
 
-Use the comment-cleanup skill before shipping any code.
 Use the review-loop skill after a task is implemented before calling it done.
 
 Written documentation shall be as lean and terse as possible.
+Entities can be documented in at most one place; doc duplication is prohibited.
+
+Never alter the git staging index unless asked; it is often used for manual partial progress tracking by humans.
 
 ## Conventions
 

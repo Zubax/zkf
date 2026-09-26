@@ -22,6 +22,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from zkf._reference import trig_spec
+
 SEED = os.environ.get("FLOAT_SEED", "0x9e3779b97f4a7c15")
 CORE = "zubax:kulibin:float"
 
@@ -29,6 +31,7 @@ CORE = "zubax:kulibin:float"
 PACK = [
     ("w2_m4_u4_exhaustive", 2, 4, 4, "exhaustive", 0),
     ("w3_m4_u5_exhaustive", 3, 4, 5, "exhaustive", 0),
+    ("w4_m5_u4_exhaustive", 4, 5, 4, "exhaustive", 0),  # WEXP_UNBIASED == WEXP, the narrowest legal (zkf_exp2's)
     ("w5_m8_u8_random", 5, 8, 8, "random", 768),
     ("w8_m24_u12_random", 8, 24, 12, "random", 2048),
 ]
@@ -359,7 +362,7 @@ def _fma(
     return _run("fma", sim, tier, base + suffix, vlog, kind=kind, count=count)
 
 
-def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None) -> Run:
+def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None, sat=None) -> Run:
     vlog = [("WEXP", w), ("WMAN", m), ("WEXP_UNBIASED", u)]
     suffix = ""
     if so is not None:
@@ -371,6 +374,9 @@ def _pack(sim, tier, config, w, m, u, kind, count, *, so=None, eb=None, nov=None
     if nov is not None:
         vlog.append(("ASSUME_NO_OVERFLOW", nov))
         suffix += f"_nov{nov}"
+    if sat is not None:
+        vlog.append(("SATURATE_ROUND_CARRY", sat))
+        suffix += f"_sat{sat}"
     return _run("pack", sim, tier, config + suffix, vlog, kind=kind, count=count)
 
 
@@ -501,7 +507,17 @@ def _trans(
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count)
 
 
+def _cordic_modes(sim, tier: str, out: list) -> None:
+    # An unelaborated sigma-select arm has no coverage point, so each needs its own row; UNROLL100=300 at N=11 also
+    # leaves a partial final lane group, and WMAN=53 drives operands wider than 64 bits.
+    for wman, un, par in ((18, 50, 0), (18, 50, 1), (18, 100, 0), (18, 300, 0), (53, 50, 1)):
+        s = trig_spec(wman)
+        vlog = [("WMAN", wman), ("WX", s["xw"]), ("WZ", s["zw"]), ("UNROLL100", un), ("PARALLEL", par)]
+        out.append(_run("cordic_modes", sim, tier, f"w{wman}_un{un}_par{par}", vlog, kind="random", count=256))
+
+
 def _per_pr(sim, out: list) -> None:
+    _cordic_modes(sim, "pr", out)
     for cfg, w, m, u, k, c in PACK:
         out.append(_pack(sim, "pr", cfg, w, m, u, k, c))
     for op in ("cmp", "sort"):
@@ -608,6 +624,9 @@ def _per_pr(sim, out: list) -> None:
     # published latency; the test asserts measured == model.
     out.append(_trans("sincos", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=50))
     out.append(_trans("sincos", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=200))
+    # WMAN=18 has N=11, odd: at U>1 the final lane group is PARTIAL, so the en=0 pass-through lanes stay covered.
+    # WMAN=16's N is even, so it has no partial group at un=200.
+    out.append(_trans("sincos", sim, "pr", "w6_m18_unroll", 6, 18, "random", 256, un=200))
     # sincos staging knobs, bit-transparent vs the unstaged path (the test checks bit-exactness + latency). si/so are
     # the standard sequential register stages; the decode and wide-datapath stages are always-on.
     out.append(_trans("sincos", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, si=1))
@@ -641,6 +660,7 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("sincos", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=1, pa=1))
+    out.append(_trans("sincos", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=1, pa=2))
     # Shipped small log2 synth preset (6/18: sn=1 + STAGE_PRODUCT_FINAL=1): pins the latency and pole/domain-error
     # sideband alignment under the exact shipped knobs.
     out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=1, spf=1))
@@ -649,29 +669,49 @@ def _per_pr(sim, out: list) -> None:
     # checks bit-exactness + latency; directed alone hits every special/axis/diagonal/bypass-boundary pair.
     for cfg, w, m, k, c in TRANS_ATAN2:
         out.append(_trans("atan2", sim, "pr", cfg, w, m, k, c))
-    # Tiny WEXP (2, 3): random covers the narrow exponent-difference path plus the axis/diagonal turn constants that
-    # underflow the normal range at small BIAS.
-    out.append(_trans("atan2", sim, "pr", "w2_m16_random", 2, 16, "random", 512))
-    out.append(_trans("atan2", sim, "pr", "w3_m16_random", 3, 16, "random", 512))
+    # atan2's WEXP floor (5): the narrowest elaborable exponent, covering the short exponent-difference path where
+    # alignment and the small-ratio bypass interact. Narrower is refused at elaboration.
+    out.append(_trans("atan2", sim, "pr", "w5_m16_narrow", 5, 16, "random", 512))
+    out.append(_trans("atan2", sim, "pr", "w5_m53_narrow", 5, 53, "random", 384))  # the floor at the widest WMAN
     out.append(_trans("atan2", sim, "pr", "w6_m18_directed", 6, 18, "directed", 0))
     out.append(_trans("atan2", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=50))
     out.append(_trans("atan2", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=200))
     out.append(_trans("atan2", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=400))
+    out.append(_trans("atan2", sim, "pr", "w6_m18_unroll", 6, 18, "random", 256, un=200))
     out.append(_trans("atan2", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, si=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, so=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, si=1, so=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_norm", 5, 16, "random", 256, sn=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_norm", 5, 16, "random", 256, sn=2))
     out.append(_trans("atan2", sim, "pr", "w5_m16_pack", 5, 16, "random", 256, pa=1))
+    out.append(_trans("atan2", sim, "pr", "w5_m16_pack", 5, 16, "random", 256, pa=2))
     out.append(_trans("atan2", sim, "pr", "w5_m16_full", 5, 16, "random", 256, si=1, sn=2, pa=1, so=1))
     # STAGE_PRODUCT / WMULTIPLIER: shared _zkf_pmul (magnitude x_K*KINV, residual/bypass Q*INV_TAU); bit-transparent,
     # each adds STAGE_PRODUCT cycles. Native (sp=1), 2x2 (sp=2), plus the synthesized 6/18 operating point.
     out.append(_trans("atan2", sim, "pr", "w5_m16_prod", 5, 16, "random", 256, sp=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_prod", 5, 16, "random", 256, sp=2, wm=16))
-    out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256, un=50, sp=2, wm=18, sn=2, pa=1))
+    out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256, un=100, sp=2, wm=18, sn=2, pa=1))
     # Shipped zkf_atan2_w8m36 synth config tested directly (correctness + data-independent latency, not just
     # inferred from the knob sweeps).
     out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256, un=50, sp=4, wm=18, sn=2, pa=1, so=1))
+    # zkf_cordic: w5_m18 lets rotation reach its underflow decision through the shared packer (BIAS < WFRAC); at w8_m48
+    # the union magnitude crosses a power of two for rotation (normalizer count 7 -> 8 bits).
+    for cfg, w, m, knobs in [
+        ("w5_m16", 5, 16, {}),
+        ("w5_m18", 5, 18, {}),
+        ("w5_m16_unroll", 5, 16, {"un": 50}),
+        ("w5_m16_unroll", 5, 16, {"un": 200}),
+        ("w6_m18_unroll", 6, 18, {"un": 300}),
+        ("w5_m16_stage", 5, 16, {"si": 1, "so": 1}),
+        ("w5_m16_prod", 5, 16, {"sp": 1}),
+        ("w5_m16_prod", 5, 16, {"sp": 3, "wm": 16}),
+        ("w5_m16_full", 5, 16, {"si": 1, "sp": 2, "sn": 2, "pa": 1, "so": 1}),
+        ("w5_m16_pack", 5, 16, {"pa": 2}),
+        ("w8_m36_synth", 8, 36, {"un": 50, "si": 1, "sp": 4, "wm": 18, "sn": 2, "pa": 2, "so": 1}),
+        ("w8_m48", 8, 48, {"un": 50}),
+        ("w11_m53", 11, 53, {}),
+    ]:
+        out.append(_trans("cordic", sim, "pr", cfg, w, m, "random", 256, **knobs))
     # zkf_mul_ilog2 (runtime k): same format sweep, both decode depths. Default WK=WEXP+1 already covers shifts that
     # overflow to inf / underflow to zero for every input class.
     for sd in (0, 1):
@@ -714,7 +754,7 @@ def _per_pr(sim, out: list) -> None:
     for cfg, w, n, c in PIPE:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
     # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks widened input
-    # pipes in the latency model. sincos/atan2 excluded (handshake-entangled input stage).
+    # pipes in the latency model.
     for op in ("mul", "div", "sqrt", "cmp", "sort"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_binary("sqrt", sim, "pr", "w3_m5", 3, 5, "exhaustive", 0, si=2))
@@ -726,6 +766,8 @@ def _per_pr(sim, out: list) -> None:
     out.append(_resize(sim, "pr", "w3m4_to_w4m6", 3, 4, 4, 6, "exhaustive", 0, 2))
     for op in ("exp2", "log2"):
         out.append(_trans(op, sim, "pr", "w2_m16", 2, 16, "exhaustive", 0, si=2))
+    for op in ("sincos", "atan2", "cordic"):
+        out.append(_trans(op, sim, "pr", "w5_m16", 5, 16, "random", 256, si=2))
 
 
 def _deep_correctness(out: list) -> None:
@@ -829,8 +871,8 @@ def _deep_correctness(out: list) -> None:
     # flow needs). WMULTIPLIER is bit-transparent, but pinning the shipped grid exercises the full datapath at the
     # operating point synthesis actually builds, not just the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
-    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, wm=18, so=1))
-    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, si=1, sp=3, spf=3, wm=18, sn=2, pa=1))
+    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, wm=18))
+    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, spf=3, wm=18, sn=2, pa=1, so=1))
     # zkf_atan2 deep: baseline per format, UNROLL100 sweep + full staging on 5/16, and the synthesized 6/18 + 8/36
     # operating points. Each asserts latency.
     for cfg, w, m, k, c in TRANS_ATAN2:
@@ -838,7 +880,7 @@ def _deep_correctness(out: list) -> None:
     for un in (50, 100, 200, 400):
         out.append(_trans("atan2", s, "deep", "atan2_w5m16_un", 5, 16, "random", 512, un=un))
     out.append(_trans("atan2", s, "deep", "atan2_w5m16_stage", 5, 16, "random", 512, si=1, so=1, sn=2, pa=1))
-    out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512, un=50, sp=2, wm=18, sn=2, pa=1))
+    out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512, un=100, sp=2, wm=18, sn=2, pa=1))
     out.append(
         _trans("atan2", s, "deep", "atan2_w8m36_op", 8, 36, "random", 512, un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1)
     )
@@ -909,6 +951,7 @@ def _deep_correctness(out: list) -> None:
 
 def _deep_coverage(out: list) -> None:
     s = "verilator"
+    _cordic_modes(s, "deep", out)
     for w, m in [(4, 5), (3, 6), (5, 4), (3, 5), (2, 6)]:
         base = f"w{w}m{m}"
         for sp in (0, 1):
@@ -973,9 +1016,12 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("sincos", s, "deep", "w5m16", 5, 16, "random", 4000, sn=1, pa=1))
     # Lock-step (un=50) and decoupled (PARALLEL=1) sincos exercise both CORDIC handoff modes (coupled g_zadv +
     # half-rate sigma-replay); each mode's branches (and the phi_seen if/else legs) are reachable only in its own row.
-    # The structurally-dead P_PHI implicit-else and FSM default arm are coverage_off in zkf_sincos.v.
-    out.append(_trans("sincos", s, "deep", "w5m16", 5, 16, "random", 4000, un=50))
+    out.append(_trans("sincos", s, "deep", "w5m16", 5, 16, "random", 4000, un=50, parallel=0))
     out.append(_trans("sincos", s, "deep", "w5m16_par1", 5, 16, "random", 4000, un=50, parallel=1))
+    # Lock-step with a pipelined multiply: P_S waits more than one cycle for the PHI product.
+    out.append(_trans("sincos", s, "deep", "w5m16", 5, 16, "random", 2000, sp=1))
+    # _zkf_cordic_unit's MODE 2 arms.
+    out.append(_trans("cordic", s, "deep", "w5m16", 5, 16, "random", 1000, sp=1))
     # Wide-format sincos: at the small format some CORDIC X/Y-carry / local-mag / local-exp high bits sit above the
     # format ceiling; w8m24 (table _zkf_cordic_m24) makes them ordinary toggling mid-bits. (The exact net set shifts
     # with WMAN, so this row contributes advisory-toggle coverage, not a fixed net contract.)
@@ -986,6 +1032,7 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("atan2", s, "deep", "atan2_w5m16", 5, 16, "random", 4000))
     out.append(_trans("atan2", s, "deep", "atan2_w5m16_directed", 5, 16, "directed", 0))
     out.append(_trans("atan2", s, "deep", "atan2_w5m16", 5, 16, "random", 2000, un=200))
+    out.append(_trans("atan2", s, "deep", "atan2_w6m18", 6, 18, "random", 2000, un=300))  # the only UNROLL100=300
     out.append(_trans("atan2", s, "deep", "atan2_w5m16", 5, 16, "random", 2000, sn=1, pa=1))
     # Wide-format atan2: at the small format some divider / shamt / significand / magnitude high bits sit above the
     # format ceiling; w8m24 makes them ordinary toggling mid-bits. (The exact net set shifts with WMAN, so this row
@@ -1075,6 +1122,11 @@ def _deep_coverage(out: list) -> None:
     # ASSUME_NO_OVERFLOW=1 prunes the overflow detector (exp_overflow forced to 0): the case generator drops
     # out-of-range exponents, so the surviving in-range / force_inf / round-carry cases must still match the reference.
     out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, nov=1))
+    # SATURATE_ROUND_CARRY diverts the round-carry-to-infinity path, which only zkf_atan2 arms in anger.
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, sat=1))
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, sat=1, nov=1))
+    # The combination zkf_atan2 actually ships: a biased exponent input alongside the saturating round-carry.
+    out.append(_pack(s, "deep", "w4m5u6", 4, 5, 6, "exhaustive", 0, sat=1, eb=1))
 
 
 def _properties(out: list) -> None:

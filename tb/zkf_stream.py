@@ -36,6 +36,112 @@ def drive_unsigned(handle, value: int) -> None:
     handle.value = value & mask(len(handle))
 
 
+async def expect_reaccept(dut, prefix: str) -> None:
+    """The initiation interval is exactly LATENCY + 1: consumers such as Holoso schedule against it without looking."""
+    assert int(dut.in_ready.value) == 0, f"{prefix}: in_ready high while the result is unread"
+    await RisingEdge(dut.clk)
+    assert int(dut.in_ready.value) == 1, f"{prefix}: in_ready not back one cycle after the result (II != LATENCY+1)"
+
+
+async def reset_boundaries(
+    dut,
+    prefix: str,
+    pairs: list[tuple[object, object]],
+    issue: Callable[[object], None],
+    idle: Callable[[], None],
+    outputs: Callable[[], dict[str, int]],
+    expected: Callable[[object], dict[str, int]],
+    describe: Callable[[object], str],
+    timeout: int,
+) -> None:
+    """
+    A reset landing on `dropped` offered, at every cycle in flight, or held unread: nothing of it emerges, and `kept`,
+    offered on the first cycle after the reset (through it too, for a held landing), keeps its latency and result.
+    """
+
+    async def step() -> None:
+        await RisingEdge(dut.clk)
+        await Timer(1, unit="ns")
+
+    def check(case, what: str) -> None:
+        got, want = outputs(), expected(case)
+        assert got == want, f"{prefix} {what} {describe(case)}: got {got} expected {want}"
+
+    async def accept(case, out_ready: int) -> int:
+        """Accepts `case` on the next edge; returns the cycles until its out_valid, with the result checked."""
+        assert int(dut.in_ready.value) == 1, f"{prefix} {describe(case)}: in_ready low when offered"
+        issue(case)
+        dut.out_ready.value = out_ready
+        await step()
+        idle()
+        cycles = 0
+        while int(dut.out_valid.value) == 0:
+            await step()
+            cycles += 1
+            assert cycles < timeout, f"{prefix} {describe(case)}: out_valid timeout"
+        check(case, "result")
+        return cycles
+
+    async def take(case) -> None:
+        await step()
+        ready, valid = int(dut.in_ready.value), int(dut.out_valid.value)
+        assert (ready, valid) == (1, 0), f"{prefix} {describe(case)}: in_ready={ready} out_valid={valid} after take"
+
+    start_clock(dut)
+    dut.rst.value = 1
+    dut.out_ready.value = 0
+    idle()
+    for _ in range(4):
+        await step()
+    dut.rst.value = 0
+    await step()
+
+    latency = {}
+    for case in (case for pair in pairs for case in pair):
+        latency[id(case)] = await accept(case, 1)
+        await take(case)
+
+    for dropped, kept in pairs:
+        span = latency[id(dropped)]
+        landings = [("offer", 0)] + [("midflight", k) for k in range(1, span + 1)]
+        landings += [("held", 0), ("held", 3)]
+        for (where, k), immediate in ((landing, imm) for landing in landings for imm in (False, True)):
+            what = f"reset {where} {k} of {describe(dropped)}, then {'offer at once' if immediate else 'quiet'}:"
+            if where == "held":
+                await accept(dropped, 0)
+                for _ in range(k):
+                    await step()
+                    assert int(dut.in_ready.value) == 0, f"{prefix} {what} in_ready high while holding"
+                    check(dropped, f"{what} held")
+            else:
+                assert int(dut.in_ready.value) == 1, f"{prefix} {what} in_ready low before the offer"
+                issue(dropped)
+                dut.out_ready.value = 0
+                if where == "midflight":
+                    await step()
+                    idle()
+                    for _ in range(k - 1):
+                        await step()
+                    assert int(dut.out_valid.value) == 0, f"{prefix} {what} result visible before the reset edge"
+            dut.rst.value = 1
+            if where == "held" and k:
+                issue(kept)
+            await step()
+            dut.rst.value = 0
+            ready, valid = int(dut.in_ready.value), int(dut.out_valid.value)
+            assert (ready, valid) == (1, 0), f"{prefix} {what} in_ready={ready} out_valid={valid} after reset"
+            if immediate:
+                cycles = await accept(kept, 1)
+                assert cycles == latency[id(kept)], f"{prefix} {what} latency {cycles} != {latency[id(kept)]}"
+                await take(kept)
+            else:
+                idle()
+                for _ in range(max(latency.values()) + 4):
+                    await step()
+                    ready, valid = int(dut.in_ready.value), int(dut.out_valid.value)
+                    assert (ready, valid) == (1, 0), f"{prefix} {what} in_ready={ready} out_valid={valid} after reset"
+
+
 class RegisterStageScoreboard:
     def __init__(
         self,
