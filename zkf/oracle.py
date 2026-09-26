@@ -4,11 +4,11 @@ Independent reference values for verifying the ZKF model. Two families:
 - correctly-rounded (ties-to-even) transcendentals via mpmath: exp2, log2, sincos, atan2;
 - IEEE-754 cross-checks via the hardware FPU: add, mul, div, sqrt (binary32 and binary64) and fma (binary64 only).
 
-The transcendentals run at ~4*WMAN mpmath working precision (correct last-bit rounding even at large WMAN) and prove the
-model's faithful-rounding (<=1 ULP) contract; the IEEE checks catch model bugs for the two formats where ZKF coincides
-with IEEE (WEXP/WMAN = 8/24 and 11/53). The IEEE functions return None where ZKF and IEEE diverge and no independent
-cross-check exists (non-IEEE format, non-canonical inf/zero, a subnormal result, or an IEEE-NaN operation -- inf-inf,
-0*inf, 0/0, inf/inf -- which ZKF instead defines as +0).
+The transcendentals run at ~4*WMAN mpmath working precision (correct last-bit rounding even at large WMAN) and check the
+model's faithful-rounding contract (see the README); the IEEE checks catch model bugs for the two formats where ZKF
+coincides with IEEE (WEXP/WMAN = 8/24 and 11/53). The IEEE functions return None where ZKF and IEEE diverge and no
+independent cross-check exists (non-IEEE format, non-canonical inf/zero, a subnormal result, or an IEEE-NaN operation --
+inf-inf, 0*inf, 0/0, inf/inf -- which ZKF instead defines as +0).
 
 Multi-operand functions require both operands to share a format (a mismatch raises ValueError, as in the model).
 
@@ -46,7 +46,14 @@ def exp2(z: Zkf) -> Zkf:
     if e >= fmt.wexp - 1:  # mirror the model's out-of-range classification
         return fmt.inf(0) if not z.negative else fmt.zero()
     with _mpmath.workprec(4 * fmt.wman + 80):
-        return _round_mpf(fmt, _mpmath.power(2, _to_mpf(z)))
+        return _round_mpf(fmt, _exp2_exact(z))
+
+
+def _exp2_exact(z: Zkf) -> Any:
+    """2**z UNROUNDED -- the value exp2() rounds. Finite nonzero z inside exp2's range. Exact only while the caller's
+    mpmath precision is at least 4*WMAN + 80 bits."""
+    with _mpmath.workprec(4 * z.fmt.wman + 80):
+        return _mpmath.power(2, _to_mpf(z))
 
 
 def log2(z: Zkf) -> Log2Result:
@@ -59,7 +66,14 @@ def log2(z: Zkf) -> Log2Result:
     if z.negative:
         return Log2Result(fmt.inf(1), True, False)  # log2(x<0) = -inf, domain error
     with _mpmath.workprec(4 * fmt.wman + 80):
-        return Log2Result(_round_mpf(fmt, _mpmath.log(_to_mpf(z), 2)), False, False)
+        return Log2Result(_round_mpf(fmt, _log2_exact(z)), False, False)
+
+
+def _log2_exact(z: Zkf) -> Any:
+    """log2(z) UNROUNDED -- the value log2() rounds. Finite z > 0. Exact only while the caller's mpmath precision is at
+    least 4*WMAN + 80 bits."""
+    with _mpmath.workprec(4 * z.fmt.wman + 80):
+        return _mpmath.log(_to_mpf(z), 2)
 
 
 def sincos(z: Zkf) -> SinCos:
@@ -130,6 +144,9 @@ def _atan2_exact(y: Zkf, x: Zkf) -> tuple[Any, Any]:
     _require_same(y, x)
     with _mpmath.workprec(4 * y.fmt.wman + 80):
         yv, xv = _to_mpf(y), _to_mpf(x)
+        if abs(yv) == abs(xv):  # +-1/8 or +-3/8 turn exactly; the generic quotient can miss 3/8 by an ULP of its own
+            theta = _mpmath.mpf(1 if xv > 0 else 3) / 8
+            return (-theta if yv < 0 else theta), _mpmath.hypot(yv, xv)
         return _mpmath.atan2(yv, xv) / (2 * _mpmath.pi), _mpmath.hypot(yv, xv)
 
 

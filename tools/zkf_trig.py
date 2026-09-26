@@ -17,9 +17,8 @@ generated ``2*pi``), ``cos = +1``; ``GUARD_FF(WMAN)`` places that handoff where 
 ``cos`` is never small, so only sin needs it.
 
 ``--emit`` writes the per-WMAN Verilog cores and the Python data table and ``--check-emit`` fails if the checked-in
-copies have drifted from a fresh run; ``--check`` verifies both operators (and the quadrant) against an ``mpmath``
-ground truth, asserting FAITHFUL rounding -- the result must be one of the two representables bracketing the
-unrounded truth, which near a binade boundary is strictly stronger than a fractional-ULP bound.
+copies have drifted from a fresh run; ``--check`` verifies that both operators (and the quadrant) are faithfully
+rounded against the unrounded ``mpmath`` truth (``zkf_accuracy.py``).
 """
 
 from __future__ import annotations
@@ -36,8 +35,9 @@ from textwrap import dedent
 import mpmath as mp
 
 if __package__:  # python -m tools.<generator>
-    from . import zkf_emit
+    from . import zkf_accuracy, zkf_emit
 else:  # python tools/<generator>.py, or tools/ on sys.path
+    import zkf_accuracy
     import zkf_emit
 
 mp.mp.prec = 400  # generous headroom for the gain/LUT constants and ground-truth rounding
@@ -85,7 +85,7 @@ SINCOS_REGRESSIONS = {(8, 24): [0x3EFFFBD1], (6, 18): [0x3E0044]}
 # pass on the other: at GUARD_ITER 1, (6,16) misses on theta and the first (6,18) entry on magnitude. The next three
 # (6,18) entries sit just below the overflow threshold, where a spurious +inf would break the README's overflow
 # contract. The last (6,18) entry and the (5,16) one straddle the min_normal/2 midpoint from BELOW and ABOVE
-# respectively, so narrowing _ulp_error's midpoint band to one side fails here.
+# respectively, so narrowing zkf_accuracy.faithful's midpoint band to one side fails here.
 ATAN2_REGRESSIONS = {
     (6, 16): [(0x38967F, 0x1DEA13)],
     (6, 18): [
@@ -474,8 +474,8 @@ def _sincos_unit(case: tuple[int, int]) -> tuple[float, float, int, int, int, st
             sok = cok = ok
         else:
             ts, tc, tq = zkf.oracle._sincos_exact(z)
-            ds, sok = _ulp_error(fmt, r.sin.bits, ts)
-            dc, cok = _ulp_error(fmt, r.cos.bits, tc)
+            ds, sok, _ = zkf_accuracy.faithful(fmt, r.sin.bits, ts)
+            dc, cok, _ = zkf_accuracy.faithful(fmt, r.cos.bits, tc)
         qok = r.quadrant == tq
         if not (sok and cok and qok):
             nbad += 1
@@ -498,6 +498,7 @@ def _check() -> list[str]:
     import zkf  # noqa: F401
     import zkf.oracle  # noqa: F401
 
+    zkf_accuracy.self_check()
     print("end-to-end faithful-rounding check (model vs mpmath):")
     # (6,36) carries sincos's underflow decision, which no case above reaches: the smallest representable |sin| is
     # ~2*pi*2**-WFRAC (at x = 1/2 +- 1 ULP), so it drops below min_normal only when BIAS < WFRAC. (8,36) yields zero
@@ -595,69 +596,6 @@ def _stratified_inputs(fmt) -> list[int]:
 
     out.extend(SINCOS_REGRESSIONS.get((fmt.wexp, fmt.wman), []))
     return out
-
-
-def _ulp_error(fmt, got_bits: int, truth, wrap: bool = False) -> tuple[float, bool]:
-    """
-    (error in ULP of the truth's binade, contract-satisfied) against the UNROUNDED truth.
-
-    The two range ends are judged by ENCODING, not by ratio, and report 0.0 on a pass -- so a caller's worst-ULP
-    headline structurally excludes them and the violation COUNT is the load-bearing number, not the maximum.
-
-    Measured against the UNROUNDED truth: comparing encodings with the rounded oracle yields only whole ULPs, which
-    cannot express the margin left. `wrap` measures the circular distance for turns, where +1/2 and -1/2 are one
-    angle.
-    """
-    from zkf import Zkf
-    from zkf.oracle import _round_mpf, _to_mpf, atan2_canon_half
-
-    got = Zkf(fmt, got_bits)
-    with mp.workprec(4 * fmt.wman + 80):
-        rn = _round_mpf(fmt, truth)  # exact only because this workprec block covers the truth's precision
-        min_normal = mp.power(2, 1 - fmt.bias)
-        # A ULP at the truth's own binade is meaningless at the two ends of the range, so compare encodings there.
-        if rn.is_inf or got.is_zero or got.is_inf or abs(truth) < min_normal:
-            ok = got.canonicalize().bits == rn.bits
-            if not ok and rn.is_inf:
-                # Per the README's overflow contract, a truth up to one ULP past the overflow threshold
-                # (max_finite + 1/2 ULP) may come back as max_finite.
-                top = fmt.pack(int(rn.negative), fmt.exp_inf - 1, fmt.frac_mask)
-                tm = abs(_to_mpf(top))
-                ok = got.canonicalize().bits == top.bits and abs(truth) < tm + mp.mpf(1.5) * (
-                    tm - abs(_to_mpf(_adjacent(fmt, top, False)))
-                )
-            elif not ok and truth != 0 and abs(truth) < min_normal:
-                # No subnormals, so +0 and +-min_normal are the only representables bracketing a truth in
-                # (0, min_normal) and both are faithful -- but accepting the pair across the WHOLE band would hide a
-                # result that is wildly wrong yet technically adjacent. Relax only NEAR the midpoint (see the
-                # README). Narrowing by SIDE instead does not work: the operator lands on either, and
-                # ATAN2_REGRESSIONS pins one case of each.
-                near_midpoint = abs(abs(truth) - min_normal / 2) < 2 * min_normal * mp.power(2, -fmt.wfrac)
-                span = {fmt.zero().bits, fmt.pack(int(truth < 0), 1, 0).bits} if near_midpoint else {rn.bits}
-                ok = got.canonicalize().bits in span
-            return (0.0 if ok else float("inf")), ok
-        d = _to_mpf(got) - truth
-        if wrap:
-            d -= mp.nint(d)
-        err = float(abs(d) / mp.power(2, mp.mag(truth) - fmt.wman))  # mag-1 is floor(log2|truth|)
-        # Faithful (see the module docstring) is NOT err < 1: across a power-of-two boundary the spacing halves, so
-        # a result two steps away can measure half an ULP of the truth's coarser binade. Compare encodings instead.
-        span = {rn.bits} if _to_mpf(rn) == truth else {rn.bits, _adjacent(fmt, rn, abs(truth) > abs(_to_mpf(rn))).bits}
-        if wrap:  # -1/2 and +1/2 are one angle, and the contract emits the positive encoding
-            span = {atan2_canon_half(fmt, b) for b in span}
-    return err, got.canonicalize().bits in span
-
-
-def _adjacent(fmt, z, outward: bool):
-    """The neighboring representable of a finite nonzero value, away from zero or toward it (ZKF has no subnormals)."""
-    sign, e, f = int(z.negative), z.exp, z.bits & fmt.frac_mask
-    if outward:
-        if f < fmt.frac_mask:
-            return fmt.pack(sign, e, f + 1)
-        return fmt.inf(sign) if e + 1 >= fmt.exp_inf else fmt.pack(sign, e + 1, 0)
-    if f > 0:
-        return fmt.pack(sign, e, f - 1)
-    return fmt.zero() if e <= 1 else fmt.pack(sign, e - 1, fmt.frac_mask)
 
 
 def _atan2_pairs(fmt) -> list[tuple[int, int]]:
@@ -799,8 +737,10 @@ def _atan2_unit(case: tuple[int, int]) -> tuple[float, float, int, int, tuple | 
             tok = mok = ok
         else:
             tt, tm = zkf.oracle._atan2_exact(y, x)
-            dt, tok = _ulp_error(fmt, r.theta.bits, tt, wrap=True)  # turns wrap: +1/2 and -1/2 are one angle
-            dm, mok = _ulp_error(fmt, r.magnitude.bits, tm)
+            dt, tok, _ = zkf_accuracy.faithful(
+                fmt, r.theta.bits, tt, wrap=True
+            )  # turns wrap: +1/2 and -1/2 are one angle
+            dm, mok, _ = zkf_accuracy.faithful(fmt, r.magnitude.bits, tm)
         if not (tok and mok):
             nbad += 1
             if bad is None:
@@ -823,11 +763,18 @@ def _check_atan2() -> list[str]:
     print("atan2 end-to-end faithful-rounding check (model vs mpmath):")
     # (5,16) is atan2's WEXP floor, so the accuracy of the narrowest configuration it will elaborate is measured
     # rather than assumed. It stays cheap because the corpus fans over the exponent range, i.e. it is O(2**WEXP) --
-    # which is also why nothing above WEXP=11 belongs here: _ulp_error alone costs ~2.6 s/call at WEXP=30.
+    # which is also why nothing above WEXP=11 belongs here: zkf_accuracy.faithful alone costs ~2.6 s/call at WEXP=30.
     atan2_cases = [*CHECK_CASES, (5, 16)]
     assert not (
         ATAN2_REGRESSIONS.keys() - set(atan2_cases)
     ), f"ATAN2_REGRESSIONS entries for unchecked formats: {sorted(ATAN2_REGRESSIONS.keys() - set(atan2_cases))}"
+    # The diagonals are the representable thetas the generic path reaches: they must come exact (zkf_accuracy.faithful).
+    for wexp, wman in atan2_cases:
+        fmt = zkf.ZkfFormat(wexp, wman)
+        for e, f in [(fmt.bias, 0), (1, 1), (fmt.exp_inf - 1, fmt.frac_mask), (fmt.bias + 1, fmt.frac_mask // 3)]:
+            for ys, xs in [(0, 0), (0, 1), (1, 0), (1, 1)]:
+                theta, _ = zkf.oracle._atan2_exact(fmt.pack(ys, e, f), fmt.pack(xs, e, f))
+                assert theta == mp.mpf((-1) ** ys * (3 if xs else 1)) / 8, f"inexact diagonal theta at {fmt}"
     failures = []
     with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=_MP_CONTEXT) as ex:
         for (wexp, wman), (worst_t, worst_m, nbad, count, bad) in zip(atan2_cases, ex.map(_atan2_unit, atan2_cases)):

@@ -14,7 +14,7 @@ Both reduce to a per-segment polynomial (truncating fixed-point Horner, ``zkf/rt
 Degree ``D`` is a closed-form function of ``WMAN`` (so is the pipeline depth); ``K`` (segment count) is then the
 smallest meeting the accuracy target. Table content depends on ``WMAN`` only -- the helpers live on the unit interval;
 the exponent/integer part is handled by the renormalize/pack stage. ``--emit`` writes the per-WMAN Verilog cores and the
-Python data table; ``--check`` verifies both against an ``mpmath`` ground truth (<= 1 ULP).
+Python data table; ``--check`` verifies both are faithfully rounded against the unrounded ``mpmath`` truth.
 """
 
 from __future__ import annotations
@@ -30,8 +30,9 @@ from textwrap import dedent
 import mpmath as mp
 
 if __package__:  # python -m tools.<generator>
-    from . import zkf_emit
+    from . import zkf_accuracy, zkf_emit
 else:  # python tools/<generator>.py, or tools/ on sys.path
+    import zkf_accuracy
     import zkf_emit
 
 mp.mp.prec = 280  # generous headroom for coefficient fitting and ground-truth rounding
@@ -45,7 +46,7 @@ FUNCS = ("exp2", "log2")
 
 # Fixed-point fractional headroom below the WMAN significand: reduced-argument width (exp2 FF = WMAN+GUARD) and the
 # coefficient/result scale (CF = WMAN+GUARD). GUARD = ERR_GUARD + 4 = 12 puts the round bit ~7 bits clear of the fit +
-# truncating-Horner error floor, keeping the operators faithfully rounded; shrinking it breaks the --check assertion.
+# truncating-Horner error floor, keeping the operators faithfully rounded.
 GUARD = 12
 ERR_GUARD = 8  # helper relative-error budget exponent: target < 2**-(WMAN + ERR_GUARD)
 
@@ -58,9 +59,12 @@ ACC_MARGIN = 1  # extra accumulator bits above the measured maximum, guarding ag
 WMAN_MIN, WMAN_MAX = 16, 53
 SUPPORTED_WMAN = [16, 18, 24, 27, 32, 36, 48, 53]  # FPGA-friendly sizes + the standard IEEE ones
 
-# Random --check samples per (format, operator) for non-exhaustive formats. UNSEEDED, so repeated runs accumulate
-# coverage; override with ZKF_CHECK_SAMPLES=<n>.
-RANDOM_CHECK_SAMPLES = int(os.environ.get("ZKF_CHECK_SAMPLES", "1000000"))
+# Random --check draws per non-exhaustive format, per operator (see _random_inputs). UNSEEDED, so repeated runs
+# accumulate coverage; ZKF_CHECK_SAMPLES=<n> overrides both.
+RANDOM_CHECK_SAMPLES = {
+    func: int(os.environ.get("ZKF_CHECK_SAMPLES", default))
+    for func, default in (("exp2", "300000"), ("log2", "500000"))
+}
 
 
 def ff_bits(wman: int) -> int:
@@ -208,7 +212,7 @@ def _arg_grid(func: str, wman: int, width: int, k: int, seg_base: int, nseg: int
 def measure(func: str, wman: int, k: int, seg_base: int, cf: int, width: int, coeffs: list[list[int]]):
     """
     Return (max relative helper error, max |accumulator| seen) over the probe grid, exercising the truncating
-    Horner so that meeting the accuracy target guarantees faithful rounding by construction.
+    Horner so that the accuracy target covers the arithmetic the hardware performs.
     """
     rw = width - k
     scale = mp.mpf(1 << cf)
@@ -230,7 +234,8 @@ def measure(func: str, wman: int, k: int, seg_base: int, cf: int, width: int, co
 def choose_spec(func: str, wman: int) -> Spec:
     """
     Degree is fixed by degree() (closed-form in WMAN); search K in 1..K_CAP for the smallest ROM meeting the accuracy
-    target. Accuracy is measured THROUGH the truncating Horner, so meeting it guarantees faithful rounding.
+    target. Accuracy is measured THROUGH the truncating Horner (on a sampled grid above 16 bits); --check verifies
+    faithful rounding end to end.
     """
     cf = cf_bits(wman)
     # Reduced-argument (index coordinate) width: exp2 FF = WMAN+GUARD; log2 uses WMAN (v is a WFRAC+1 = WMAN-bit fraction).
@@ -260,6 +265,12 @@ def choose_spec(func: str, wman: int) -> Spec:
                 assert all(c >= 0 for seg in coeffs for c in seg), (
                     f"exp2 WMAN={wman}: a fitted coefficient is negative; the unsigned Horner grid "
                     f"(ACC_SIGNED=0) would produce wrong bits -- make _zkf_horner signed for exp2 again"
+                )
+                # The significand is the slice acc[CF -: WMAN], so 2**s must stay below 2 (acc < 2**(CF+1)) as s -> 1;
+                # a carry into bit CF+1 would drop the hidden bit silently in both model and RTL.
+                assert max_acc < (1 << (cf + 1)), (
+                    f"exp2 WMAN={wman}: max Horner acc {max_acc} >= 2**(CF+1) (2**{cf + 1}); "
+                    f"the acc[CF -: WMAN] significand slice would wrap"
                 )
             return Spec(func, wman, k, seg_base, d, cf, width - k, cw, accw, coeffs)
     raise RuntimeError(f"degree {d} needs K>K_CAP={K_CAP} for {func} WMAN={wman}: raise K_CAP")
@@ -631,106 +642,297 @@ def _report(all_specs: dict[tuple[str, int], Spec]) -> None:
 # fork lets the pool inherit the freshly-emitted tables; fall back to the default context where fork is unavailable.
 _MP_CONTEXT = multiprocessing.get_context("fork" if "fork" in multiprocessing.get_all_start_methods() else None)
 
+# --check formats: the narrow exhaustive instruments, every supported WMAN, and IEEE binary64. Formats of at most 2**22
+# encodings run exhaustively; the rest draw RANDOM_CHECK_SAMPLES stratified inputs per operator.
+CHECK_CASES = [(2, 16), (3, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53), (11, 53)]
+# The deterministic units (table seams, exp2 binade crossings, log2 near 1) run at these formats.
+UNIT_CASES = [(8, wman) for wman in SUPPORTED_WMAN] + [(11, 53)]
+# Worst error allowed on top of faithfulness, in ULP. Faithfulness already implies < 1, so this fires on its own only
+# once lowered -- to make a drift toward the faithful bound fail rather than just print. Inclusive, since the error is a
+# float: a faithful result just under 1 ULP away can read 1.0.
+ERR_CEILING = 1.0
+_SHARD = 1 << 16  # inputs per pool work unit
 
-# The --check sweeps below run one worker process per (format[/operator]) case over a fork pool, so the ~14M mpmath
-# evaluations spread across all cores. Each unit regenerates its own inputs (random draws are unseeded either way) and
-# returns only its summary, keeping IPC tiny; _ulp_diff and the freshly-emitted tables come from the forked parent.
-def _sweep_unit(case: tuple[int, int]) -> list[tuple[str, int, int, int, str]]:
-    """One (wexp, wman) accuracy sweep for both operators -> [(func, worst_ulp, mismatches, count, tag)]."""
-    import numpy as np
-    import zkf
+
+def _exp2_truth(v):
+    """
+    exp2's unrounded value for the metric. Below 2**-(2*WMAN+40), 2**x lies within 2**-(2*WMAN+39) of 1 -- far inside
+    one rounding interval on either side -- and deep enough (at (11,53), below 2**-291) the fixed working precision
+    collapses it onto 1, which would accept only 1. A same-sign proxy of that magnitude stands in: same RN, faithful set
+    and verdicts. More precision is no fix: the metric accepts at most 4*WMAN+80 bits.
+    """
     import zkf.oracle
-    from zkf import ZkfFormat
 
-    wexp, wman = case
-    fmt = ZkfFormat(wexp, wman)
-    n = 1 << fmt.wfull
-    exhaustive = n <= (1 << 22)
-    inputs = (
-        list(range(n)) if exhaustive else [int(x) for x in np.random.default_rng().integers(0, n, RANDOM_CHECK_SAMPLES)]
-    )
-    tag = "exhaustive" if exhaustive else f"random({len(inputs)})"
+    wman = v.fmt.wman
+    if v.exp - v.fmt.bias >= -(2 * wman + 40):
+        return zkf.oracle._exp2_exact(v)
+    with mp.workprec(4 * wman + 80):
+        return mp.power(2, mp.ldexp(-1 if v.negative else 1, -(2 * wman + 40)))
+
+
+def _verdict(func: str, v, got_bits: int, flags: tuple[bool, bool] = (False, False)) -> tuple[float, bool, bool]:
+    """
+    (error in ULP, faithful, differs from RN) of the result ``got_bits`` -- and, for log2, its (domain_error, pole) --
+    for the input ``v``. Contract inputs (exp2: +-inf, zero, |x| >= 2**(WEXP-1); log2: +inf, zero, x < 0) must match
+    the oracle exactly; the rest are judged against the unrounded truth.
+    """
+    import zkf.oracle
+
+    fmt = v.fmt
+    if func == "exp2":
+        if v.is_inf or v.is_zero or v.exp - fmt.bias >= fmt.wexp - 1:
+            ok = got_bits == zkf.oracle.exp2(v).bits
+            return (0.0 if ok else float("inf")), ok, not ok
+        truth = _exp2_truth(v)
+    else:
+        if v.is_inf or v.is_zero or v.negative:
+            want = zkf.oracle.log2(v)
+            ok = (got_bits, *flags) == (want.value.bits, want.domain_error, want.pole)
+            return (0.0 if ok else float("inf")), ok, not ok
+        truth = zkf.oracle._log2_exact(v)
+    err, ok, rn = zkf_accuracy.faithful(fmt, got_bits, truth)
+    return err, ok and not any(flags), got_bits != rn
+
+
+def _near(fmt, bases, span: int) -> list[int]:
+    """Every encoding within ``span`` steps of each base, staying on the base's side of zero."""
+    out = set()
+    for b in bases:
+        sign = b & (1 << fmt.sign_shift)
+        mag = b ^ sign
+        out.update(
+            sign | m for m in range(max(1 << fmt.wfrac, mag - span), min(mag + span + 1, fmt.exp_inf << fmt.wfrac))
+        )
+    return sorted(out)
+
+
+def _edge_inputs(fmt) -> list[int]:
+    """+-inf, +-0, zero and infinity exponents carrying a fraction, and exp2's range cut with its in-range side."""
+    top = fmt.bias + fmt.wexp - 1  # exp2: |x| >= 2**(WEXP-1) is out of range
     out = []
-    for func in ("exp2", "log2"):
-        worst = ne = 0
-        for b in inputs:
-            v = zkf.Zkf(fmt, b)
-            got, want = (
-                (v.exp2().bits, zkf.oracle.exp2(v).bits)
-                if func == "exp2"
-                else (v.log2().value.bits, zkf.oracle.log2(v).value.bits)
-            )
-            u = _ulp_diff(fmt, got, want)
-            worst = max(worst, u)
-            ne += u > 0
-        out.append((func, worst, ne, len(inputs), tag))
+    for s in (0, 1):
+        for e, f in [
+            (0, 0),
+            (0, 1),
+            (fmt.exp_inf, 0),
+            (fmt.exp_inf, fmt.frac_mask),
+            (top, 0),
+            (top - 1, fmt.frac_mask),
+        ]:
+            out.append(fmt.pack(s, e, f).bits)
     return out
 
 
-def _near1_unit(wman: int) -> tuple[int, int, int, int]:
-    """log2 near-x=1 cancellation guard for one WMAN -> (worst_ulp, mismatches, count, span)."""
-    import zkf
-    import zkf.oracle
-    from zkf import ZkfFormat
+def _random_inputs(func: str, fmt, n: int) -> list[int]:
+    """
+    ``n`` draws, uniform in the fraction and stratified in the exponent. exp2: both signs over [-FF, WEXP-2], where the
+    reduced argument is nonzero (below it _boundary_inputs keeps a stratum). log2: x > 0, half the draws at |e| <= 2,
+    where the kernel's error shows, half over every normal exponent.
+    """
+    import numpy as np
 
-    near1 = int(os.environ.get("ZKF_NEAR1_SAMPLES", str(1 << 16)))
-    fmt = ZkfFormat(8, wman)
-    span = min(near1, 1 << fmt.wfrac)
-    fmax = (1 << fmt.wfrac) - 1
-    inputs = [((fmt.bias - 1) << fmt.wfrac) | f for f in range(fmax - span + 1, fmax + 1)]  # x -> 1 from below
-    inputs += [(fmt.bias << fmt.wfrac) | f for f in range(span)]  # x -> 1 from above
-    worst = ne = 0
-    for b in inputs:
-        v = zkf.Zkf(fmt, b)
-        u = _ulp_diff(fmt, v.log2().value.bits, zkf.oracle.log2(v).value.bits)
-        worst = max(worst, u)
-        ne += u > 0
-    return worst, ne, len(inputs), span
+    rng = np.random.default_rng()
+    frac = rng.integers(0, 1 << fmt.wfrac, n, dtype=np.int64)
+    if func == "exp2":
+        e = rng.integers(max(-ff_bits(fmt.wman), 1 - fmt.bias), fmt.wexp - 1, n)
+        sign = rng.integers(0, 2, n)
+    else:
+        e = np.where(rng.random(n) < 0.5, rng.integers(-2, 3, n), rng.integers(1 - fmt.bias, fmt.bias + 1, n))
+        e = np.clip(e, 1 - fmt.bias, fmt.bias)
+        sign = np.zeros(n, dtype=np.int64)
+    return [(int(s) << fmt.sign_shift) | ((int(x) + fmt.bias) << fmt.wfrac) | int(f) for s, x, f in zip(sign, e, frac)]
 
 
-def _boundary_unit(wman: int) -> tuple[int, int, int]:
-    """exp2 binade/1.0-seam/saturation boundary guard for one WMAN -> (worst_ulp, mismatches, count)."""
-    import zkf
-    import zkf.oracle
-    from zkf import ZkfFormat
+def _boundary_inputs(fmt) -> list[int]:
+    """
+    exp2: a band around every integer x (binade crossings; the ends include the saturation edges); bands at the
+    crossings of the representables next to 1 (x = log2(1 + k*2**-WFRAC), log2(1 - k*2**-WMAN)), where a faithfulness
+    gate is sharpest; x = -2**-FF, where the Horner accumulator peaks; and a stratum per exponent below -FF.
+    """
+    from zkf.oracle import _mpf_to_fraction
 
     eb = int(os.environ.get("ZKF_EXP2_BAND", "48"))
-    fmt = ZkfFormat(8, wman)
-    wfull_mask = (1 << fmt.wfull) - 1
-    nf = 1 << fmt.wfrac
-    ins = set()
-    # x -> 0: the 1.0 seam, dense low/high fracs, both signs.
-    for e in range(1, min(5, fmt.exp_inf)):
-        for s in (0, 1):
-            for fr in set(list(range(eb)) + list(range(max(0, nf - eb), nf))):
-                ins.add((s << fmt.sign_shift) | (e << fmt.wfrac) | fr)
-    for N in range(-(1 << (fmt.wexp - 1)) + 1, 1 << (fmt.wexp - 1)):  # band straddling every integer x
-        if N == 0:
-            base = 0
-        else:
-            a = abs(N)
-            ee = a.bit_length() - 1
-            if ee > fmt.wfrac:
-                continue
-            base = (
-                ((1 if N < 0 else 0) << fmt.sign_shift)
-                | ((fmt.bias + ee) << fmt.wfrac)
-                | (((a - (1 << ee)) << (fmt.wfrac - ee)) & (nf - 1))
-            )
-        for dk in range(-eb, eb + 1):
-            ins.add((base + dk) & wfull_mask)
-    worst = ne = 0
-    for b in ins:
+    ff = ff_bits(fmt.wman)
+    bases = [fmt.encode(n).bits for n in range(1 - (1 << (fmt.wexp - 1)), 1 << (fmt.wexp - 1)) if n]
+    with mp.workprec(4 * fmt.wman + 80):
+        for k in range(1, 5):
+            for x in (mp.log(1 + mp.ldexp(k, -fmt.wfrac), 2), mp.log(1 - mp.ldexp(k, -fmt.wman), 2)):
+                bases.append(fmt.encode(_mpf_to_fraction(x)).bits)
+    out = _near(fmt, bases, eb) + _near(fmt, [fmt.pack(1, fmt.bias - ff, 0).bits], 4)
+    for e in range(1 - fmt.bias, -ff):
+        out += [fmt.pack(s, fmt.bias + e, f).bits for s in (0, 1) for f in (0, 1, 1 << (fmt.wfrac - 1), fmt.frac_mask)]
+    return out
+
+
+def _seam_inputs(func: str, fmt) -> list[int]:
+    """
+    Neighborhoods of every reachable table-segment boundary, where adjacent fits meet, and of log2's sqrt(2) reduction
+    threshold. exp2 selects the segment by frac(x) (boundaries at x = +-j/2**K); log2 by v = 2**WFRAC + 2*frac below
+    the threshold and v = frac at or above it, in the binades on either side of 1.
+    """
+    from fractions import Fraction
+
+    from zkf._reference import trans_spec, trans_sqrt2_threshold
+
+    spec = trans_spec(func, fmt.wman)
+    k, rw = spec["k"], spec["rw"]
+    if func == "exp2":
+        bases = [fmt.encode(Fraction(j, 1 << k) - d).bits for j in range(1, 1 << k) for d in (0, 1)]
+    else:
+        half, thr = 1 << fmt.wfrac, trans_sqrt2_threshold(fmt.wfrac)
+        fracs = {thr - half}
+        for vb in range(0, 1 << fmt.wman, 1 << rw):
+            if half <= vb and (vb - half) // 2 < thr - half:
+                fracs.add((vb - half) // 2)
+            if thr - half <= vb < half:
+                fracs.add(vb)
+        bases = [fmt.pack(0, fmt.bias + e, f).bits for e in (-1, 0) for f in sorted(fracs)]
+    return _near(fmt, bases, 16)
+
+
+def _near1_inputs(fmt) -> list[int]:
+    """
+    log2: the fractions straddling x = 1 (the cancellation the symmetric reduction removed -- random draws never hit
+    them), a log-uniform ladder x = 1 +- 2**-j and x = 2**(+-2**-j) out to where they meet, and x = 2**(+-2**j),
+    min_normal and max_finite, whose results cross a power of two.
+    """
+    from fractions import Fraction
+
+    from zkf.oracle import _mpf_to_fraction
+
+    near1 = int(os.environ.get("ZKF_NEAR1_SAMPLES", str(1 << 16)))
+    span = min(near1, 1 << fmt.wfrac)
+    fmax = (1 << fmt.wfrac) - 1
+    out = [((fmt.bias - 1) << fmt.wfrac) | f for f in range(fmax - span + 1, fmax + 1)]
+    out += [(fmt.bias << fmt.wfrac) | f for f in range(span)]
+    bases = [fmt.pack(0, 1, 0).bits, fmt.pack(0, fmt.exp_inf - 1, fmt.frac_mask).bits]
+    bases += [fmt.encode(Fraction(2) ** (s * (1 << j))).bits for j in range(fmt.wexp - 1) for s in (1, -1)]
+    with mp.workprec(4 * fmt.wman + 80):
+        for j in range(1, fmt.wman):
+            for x in (
+                1 + mp.ldexp(1, -j),
+                1 - mp.ldexp(1, -j),
+                mp.power(2, mp.ldexp(1, -j)),
+                mp.power(2, -mp.ldexp(1, -j)),
+            ):
+                bases.append(fmt.encode(_mpf_to_fraction(x)).bits)
+    return out + _near(fmt, bases, 4)
+
+
+def _inputs(func: str, wexp: int, wman: int, kind: str, shard: int, nshards: int) -> list[int]:
+    from zkf import ZkfFormat
+
+    fmt = ZkfFormat(wexp, wman)
+    if kind == "random":
+        return _random_inputs(func, fmt, RANDOM_CHECK_SAMPLES[func] // nshards)
+    full = {
+        "exhaustive": lambda: range(1 << fmt.wfull),
+        "edges": lambda: _edge_inputs(fmt),
+        "boundary": lambda: _boundary_inputs(fmt),
+        "seam": lambda: _seam_inputs(func, fmt),
+        "near1": lambda: _near1_inputs(fmt),
+    }[kind]()
+    return full[shard::nshards]
+
+
+# The --check sweep runs one worker process per work unit over a fork pool, spreading the mpmath evaluations across all
+# cores. Each unit builds its own inputs and returns only its summary, keeping IPC tiny.
+def _check_unit(unit: tuple) -> tuple:
+    """One work unit -> (unit key, worst ULP, not faithful, differs from RN, count, first bad)."""
+    import zkf
+    from zkf import ZkfFormat
+
+    func, wexp, wman, kind, shard, nshards = unit
+    fmt = ZkfFormat(wexp, wman)
+    worst, nbad, nrn, count, bad = 0.0, 0, 0, 0, None
+    for b in _inputs(*unit):
         v = zkf.Zkf(fmt, b)
-        u = _ulp_diff(fmt, v.exp2().bits, zkf.oracle.exp2(v).bits)
-        worst = max(worst, u)
-        ne += u > 0
-    return worst, ne, len(ins)
+        if func == "exp2":
+            err, ok, differs = _verdict(func, v, v.exp2().bits)
+        else:
+            r = v.log2()
+            err, ok, differs = _verdict(func, v, r.value.bits, (r.domain_error, r.pole))
+        count += 1
+        nrn += differs
+        worst = max(worst, err)
+        if not ok:
+            nbad += 1
+            bad = bad or (hex(b), err)
+    return (func, wexp, wman, kind), worst, nbad, nrn, count, bad
 
 
-def _check() -> None:
-    """End-to-end accuracy check vs mpmath via the bit-exact model (imports only the public zkf package)."""
+def _units() -> list[tuple]:
+    units = []
+    for wexp, wman in CHECK_CASES:
+        n = 1 << (wexp + wman)  # 2**WFULL
+        kind = "exhaustive" if n <= (1 << 22) else "random"
+        for func in FUNCS:
+            nshards = max(1, (n if kind == "exhaustive" else RANDOM_CHECK_SAMPLES[func]) // _SHARD)
+            units += [(func, wexp, wman, kind, i, nshards) for i in range(nshards)]
+            units.append((func, wexp, wman, "edges", 0, 1))
+    for wexp, wman in UNIT_CASES:
+        for func, kind in [("exp2", "boundary"), ("exp2", "seam"), ("log2", "seam"), ("log2", "near1")]:
+            units += [(func, wexp, wman, kind, i, 4) for i in range(4)]
+    return units
+
+
+def _passes(worst: float, not_faithful: int) -> bool:
+    return not_faithful == 0 and worst <= ERR_CEILING
+
+
+def _self_check() -> None:
+    """
+    The verdict path must reject what the pre-0.7.0 integer-ULP gate passed, and accept what is faithful. Each case
+    guards a specific way the metric could silently decay.
+    """
+    import zkf.oracle
+    from zkf import Zkf, ZkfFormat
+
+    zkf_accuracy.self_check()
+    f24, f53 = ZkfFormat(8, 24), ZkfFormat(11, 53)
+    cases = [
+        # Issue #12: one encoding step past RN on the far side, 1.5 ULP from the truth; RN and the near side pass.
+        ("exp2", f24, 0x3F0005A1, 0x3FB507B7, False),
+        ("exp2", f24, 0x3F0005A1, 0x3FB507B6, True),
+        ("exp2", f24, 0x3F0005A1, 0x3FB507B5, True),
+        ("log2", f24, 0x3FC00000, 0x3F15C019, False),  # 1.23 ULP, one step from RN
+        ("log2", f24, 0x3FC00000, 0x3F15C01A, True),
+        # Unfaithful at under 1 ULP across a power of two: catches a metric decayed to err < 1.
+        ("exp2", f24, 0x30000000, 0x3F7FFFFF, False),
+        ("log2", f24, 0x5F800001, 0x427FFFFF, False),
+        # An exact result admits nothing else: log2(8) = 3.
+        ("log2", f24, 0x41000000, 0x403FFFFF, False),
+        ("log2", f24, 0x41000000, 0x40400001, False),
+        # Tiny x at (11,53): 2**x sits just above (below) 1, so 1 and its neighbor on that side are faithful.
+        ("exp2", f53, 0x0010000000000000, 0x3FF0000000000001, True),
+        ("exp2", f53, 0x0010000000000000, 0x3FEFFFFFFFFFFFFF, False),
+        ("exp2", f53, 0x8010000000000000, 0x3FEFFFFFFFFFFFFF, True),
+        ("exp2", f53, 0x8010000000000000, 0x3FF0000000000001, False),
+        ("exp2", f24, 0xC2FF0000, 0x80000000, False),  # exp2(-127.5) rounds to +0; -0 is not canonical
+        ("exp2", f24, 0xC2FF0000, 0x00000000, True),
+    ]
+    for func, fmt, x, got, want in cases:
+        err, ok, _ = _verdict(func, Zkf(fmt, x), got)
+        assert ok == want, f"self-check: {func}({x:#x}) -> {got:#x} judged {ok} ({err:.4f} ULP), expected {want}"
+    _, ok, _ = _verdict("log2", Zkf(f24, 0x41000000), 0x40400000, (True, False))
+    assert not ok, "self-check: a finite log2 result carrying domain_error passed"
+    assert _passes(ERR_CEILING, 0), "self-check: a unit at exactly ERR_CEILING fails (see ERR_CEILING)"
+    # Representable truths must come exact (see zkf_accuracy.faithful).
+    for wexp, wman in sorted(set(CHECK_CASES + UNIT_CASES)):
+        fmt = ZkfFormat(wexp, wman)
+        for n in range(1 - (1 << (wexp - 1)), 1 << (wexp - 1)):
+            if n:
+                assert _exp2_truth(fmt.encode(n)) == mp.ldexp(1, n), f"self-check: inexact exp2({n}) at {fmt}"
+        for e in range(1 - fmt.bias, fmt.bias + 1):
+            assert (
+                zkf.oracle._log2_exact(fmt.pack(0, fmt.bias + e, 0)) == e
+            ), f"self-check: inexact log2(2**{e}) at {fmt}"
+
+
+def _check() -> list[str]:
+    """End-to-end faithful-rounding check vs mpmath via the bit-exact model. Returns the failures."""
     import sys
+    from collections import defaultdict
     from concurrent.futures import ProcessPoolExecutor
 
     sys.path.insert(0, str(REPO))
@@ -739,54 +941,25 @@ def _check() -> None:
     import zkf  # noqa: F401
     import zkf.oracle  # noqa: F401
 
+    _self_check()
+    agg = defaultdict(lambda: [0.0, 0, 0, 0, None])
     with ProcessPoolExecutor(max_workers=os.cpu_count() or 1, mp_context=_MP_CONTEXT) as ex:
-        print("end-to-end correct-rounding check (model vs mpmath):")
-        # 2/16 and 3/16 run exhaustive; wider formats random. Covers all of SUPPORTED_WMAN.
-        cases = [(2, 16), (3, 16), (6, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53)]
-        sweep_cases = [(we, wm) for we, wm in cases if wm in SUPPORTED_WMAN]
-        for (wexp, wman), res in zip(sweep_cases, ex.map(_sweep_unit, sweep_cases)):
-            for func, worst, ne, count, tag in res:
-                status = "OK " if worst <= 1 else "BAD"
-                print(f"  {status} {func} {wexp}/{wman:<3} max_ulp={worst} mismatches={ne}/{count} ({tag})")
-                assert worst <= 1, f"{func} {wexp}/{wman}: max ULP {worst} > 1 (faithful-rounding contract violated)"
-
-        # --- log2 near-x=1 regression guard (the cancellation class the symmetric reduction fixed) ---
-        # As x -> 1, log2 -> 0 with arbitrarily fine ULP; the naive reduction cancelled and lost it (was ~1.9e12 ULP at
-        # m53 -- a real shipped defect). Random sampling can NEVER hit these vanishing-measure inputs, so sweep the
-        # extreme fractions straddling x=1 for every WMAN, every run. ZKF_NEAR1_SAMPLES tunes depth (default 2^16).
-        near1 = int(os.environ.get("ZKF_NEAR1_SAMPLES", str(1 << 16)))
-        print(f"log2 near-x=1 regression guard (symmetric-reduction cancellation; top/bottom {near1} fracs each side):")
-        for wman, (worst, ne, count, span) in zip(SUPPORTED_WMAN, ex.map(_near1_unit, SUPPORTED_WMAN)):
-            status = "OK " if worst <= 1 else "BAD"
-            print(f"  {status} log2 near-1 m{wman:<3} max_ulp={worst} mismatches={ne}/{count} (span {span})")
-            assert (
-                worst <= 1
-            ), f"log2 m{wman} near-x=1: max ULP {worst} > 1 (symmetric-reduction cancellation regression)"
-
-        # --- exp2 boundary regression guard (binade crossings + 1.0 seam + saturation) ---
-        # exp2 has no log2-style cancellation, but its rounding-sensitive seams (every integer x, the 1.0 seam, the
-        # over/underflow edge) are undersampled by random too, so sweep a dense band around them for every WMAN, run.
-        eb = int(os.environ.get("ZKF_EXP2_BAND", "48"))
-        print(f"exp2 boundary regression guard (integer/binade crossings + 1.0 seam + saturation; band {eb}):")
-        for wman, (worst, ne, count) in zip(SUPPORTED_WMAN, ex.map(_boundary_unit, SUPPORTED_WMAN)):
-            status = "OK " if worst <= 1 else "BAD"
-            print(f"  {status} exp2 boundary m{wman:<3} max_ulp={worst} mismatches={ne}/{count}")
-            assert worst <= 1, f"exp2 m{wman} boundary: max ULP {worst} > 1 (binade/seam rounding regression)"
-
-
-def _ulp_diff(fmt, a_bits: int, b_bits: int) -> int:
-    """Magnitude of the difference between two ZKF encodings in ULPs along the ordered number line."""
-    return 0 if a_bits == b_bits else abs(_ordered_index(fmt, a_bits) - _ordered_index(fmt, b_bits))
-
-
-def _ordered_index(fmt, bits: int) -> int:
-    """Monotonic integer index of a canonical ZKF value (sign-magnitude -> ordered)."""
-    from zkf import Zkf
-
-    bits = Zkf(fmt, bits).canonicalize().bits
-    sign = (bits >> fmt.sign_shift) & 1
-    mag = bits & ((1 << fmt.sign_shift) - 1)
-    return -mag if sign else mag
+        for key, worst, nbad, nrn, count, bad in ex.map(_check_unit, _units()):
+            a = agg[key]
+            a[0], a[1], a[2], a[3], a[4] = max(a[0], worst), a[1] + nbad, a[2] + nrn, a[3] + count, a[4] or bad
+    print(f"end-to-end faithful-rounding check (model vs mpmath; worst error <= {ERR_CEILING} ULP):")
+    failures = []
+    for (func, wexp, wman, kind), (worst, nbad, nrn, count, bad) in sorted(agg.items()):
+        ok = _passes(worst, nbad)
+        print(
+            f"  {'OK ' if ok else 'BAD'} {func} {f'{wexp}/{wman}':<5} {kind:<10} worst={worst:.4f} not_faithful={nbad} "
+            f"misrounded={nrn}/{count} ({nrn / max(count, 1):.1e})"
+        )
+        if not ok:
+            failures.append(
+                f"{func} {wexp}/{wman} {kind}: worst={worst:.4f} not_faithful={nbad}/{count} first_bad={bad}"
+            )
+    return failures
 
 
 def main() -> None:
@@ -810,7 +983,9 @@ def main() -> None:
     if args.check_emit:
         check_emit(all_specs)
     if args.check:
-        _check()
+        failures = _check()
+        if failures:
+            raise SystemExit("not faithfully rounded:\n  " + "\n  ".join(failures))
 
 
 if __name__ == "__main__":

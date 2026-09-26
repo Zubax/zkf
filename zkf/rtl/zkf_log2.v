@@ -2,7 +2,7 @@
 /// Zero-bubble, throughput-1, no backpressure.
 /// Behavior:
 ///
-///   log2(finite>0) = log2(x), round-to-nearest ties-to-even
+///   log2(finite>0) = log2(x), faithfully rounded
 ///   log2(+inf)     = +inf
 ///   log2(+0)       = -inf, pole=1
 ///   log2(x<0)      = -inf, domain_error=1
