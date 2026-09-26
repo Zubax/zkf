@@ -484,7 +484,7 @@ class Zkf:
         spec = trig_spec(fmt.wman)
         xf, zf = spec["xf"], spec["zf"]
         # const2pi arrives PRE-NARROWED from the table (top WMAN+5 bits == round(2*pi * 2**const2pi_s)); const2pi_s is
-        # the single source of scale for every consuming shift / exp-offset. Mirrors zkf/rtl/zkf_sincos.v.
+        # the single source of scale for every consuming shift / exp-offset. Mirrors zkf/rtl/_zkf_cordic_unit.v.
         const2pi, const2pi_s = spec["const2pi"], spec["const2pi_s"]
         n_sincos = spec["n_sincos"]  # sincos iterations (linear-rotation termination); == table n
         wt = spec["wt"]  # quadrant-local coordinate width (FF - 2)
@@ -590,7 +590,7 @@ class Zkf:
 
         # The shared _zkf_pmul multiplies x_K*kinv_mag (magnitude) and Q*inv_tau (residual + bypass theta). Both
         # constants are PRE-NARROWED to WMAN+5 bits at their native scales (kinv_s, invtau_s), so every dependent shift
-        # is "product-scale minus target-scale" with no fold-back. Mirrors zkf/rtl/zkf_atan2.v.
+        # is "product-scale minus target-scale" with no fold-back. Mirrors zkf/rtl/_zkf_cordic_unit.v.
         kinv_mag, kinv_s = spec["kinv_mag"], spec["kinv_s"]  # narrowed 1/gain (MAG product) + its native scale
         inv_tau, invtau_s = spec["inv_tau"], spec["invtau_s"]  # narrowed 1/(2*pi) (residual + bypass) + native scale
 

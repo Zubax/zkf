@@ -4,6 +4,7 @@ from ._format import OperatorModel as OperatorModel, ZkfFormat as ZkfFormat
 from ._operators import (
     AbsModel as AbsModel,
     Atan2Model as Atan2Model,
+    CordicModel as CordicModel,
     CmpModel as CmpModel,
     AddModel as AddModel,
     AddSubModel as AddSubModel,

@@ -729,6 +729,7 @@ class Log2Model(OperatorModel):
 
 @dataclass(frozen=True)
 class _TrigModel(OperatorModel):
+    _wexp_min = 5  # mirrors _zkf_cordic_unit's WEXP guard (MODE 1/2)
     unroll100: int = 100
     stage_input: int = 0
     stage_product: int = 0
@@ -737,14 +738,15 @@ class _TrigModel(OperatorModel):
     stage_output: int = 0
     wmultiplier: int = 0
 
-    def _check_knobs(self, norm_width: int) -> None:
+    def __post_init__(self) -> None:
+        _check_int_range(self.fmt.wexp, self._wexp_min, 30)  # the ceiling mirrors _zkf_cordic_unit's
+        trig_spec(self.fmt.wman)  # refuses a WMAN without a generated table
         _check_int_range(self.unroll100, 100, None, {50})
         _check_int_range(self.stage_product, 0, 4)
         _check_int_range(self.stage_normalize, 0, 2)
-        if self.stage_normalize == 2 and norm_width < 17:
-            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
-        for value in (self.stage_input, self.stage_pack, self.stage_output):
-            _check_int_range(value, 0, 1)
+        _check_int_range(self.stage_pack, 0, 2)
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_output, 0, 1)
         _check_int_range(self.wmultiplier, 0, None)
 
     @property
@@ -771,11 +773,7 @@ class _TrigModel(OperatorModel):
 @dataclass(frozen=True)
 class SincosModel(_TrigModel):
     module = "zkf_sincos"
-
-    def __post_init__(self) -> None:
-        spec = trig_spec(self.fmt.wman)
-        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_sincos.v's WEXP guard
-        self._check_knobs(spec["const2pi"].bit_length() + spec["wt"] + 1)
+    _wexp_min = 2  # mirrors _zkf_pack's floor
 
     @property
     def latency(self) -> int:
@@ -799,15 +797,6 @@ class SincosModel(_TrigModel):
 class Atan2Model(_TrigModel):
     module = "zkf_atan2"
 
-    def __post_init__(self) -> None:
-        spec = trig_spec(self.fmt.wman)
-        _check_int_range(self.fmt.wexp, 5, 30)  # mirrors zkf_atan2.v's WEXP guard
-        xf = spec["xf"]
-        zf = spec["zf"]
-        wx = xf + 2
-        wquo = 2 * ((xf + 1) // 2) + 1
-        self._check_knobs(max((wx - 1) + self.fmt.wman + 5, wquo + self.fmt.wman + 5, zf + 5))
-
     @property
     def latency(self) -> int:
         spec = trig_spec(self.fmt.wman)
@@ -817,7 +806,7 @@ class Atan2Model(_TrigModel):
         div_cycles = steps + 1
         xycyc = (n * 100 + self.unroll100 - 1) // self.unroll100
         return (
-            8
+            7
             + self.stage_input
             + xycyc
             + div_cycles
@@ -826,6 +815,30 @@ class Atan2Model(_TrigModel):
             + self.stage_pack
             + self.stage_output
         )
+
+
+@dataclass(frozen=True)
+class CordicModel(_TrigModel):
+    module = "zkf_cordic"
+
+    def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
+        return {**params, "LATENCY_ROTATION": self.latency_rotation, "LATENCY_VECTORING": self.latency_vectoring}
+
+    @property
+    def latency_rotation(self) -> int:
+        return SincosModel(self.fmt, **self.config).latency
+
+    @property
+    def latency_vectoring(self) -> int:
+        return Atan2Model(self.fmt, **self.config).latency
+
+    @property
+    def latency(self) -> int:
+        raise ValueError("zkf_cordic's latency depends on the mode: see latency_rotation and latency_vectoring")
+
+    @property
+    def initiation_interval(self) -> int:
+        raise ValueError("zkf_cordic's initiation interval depends on the mode: each mode's latency + 1")
 
 
 def _check_int_range(value: int, min: int | None, max: int | None, /, extra: set[int] | None = None) -> None:

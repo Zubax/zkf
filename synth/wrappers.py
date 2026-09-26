@@ -1426,176 +1426,48 @@ endmodule
 """)
 
 
-def write_sincos_wrapper(spec: ModuleSpec, path: Path) -> None:
-    wfull = spec.wexp + spec.wman
-    params = _verilog_params(spec)
-    path.write_text(f"""`default_nettype none
-
-module {spec.top} (
-    input  wire                 clk,
-    input  wire                 rst,
-    input  wire                 in_valid,
-    output wire                 in_ready,
-    input  wire [{wfull - 1}:0] x,
-    output wire                 out_valid,
-    input  wire                 out_ready,
-    output wire [{wfull - 1}:0] sin,
-    output wire [{wfull - 1}:0] cos,
-    output wire [1:0]           quadrant
-);
-    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
-    {SYNTH_REG_ATTR}
-    reg                 r_in_valid;
-    {SYNTH_REG_ATTR}
-    reg                 r_out_ready;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_x;
-
-    wire                 dut_in_ready;
-    wire                 dut_out_valid;
-    wire [{wfull - 1}:0] dut_sin;
-    wire [{wfull - 1}:0] dut_cos;
-    wire [1:0]           dut_quadrant;
-
-    {SYNTH_REG_ATTR}
-    reg                 r_in_ready;
-    {SYNTH_REG_ATTR}
-    reg                 r_out_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_sin;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_cos;
-    {SYNTH_REG_ATTR}
-    reg [1:0]           r_quadrant;
-
-    assign in_ready  = r_in_ready;
-    assign out_valid = r_out_valid;
-    assign sin       = r_sin;
-    assign cos       = r_cos;
-    assign quadrant  = r_quadrant;
-
-    zkf_sincos #(
-        {params}
-    ) dut (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(r_in_valid),
-        .in_ready(dut_in_ready),
-        .x(r_x),
-        .out_valid(dut_out_valid),
-        .out_ready(r_out_ready),
-        .sin(dut_sin),
-        .cos(dut_cos),
-        .quadrant(dut_quadrant)
-    );
-
-    always @(posedge clk) begin
-        if (rst) begin
-            r_in_valid  <= 1'b0;
-            r_in_ready  <= 1'b0;
-            r_out_valid <= 1'b0;
-            r_out_ready <= 1'b0;
-        end else begin
-            r_in_valid  <= in_valid;
-            r_in_ready  <= dut_in_ready;
-            r_out_valid <= dut_out_valid;
-            r_out_ready <= out_ready;
-        end
-
-        r_x        <= x;
-        r_sin      <= dut_sin;
-        r_cos      <= dut_cos;
-        r_quadrant <= dut_quadrant;
-    end
-endmodule
-
-`default_nettype wire
-""")
+_TRIG_PORTS = {  # the payload ports beyond the in_valid/in_ready/out_valid/out_ready handshake
+    "sincos": (("x",), ("sin", "cos", "quadrant")),
+    "atan2": (("y", "x"), ("theta", "mag")),
+    "cordic": (("vectoring", "a", "b"), ("r0", "r1", "quadrant")),
+}
 
 
-def write_atan2_wrapper(spec: ModuleSpec, path: Path) -> None:
-    wfull = spec.wexp + spec.wman
-    params = _verilog_params(spec)
-    path.write_text(f"""`default_nettype none
-
-module {spec.top} (
-    input  wire                 clk,
-    input  wire                 rst,
-    input  wire                 in_valid,
-    output wire                 in_ready,
-    input  wire [{wfull - 1}:0] y,
-    input  wire [{wfull - 1}:0] x,
-    output wire                 out_valid,
-    input  wire                 out_ready,
-    output wire [{wfull - 1}:0] theta,
-    output wire [{wfull - 1}:0] mag
-);
-    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
-    {SYNTH_REG_ATTR}
-    reg                 r_in_valid;
-    {SYNTH_REG_ATTR}
-    reg                 r_out_ready;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_y;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_x;
-
-    wire                 dut_in_ready;
-    wire                 dut_out_valid;
-    wire [{wfull - 1}:0] dut_theta;
-    wire [{wfull - 1}:0] dut_mag;
-
-    {SYNTH_REG_ATTR}
-    reg                 r_in_ready;
-    {SYNTH_REG_ATTR}
-    reg                 r_out_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_theta;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_mag;
-
-    assign in_ready  = r_in_ready;
-    assign out_valid = r_out_valid;
-    assign theta     = r_theta;
-    assign mag       = r_mag;
-
-    zkf_atan2 #(
-        {params}
-    ) dut (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(r_in_valid),
-        .in_ready(dut_in_ready),
-        .y(r_y),
-        .x(r_x),
-        .out_valid(dut_out_valid),
-        .out_ready(r_out_ready),
-        .theta(dut_theta),
-        .mag(dut_mag)
-    );
-
-    always @(posedge clk) begin
-        if (rst) begin
-            r_in_valid  <= 1'b0;
-            r_in_ready  <= 1'b0;
-            r_out_valid <= 1'b0;
-            r_out_ready <= 1'b0;
-        end else begin
-            r_in_valid  <= in_valid;
-            r_in_ready  <= dut_in_ready;
-            r_out_valid <= dut_out_valid;
-            r_out_ready <= out_ready;
-        end
-
-        r_y     <= y;
-        r_x     <= x;
-        r_theta <= dut_theta;
-        r_mag   <= dut_mag;
-    end
-endmodule
-
-`default_nettype wire
-""")
+def write_trig_wrapper(spec: ModuleSpec, path: Path) -> None:
+    inputs, outputs = _TRIG_PORTS[spec.kind]
+    widths = {"vectoring": "", "quadrant": "[1:0] "}
+    w = {name: widths.get(name, f"[{spec.wexp + spec.wman - 1}:0] ") for name in inputs + outputs}
+    w.update({name: "" for name in ("in_valid", "in_ready", "out_valid", "out_ready")})
+    head = ("in_valid", "in_ready", *inputs, "out_valid", "out_ready", *outputs)
+    direction = {name: "output" if name in ("in_ready", "out_valid", *outputs) else "input " for name in head}
+    captured = ("in_valid", "out_ready", *inputs)
+    driven = ("in_ready", "out_valid", *outputs)
+    control = (("in_valid", "in_valid"), ("in_ready", "dut_in_ready"), ("out_valid", "dut_out_valid"))
+    control += (("out_ready", "out_ready"),)
+    connections = {name: f"r_{name}" if name in captured else f"dut_{name}" for name in head}
+    lines = ["`default_nettype none", "", f"module {spec.top} (", "    input  wire clk,", "    input  wire rst,"]
+    lines += [f"    {direction[n]} wire {w[n]}{n}{',' if i < len(head) - 1 else ''}" for i, n in enumerate(head)]
+    lines += [
+        ");",
+        "    // Measurement harness: register every DUT I/O so the timing report includes register-to-register",
+    ]
+    lines += ["    // paths only."]
+    for name in captured:
+        lines += [f"    {SYNTH_REG_ATTR}", f"    reg {w[name]}r_{name};"]
+    lines += [f"    wire {w[name]}dut_{name};" for name in driven]
+    for name in driven:
+        lines += [f"    {SYNTH_REG_ATTR}", f"    reg {w[name]}r_{name};"]
+    lines += [f"    assign {name} = r_{name};" for name in driven]
+    lines += [f"    zkf_{spec.kind} #(", f"        {_verilog_params(spec)}", "    ) dut (", "        .clk(clk),"]
+    lines += ["        .rst(rst),"] + [f"        .{n}({connections[n]})," for n in head]
+    lines[-1] = lines[-1].rstrip(",")
+    lines += ["    );", "    always @(posedge clk) begin", "        if (rst) begin"]
+    lines += [f"            r_{name} <= 1'b0;" for name, _ in control] + ["        end else begin"]
+    lines += [f"            r_{name} <= {source};" for name, source in control] + ["        end"]
+    lines += [f"        r_{name} <= {name};" for name in inputs] + [
+        f"        r_{name} <= dut_{name};" for name in outputs
+    ]
+    path.write_text("\n".join(lines + ["    end", "endmodule", "", "`default_nettype wire", ""]))
 
 
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:
@@ -1637,9 +1509,7 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_exp2_wrapper(spec, path)
     elif spec.kind == "log2":
         write_log2_wrapper(spec, path)
-    elif spec.kind == "sincos":
-        write_sincos_wrapper(spec, path)
-    elif spec.kind == "atan2":
-        write_atan2_wrapper(spec, path)
+    elif spec.kind in _TRIG_PORTS:
+        write_trig_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")

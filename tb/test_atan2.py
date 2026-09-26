@@ -22,7 +22,7 @@ from zkf_operands import (
     saturating_y,
 )
 from zkf_params import check_width, float_context
-from zkf_stream import drive_unsigned, start_clock
+from zkf_stream import drive_unsigned, expect_reaccept, reset_boundaries, start_clock
 
 
 @dataclass(frozen=True)
@@ -247,6 +247,7 @@ async def atan2_runtime_cases(dut) -> None:
             )
         exp = {"theta": case.theta, "mag": case.mag}
         assert got == exp, f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
+        await expect_reaccept(dut, f"{context.prefix()} case={index}")
         checked += 1
     assert checked == len(cases), f"{context.prefix()} checked {checked}, expected {len(cases)}"
 
@@ -307,3 +308,34 @@ async def atan2_backpressure(dut) -> None:
         await RisingEdge(dut.clk)
         guard += 1
         assert guard < timeout, f"{context.prefix()} bp: in_ready did not recover after consume"
+
+
+@cocotb.test()
+async def atan2_reset_boundaries(dut) -> None:
+    context = float_context("atan2")
+    fmt = ZkfFormat(context.wexp, context.wman)
+    cases = [c for c in cases_for(fmt, "directed", context.seed, 0) if c.theta and c.mag]
+    dropped = cases[0]
+    kept = next(c for c in cases if (c.theta, c.mag) != (dropped.theta, dropped.mag))
+
+    def issue(case: Atan2Case) -> None:
+        dut.in_valid.value = 1
+        drive_unsigned(dut.y, case.y)
+        drive_unsigned(dut.x, case.x)
+
+    def idle() -> None:
+        dut.in_valid.value = 0
+        drive_unsigned(dut.y, mask(fmt.wfull))
+        drive_unsigned(dut.x, mask(fmt.wfull))
+
+    await reset_boundaries(
+        dut,
+        context.prefix(),
+        [(dropped, kept)],
+        issue,
+        idle,
+        lambda: {"theta": int(dut.theta.value), "mag": int(dut.mag.value)},
+        lambda case: {"theta": case.theta, "mag": case.mag},
+        lambda case: case.describe(fmt),
+        8 * (context.wman + 64),
+    )

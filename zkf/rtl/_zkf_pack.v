@@ -241,7 +241,7 @@ endmodule
 /// Delay a sideband payload through the same input + output stages as _zkf_pack: pass STAGE_INPUT / STAGE_OUTPUT
 /// to match it. When changing the packer pipeline, update this one as well.
 /// Total delay in cycles = STAGE_INPUT + STAGE_OUTPUT (combinational pass-through when both are 0).
-module _zkf_pack_delay #(parameter W = 1, parameter STAGE_INPUT = 0, parameter STAGE_OUTPUT = 0)(
+module _zkf_pack_delay #(parameter W = 1, parameter integer STAGE_INPUT = 0, parameter integer STAGE_OUTPUT = 0)(
     input wire clk, input wire [W-1:0] x, output wire [W-1:0] y);
     zkf_pipe #(.W(W), .N(STAGE_INPUT + STAGE_OUTPUT)) u_pipe (
         .clk(clk), .rst(1'b0),

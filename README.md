@@ -26,7 +26,7 @@ are FSM-based and offer limited throughput.
 The zero-bubble ones offer the conventional `in_valid`/`out_valid` interface;
 those with limited throughput extend it with `in_ready`/`out_ready` handshake.
 
-All modules have fixed data-independent latency known at elaboration time.
+All modules have fixed data-independent latency known at elaboration time for each operating mode.
 
 The two main parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand;
 the most significant bit of the significand is not stored, but there is a sign bit,
@@ -73,6 +73,7 @@ The module fails synthesis if the supplied value disagrees with its real stage c
 the latency cannot slip through unnoticed -- the build breaks and points you at the stale constant.
 Pair `LATENCY` with `zkf_pipe` to delay your own control or sideband signals so they land with the operator's output.
 A zero `LATENCY` is a special value indicating that the latency should not be checked (the default).
+Some modules may have a separate latency parameter per operating mode, like `zkf_cordic`.
 
 The `LATENCY` value is a sum of some constant baseline number of stages,
 plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).
@@ -112,6 +113,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_log2`            | ⇻ | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
 | `zkf_sincos`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)` for `x` in turns; exposes `quadrant`. | Faithful rounding, see below|
 | `zkf_atan2`           | ⇻ |latency+1| `atan2(y,x)` in turns ∈ (−0.5,0.5] and `hypot(y,x)`.           | Faithful rounding, see below|
+| `zkf_cordic`          | ⇻ |latency+1| `zkf_sincos` or `zkf_atan2`, chosen per transaction.           | As those two, latencies too |
 | `zkf_pipe`            |   | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
 
 #### Notably absent functions

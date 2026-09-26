@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from fractions import Fraction
 
 import cocotb
 import numpy as np
 from cocotb.triggers import RisingEdge
 
 from zkf import ZkfFormat
+from zkf._reference import trig_spec
 from zkf_bits import hex_bits, mask
 from zkf_operands import normal
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_params import check_width, float_context
-from zkf_stream import drive_unsigned, start_clock
+from zkf_stream import drive_unsigned, expect_reaccept, reset_boundaries, start_clock
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,15 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
                 if 1 <= be <= fmt.exp_max_finite:
                     out.append((f"int_turn_{sign}_{k}", normal(fmt, sign, be, 0)))
             out.append((f"large_int_{sign}", normal(fmt, sign, fmt.exp_max_finite, 0)))
+            # The small-angle handoff: the octant-local coordinate crossing tsa, straddled on both sides of the octant
+            # fold in every quadrant (a mis-sized slice compare there silently disables or widens the bypass).
+            spec = trig_spec(fmt.wman)
+            edge = Fraction(spec["tsa"], 1 << (spec["wt"] + 2))
+            for quarter in range(4):
+                for side, center in (("lo", Fraction(quarter, 4) + edge), ("hi", Fraction(quarter + 1, 4) - edge)):
+                    bits = fmt.encode(center).bits
+                    for step in (-2, -1, 0, 1, 2) if (bits >> fmt.wfrac) >= 2 else ():  # skip if it underflows
+                        out.append((f"tsa_{side}_{sign}_{quarter}_{step}", (bits + step) | (sign << fmt.sign_shift)))
             # Tiny phases below the reducer resolution (the bypass): smallest few exponents with assorted fractions.
             for be in (1, 2, 3):
                 if be <= fmt.exp_max_finite:
@@ -169,6 +180,7 @@ async def sincos_runtime_cases(dut) -> None:
         got = {"sin": int(dut.sin.value), "cos": int(dut.cos.value), "quadrant": int(dut.quadrant.value)}
         exp = {"sin": case.sin, "cos": case.cos, "quadrant": case.quadrant}
         assert got == exp, f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
+        await expect_reaccept(dut, f"{context.prefix()} case={index}")
         checked += 1
     assert checked == len(cases), f"{context.prefix()} checked {checked}, expected {len(cases)}"
 
@@ -229,3 +241,32 @@ async def sincos_backpressure(dut) -> None:
         await RisingEdge(dut.clk)
         guard += 1
         assert guard < timeout, f"{context.prefix()} bp: in_ready did not recover after consume"
+
+
+@cocotb.test()
+async def sincos_reset_boundaries(dut) -> None:
+    context = float_context("sincos")
+    fmt = ZkfFormat(context.wexp, context.wman)
+    cases = [c for c in cases_for(fmt, "directed", context.seed, 0) if c.sin and c.cos]
+    dropped = cases[0]
+    kept = next(c for c in cases if (c.sin, c.cos, c.quadrant) != (dropped.sin, dropped.cos, dropped.quadrant))
+
+    def issue(case: SincosCase) -> None:
+        dut.in_valid.value = 1
+        drive_unsigned(dut.x, case.x)
+
+    def idle() -> None:
+        dut.in_valid.value = 0
+        drive_unsigned(dut.x, mask(fmt.wfull))
+
+    await reset_boundaries(
+        dut,
+        context.prefix(),
+        [(dropped, kept)],
+        issue,
+        idle,
+        lambda: {"sin": int(dut.sin.value), "cos": int(dut.cos.value), "quadrant": int(dut.quadrant.value)},
+        lambda case: {"sin": case.sin, "cos": case.cos, "quadrant": case.quadrant},
+        lambda case: case.describe(fmt),
+        4 * (context.wman + 64),
+    )

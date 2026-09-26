@@ -22,6 +22,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 
+from zkf._reference import trig_spec
+
 SEED = os.environ.get("FLOAT_SEED", "0x9e3779b97f4a7c15")
 CORE = "zubax:kulibin:float"
 
@@ -505,7 +507,17 @@ def _trans(
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count)
 
 
+def _cordic_modes(sim, tier: str, out: list) -> None:
+    # An unelaborated sigma-select arm has no coverage point, so each needs its own row; UNROLL100=300 at N=11 also
+    # leaves a partial final lane group, and WMAN=53 drives operands wider than 64 bits.
+    for wman, un, par in ((18, 50, 0), (18, 50, 1), (18, 100, 0), (18, 300, 0), (53, 50, 1)):
+        s = trig_spec(wman)
+        vlog = [("WMAN", wman), ("WX", s["xw"]), ("WZ", s["zw"]), ("UNROLL100", un), ("PARALLEL", par)]
+        out.append(_run("cordic_modes", sim, tier, f"w{wman}_un{un}_par{par}", vlog, kind="random", count=256))
+
+
 def _per_pr(sim, out: list) -> None:
+    _cordic_modes(sim, "pr", out)
     for cfg, w, m, u, k, c in PACK:
         out.append(_pack(sim, "pr", cfg, w, m, u, k, c))
     for op in ("cmp", "sort"):
@@ -648,6 +660,7 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("sincos", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1, pa=1))
     out.append(_trans("sincos", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=1, pa=1))
+    out.append(_trans("sincos", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=1, pa=2))
     # Shipped small log2 synth preset (6/18: sn=1 + STAGE_PRODUCT_FINAL=1): pins the latency and pole/domain-error
     # sideband alignment under the exact shipped knobs.
     out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=1, spf=1))
@@ -671,15 +684,34 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("atan2", sim, "pr", "w5_m16_norm", 5, 16, "random", 256, sn=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_norm", 5, 16, "random", 256, sn=2))
     out.append(_trans("atan2", sim, "pr", "w5_m16_pack", 5, 16, "random", 256, pa=1))
+    out.append(_trans("atan2", sim, "pr", "w5_m16_pack", 5, 16, "random", 256, pa=2))
     out.append(_trans("atan2", sim, "pr", "w5_m16_full", 5, 16, "random", 256, si=1, sn=2, pa=1, so=1))
     # STAGE_PRODUCT / WMULTIPLIER: shared _zkf_pmul (magnitude x_K*KINV, residual/bypass Q*INV_TAU); bit-transparent,
     # each adds STAGE_PRODUCT cycles. Native (sp=1), 2x2 (sp=2), plus the synthesized 6/18 operating point.
     out.append(_trans("atan2", sim, "pr", "w5_m16_prod", 5, 16, "random", 256, sp=1))
     out.append(_trans("atan2", sim, "pr", "w5_m16_prod", 5, 16, "random", 256, sp=2, wm=16))
-    out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256, un=50, sp=2, wm=18, sn=2, pa=1))
+    out.append(_trans("atan2", sim, "pr", "w6_m18_synth", 6, 18, "random", 256, un=100, sp=2, wm=18, sn=2, pa=1))
     # Shipped zkf_atan2_w8m36 synth config tested directly (correctness + data-independent latency, not just
     # inferred from the knob sweeps).
     out.append(_trans("atan2", sim, "pr", "w8_m36_synth", 8, 36, "random", 256, un=50, sp=4, wm=18, sn=2, pa=1, so=1))
+    # zkf_cordic: w5_m18 lets rotation reach its underflow decision through the shared packer (BIAS < WFRAC); at w8_m48
+    # the union magnitude crosses a power of two for rotation (normalizer count 7 -> 8 bits).
+    for cfg, w, m, knobs in [
+        ("w5_m16", 5, 16, {}),
+        ("w5_m18", 5, 18, {}),
+        ("w5_m16_unroll", 5, 16, {"un": 50}),
+        ("w5_m16_unroll", 5, 16, {"un": 200}),
+        ("w6_m18_unroll", 6, 18, {"un": 300}),
+        ("w5_m16_stage", 5, 16, {"si": 1, "so": 1}),
+        ("w5_m16_prod", 5, 16, {"sp": 1}),
+        ("w5_m16_prod", 5, 16, {"sp": 3, "wm": 16}),
+        ("w5_m16_full", 5, 16, {"si": 1, "sp": 2, "sn": 2, "pa": 1, "so": 1}),
+        ("w5_m16_pack", 5, 16, {"pa": 2}),
+        ("w8_m36_synth", 8, 36, {"un": 50, "si": 1, "sp": 4, "wm": 18, "sn": 2, "pa": 2, "so": 1}),
+        ("w8_m48", 8, 48, {"un": 50}),
+        ("w11_m53", 11, 53, {}),
+    ]:
+        out.append(_trans("cordic", sim, "pr", cfg, w, m, "random", 256, **knobs))
     # zkf_mul_ilog2 (runtime k): same format sweep, both decode depths. Default WK=WEXP+1 already covers shifts that
     # overflow to inf / underflow to zero for every input class.
     for sd in (0, 1):
@@ -722,7 +754,7 @@ def _per_pr(sim, out: list) -> None:
     for cfg, w, n, c in PIPE:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
     # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks widened input
-    # pipes in the latency model. sincos/atan2 excluded (handshake-entangled input stage).
+    # pipes in the latency model.
     for op in ("mul", "div", "sqrt", "cmp", "sort"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_binary("sqrt", sim, "pr", "w3_m5", 3, 5, "exhaustive", 0, si=2))
@@ -734,6 +766,8 @@ def _per_pr(sim, out: list) -> None:
     out.append(_resize(sim, "pr", "w3m4_to_w4m6", 3, 4, 4, 6, "exhaustive", 0, 2))
     for op in ("exp2", "log2"):
         out.append(_trans(op, sim, "pr", "w2_m16", 2, 16, "exhaustive", 0, si=2))
+    for op in ("sincos", "atan2", "cordic"):
+        out.append(_trans(op, sim, "pr", "w5_m16", 5, 16, "random", 256, si=2))
 
 
 def _deep_correctness(out: list) -> None:
@@ -846,7 +880,7 @@ def _deep_correctness(out: list) -> None:
     for un in (50, 100, 200, 400):
         out.append(_trans("atan2", s, "deep", "atan2_w5m16_un", 5, 16, "random", 512, un=un))
     out.append(_trans("atan2", s, "deep", "atan2_w5m16_stage", 5, 16, "random", 512, si=1, so=1, sn=2, pa=1))
-    out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512, un=50, sp=2, wm=18, sn=2, pa=1))
+    out.append(_trans("atan2", s, "deep", "atan2_w6m18_op", 6, 18, "random", 512, un=100, sp=2, wm=18, sn=2, pa=1))
     out.append(
         _trans("atan2", s, "deep", "atan2_w8m36_op", 8, 36, "random", 512, un=50, si=0, sp=4, wm=18, sn=2, pa=1, so=1)
     )
@@ -917,6 +951,7 @@ def _deep_correctness(out: list) -> None:
 
 def _deep_coverage(out: list) -> None:
     s = "verilator"
+    _cordic_modes(s, "deep", out)
     for w, m in [(4, 5), (3, 6), (5, 4), (3, 5), (2, 6)]:
         base = f"w{w}m{m}"
         for sp in (0, 1):
@@ -981,9 +1016,12 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("sincos", s, "deep", "w5m16", 5, 16, "random", 4000, sn=1, pa=1))
     # Lock-step (un=50) and decoupled (PARALLEL=1) sincos exercise both CORDIC handoff modes (coupled g_zadv +
     # half-rate sigma-replay); each mode's branches (and the phi_seen if/else legs) are reachable only in its own row.
-    # The structurally-dead P_PHI implicit-else and FSM default arm are coverage_off in zkf_sincos.v.
-    out.append(_trans("sincos", s, "deep", "w5m16", 5, 16, "random", 4000, un=50))
+    out.append(_trans("sincos", s, "deep", "w5m16", 5, 16, "random", 4000, un=50, parallel=0))
     out.append(_trans("sincos", s, "deep", "w5m16_par1", 5, 16, "random", 4000, un=50, parallel=1))
+    # Lock-step with a pipelined multiply: P_S waits more than one cycle for the PHI product.
+    out.append(_trans("sincos", s, "deep", "w5m16", 5, 16, "random", 2000, sp=1))
+    # _zkf_cordic_unit's MODE 2 arms.
+    out.append(_trans("cordic", s, "deep", "w5m16", 5, 16, "random", 1000, sp=1))
     # Wide-format sincos: at the small format some CORDIC X/Y-carry / local-mag / local-exp high bits sit above the
     # format ceiling; w8m24 (table _zkf_cordic_m24) makes them ordinary toggling mid-bits. (The exact net set shifts
     # with WMAN, so this row contributes advisory-toggle coverage, not a fixed net contract.)

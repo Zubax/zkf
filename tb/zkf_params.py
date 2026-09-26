@@ -198,8 +198,8 @@ def _stage_normalize_output() -> int:
 
 def _stage_pack() -> int:
     value = plusarg_int("ZKF_STAGE_PACK", 0)
-    if value not in (0, 1):
-        raise ValueError(f"ZKF_STAGE_PACK must be 0 or 1, got {value}")
+    if value not in (0, 1, 2):
+        raise ValueError(f"ZKF_STAGE_PACK must be 0, 1 or 2, got {value}")
     return value
 
 
