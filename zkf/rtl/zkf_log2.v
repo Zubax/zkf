@@ -1,49 +1,49 @@
-/// Streamed base-2 logarithm for the Zubax Kulibin float format: y = log2(x).
-/// Zero-bubble, throughput-1, no backpressure.
-/// Behavior:
-///
-///   log2(finite>0) = log2(x), faithfully rounded
-///   log2(+inf)     = +inf
-///   log2(+0)       = -inf, pole=1
-///   log2(x<0)      = -inf, domain_error=1
-///
-/// Algorithm (symmetric argument reduction):
-///
-///  1. With x = m * 2^e (m = 1.frac in [1,2), e = exp-BIAS), log2(x) = e + log2(m). Re-center the mantissa into the
-///     symmetric interval: if m >= sqrt(2) (significand sig >= THR = round(sqrt(2)*2^WFRAC)), halve m and increment e,
-///     so the reduced mantissa m' in [sqrt(1/2), sqrt(2)) and log2(m') in [-1/2, 1/2). The reduced fraction f = m'-1 is
-///     exact (Sterbenz). This removes the catastrophic x->1 cancellation of the old m in [1,2) reduction (where e=-1
-///     and log2(m)->1 nearly cancel): now x->1 maps to e=0, f->0 -- the direct, cancellation-free path.
-///
-///  2. Two exact integer quantities are formed from the stored fraction (no irrational subtraction; the index
-///     arithmetic is identical model<->RTL), at scale 2^-(WFRAC+1):
-///       v = f + 1/2 in [0.207, 0.914)  -- UNSIGNED index coordinate (top K bits select the segment); WFRAC+1 = WMAN
-///                                         bits. m < sqrt(2): v = 2^WFRAC + 2*frac;  m >= sqrt(2): v = frac.
-///       f = v - 2^WFRAC                -- SIGNED combine operand (= the reduced fraction at scale 2^-(WFRAC+1)).
-///                                         m < sqrt(2): f = 2*frac (>= 0);  m >= sqrt(2): f = frac - 2^WFRAC (< 0).
-///
-///  3. The pipelined per-WMAN table+polynomial core (selected by the generate-if) evaluates the smooth kernel
-///     C(f) = log2(1+f)/f via the segmented truncating Horner (indexed by v) and returns the SIGNED product
-///     log2(m') = f*C(f) as a fixed-point value at scale 2^-F2 (F2 = WFRAC+1+CF).
-///
-///  4. The signed fixed-point sum R = (e << F2) + log2(m') is renormalized and rounded by _zkf_fixed_to_float, which
-///     owns the _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input
-///     register, and the _zkf_pack output stage. Results are always representable for finite x, so no overflow path.
-///
-/// STAGE_INPUT=1 registers the raw input before decode.
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-/// STAGE_DECODE=1 splits classification/re-center across two registers; STAGE_DECODE=0 keeps one register.
-/// The generated evaluator uses a registered ROM read followed by a mandatory fabric register before Horner;
-/// non-arithmetic sideband payloads are aligned by plain delay pipes.
-///
-/// STAGE_PRODUCT selects product computation staging; see _zkf_pmul for details.
-/// STAGE_PRODUCT_FINAL selects product computation staging for only the final f*C(f) multiply; defaults to
-/// STAGE_PRODUCT.
-/// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
-/// STAGE_NORMALIZE={0,1,2} forwards directly to _zkf_normshift.STAGE_SPLIT.
-/// STAGE_NORMALIZE_OUTPUT={0,1} forwards directly to _zkf_normshift.STAGE_OUTPUT.
-/// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT (insulates rounder from normshift cone).
-/// STAGE_OUTPUT={0,1} registers the output.
+// Streamed base-2 logarithm for the Zubax Kulibin float format: y = log2(x).
+// Zero-bubble, throughput-1, no backpressure.
+// Behavior:
+//
+//   log2(finite>0) = log2(x), faithfully rounded
+//   log2(+inf)     = +inf
+//   log2(+0)       = -inf, pole=1
+//   log2(x<0)      = -inf, domain_error=1
+//
+// Algorithm (symmetric argument reduction):
+//
+//  1. With x = m * 2^e (m = 1.frac in [1,2), e = exp-BIAS), log2(x) = e + log2(m). Re-center the mantissa into the
+//     symmetric interval: if m >= sqrt(2) (significand sig >= THR = round(sqrt(2)*2^WFRAC)), halve m and increment e,
+//     so the reduced mantissa m' in [sqrt(1/2), sqrt(2)) and log2(m') in [-1/2, 1/2). The reduced fraction f = m'-1 is
+//     exact (Sterbenz). This removes the catastrophic x->1 cancellation of the old m in [1,2) reduction (where e=-1
+//     and log2(m)->1 nearly cancel): now x->1 maps to e=0, f->0 -- the direct, cancellation-free path.
+//
+//  2. Two exact integer quantities are formed from the stored fraction (no irrational subtraction; the index
+//     arithmetic is identical model<->RTL), at scale 2^-(WFRAC+1):
+//       v = f + 1/2 in [0.207, 0.914)  -- UNSIGNED index coordinate (top K bits select the segment); WFRAC+1 = WMAN
+//                                         bits. m < sqrt(2): v = 2^WFRAC + 2*frac;  m >= sqrt(2): v = frac.
+//       f = v - 2^WFRAC                -- SIGNED combine operand (= the reduced fraction at scale 2^-(WFRAC+1)).
+//                                         m < sqrt(2): f = 2*frac (>= 0);  m >= sqrt(2): f = frac - 2^WFRAC (< 0).
+//
+//  3. The pipelined per-WMAN table+polynomial core (selected by the generate-if) evaluates the smooth kernel
+//     C(f) = log2(1+f)/f via the segmented truncating Horner (indexed by v) and returns the SIGNED product
+//     log2(m') = f*C(f) as a fixed-point value at scale 2^-F2 (F2 = WFRAC+1+CF).
+//
+//  4. The signed fixed-point sum R = (e << F2) + log2(m') is renormalized and rounded by _zkf_fixed_to_float, which
+//     owns the _zkf_normshift instance, the GRS extraction, the exp_unbiased arithmetic, the optional packer input
+//     register, and the _zkf_pack output stage. Results are always representable for finite x, so no overflow path.
+//
+// STAGE_INPUT=1 registers the raw input before decode.
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+// STAGE_DECODE=1 splits classification/re-center across two registers; STAGE_DECODE=0 keeps one register.
+// The generated evaluator uses a registered ROM read followed by a mandatory fabric register before Horner;
+// non-arithmetic sideband payloads are aligned by plain delay pipes.
+//
+// STAGE_PRODUCT selects product computation staging; see _zkf_pmul for details.
+// STAGE_PRODUCT_FINAL selects product computation staging for only the final f*C(f) multiply; defaults to
+// STAGE_PRODUCT.
+// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
+// STAGE_NORMALIZE={0,1,2} forwards directly to _zkf_normshift.STAGE_SPLIT.
+// STAGE_NORMALIZE_OUTPUT={0,1} forwards directly to _zkf_normshift.STAGE_OUTPUT.
+// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT (insulates rounder from normshift cone).
+// STAGE_OUTPUT={0,1} registers the output.
 
 `default_nettype none
 

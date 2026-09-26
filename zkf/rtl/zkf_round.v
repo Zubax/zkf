@@ -1,31 +1,31 @@
-/// Streamed round of a Zubax Kulibin float to an integer value in the same WEXP/WMAN format.
-/// The rounding mode is selected per transaction by the 2-bit round_mode input:
-///   0 = round to nearest integer, ties to even (the IEEE default)
-///   1 = floor (toward -inf)
-///   2 = ceil  (toward +inf)
-///   3 = trunc (toward zero)
-/// Tie round_mode to a constant to let synthesis constant-propagate and prune the unused mode logic.
-///
-/// Behaviour: rounding to an integer preserves the exponent except for a possible +1 carry, so the datapath clears the
-/// fractional mantissa bits below the integer boundary (at bit p = (WFRAC+BIAS) - exp of the significand), adds a
-/// mode-selected increment at that boundary, and absorbs the single-bit carry into the exponent. The already-rounded
-/// significand is handed to _zkf_pack with guard/round/sticky = 0, so _zkf_pack performs only the bias add,
-/// exponent-overflow -> canonical signed inf (reachable only in tiny formats whose top finite value still has a
-/// fractional part), and zero/inf canonicalization. Results therefore stay bit-consistent with the rest of the library:
-///   - +-inf passes through as canonical signed inf;
-///   - zero and flushed subnormals (exp == 0) round to canonical +0;
-///   - a zero-magnitude result canonicalizes to +0 regardless of sign (e.g. ceil(-0.3) -> +0);
-///   - a rounded integer that does not fit the format overflows to signed inf.
-///
-/// STAGE_INPUT=1: Latch {a, round_mode} at the input (+1 cycle), shielding the rounder from upstream.
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-///
-/// STAGE_DECODE=1: Register the decode + boundary-mask cone, splitting the rounder's variable-position mask generation
-///                 from the guard/sticky reduction and increment adder (+1 cycle).
-///
-/// STAGE_PACK=1: Forwarded to _zkf_pack.STAGE_INPUT (+1 cycle).
-///
-/// STAGE_OUTPUT=1: Forwarded to _zkf_pack.STAGE_OUTPUT, registering the output (+1 cycle).
+// Streamed round of a Zubax Kulibin float to an integer value in the same WEXP/WMAN format.
+// The rounding mode is selected per transaction by the 2-bit round_mode input:
+//   0 = round to nearest integer, ties to even (the IEEE default)
+//   1 = floor (toward -inf)
+//   2 = ceil  (toward +inf)
+//   3 = trunc (toward zero)
+// Tie round_mode to a constant to let synthesis constant-propagate and prune the unused mode logic.
+//
+// Behaviour: rounding to an integer preserves the exponent except for a possible +1 carry, so the datapath clears the
+// fractional mantissa bits below the integer boundary (at bit p = (WFRAC+BIAS) - exp of the significand), adds a
+// mode-selected increment at that boundary, and absorbs the single-bit carry into the exponent. The already-rounded
+// significand is handed to _zkf_pack with guard/round/sticky = 0, so _zkf_pack performs only the bias add,
+// exponent-overflow -> canonical signed inf (reachable only in tiny formats whose top finite value still has a
+// fractional part), and zero/inf canonicalization. Results therefore stay bit-consistent with the rest of the library:
+//   - +-inf passes through as canonical signed inf;
+//   - zero and flushed subnormals (exp == 0) round to canonical +0;
+//   - a zero-magnitude result canonicalizes to +0 regardless of sign (e.g. ceil(-0.3) -> +0);
+//   - a rounded integer that does not fit the format overflows to signed inf.
+//
+// STAGE_INPUT=1: Latch {a, round_mode} at the input (+1 cycle), shielding the rounder from upstream.
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+//
+// STAGE_DECODE=1: Register the decode + boundary-mask cone, splitting the rounder's variable-position mask generation
+//                 from the guard/sticky reduction and increment adder (+1 cycle).
+//
+// STAGE_PACK=1: Forwarded to _zkf_pack.STAGE_INPUT (+1 cycle).
+//
+// STAGE_OUTPUT=1: Forwarded to _zkf_pack.STAGE_OUTPUT, registering the output (+1 cycle).
 
 `default_nettype none
 

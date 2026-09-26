@@ -1,10 +1,10 @@
-/// Combinational reference adder for formal equivalence proofs.
-/// Algorithm: each finite operand is converted to an unsigned integer at a common scale
-/// (bit i of `a_uns` represents 2^(i + 1 - BIAS - WFRAC) of the real value, with the smallest
-/// finite operand's hidden bit at bit position WMAN-1+0=WMAN-1, etc.). Signs convert the pair to a
-/// wide signed sum, the magnitude is normalized by an iterative leading-one scan, and the result is
-/// packed via zkf_pack_ref. Structurally different from zkf_add.v's six-stage exponent-aligned
-/// right-shift + add + leading-zero-count pipeline.
+// Combinational reference adder for formal equivalence proofs.
+// Algorithm: each finite operand is converted to an unsigned integer at a common scale
+// (bit i of `a_uns` represents 2^(i + 1 - BIAS - WFRAC) of the real value, with the smallest
+// finite operand's hidden bit at bit position WMAN-1+0=WMAN-1, etc.). Signs convert the pair to a
+// wide signed sum, the magnitude is normalized by an iterative leading-one scan, and the result is
+// packed via zkf_pack_ref. Structurally different from zkf_add.v's six-stage exponent-aligned
+// right-shift + add + leading-zero-count pipeline.
 
 `default_nettype none
 

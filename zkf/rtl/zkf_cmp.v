@@ -1,8 +1,8 @@
-/// Streamed floating-point compare. Equivalent to zkf_cmp_comb with just a single pipeline stage.
-///
-/// STAGE_INPUT=0: operands feed the compare combinationally (default).
-/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+// Streamed floating-point compare. Equivalent to zkf_cmp_comb with just a single pipeline stage.
+//
+// STAGE_INPUT=0: operands feed the compare combinationally (default).
+// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
 
 `default_nettype none
 

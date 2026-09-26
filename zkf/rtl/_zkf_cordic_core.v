@@ -1,42 +1,42 @@
-/// Folded (iterative) CORDIC engine shared by the ZKF trigonometric operators. One (x, y, z) datapath is reused over
-/// several cycles, a configurable number of iterations unrolled per cycle, instead of an N-stage pipeline -- so the
-/// area is a single datapath at the cost of an initiation interval equal to the latency.
-///
-/// UNROLL100 is the latency knob (iterations per cycle x100); pick the largest that closes timings:
-///     50 = one iteration per two cycles (split shift/add to halve the per-iteration combinational path, at 2N cycles);
-///     100 = one iteration per cycle;
-///     200/300/400 = 2/3/4 iterations per cycle (fewer cycles, longer path).
-///
-/// MODE selects the trajectory; the x/y/z update is otherwise identical:
-///
-///   MODE = 0 (ROTATION):  sigma_i = (z_i >= 0) ? +1 : -1   -- drives the angle z to 0; (x, y) rotates by z0.
-///                         Used by zkf_sincos with (x0, y0) = (1/gain, 0) so (xn, yn) ~ (cos z0, sin z0) and
-///                         zn is the small residual _zkf_cordic_unit finishes with one linear rotation.
-///
-///   MODE = 1 (VECTORING): sigma_i = (y_i >= 0) ? -1 : +1   -- drives y to 0; zn = z0 + atan2(y0, x0), xn ~ |(x0,y0)|.
-///                         Used by zkf_atan2.
-///
-///   MODE = 2 (RUNTIME):   either of the above per transaction, vectoring iff `vectoring` is high at `start`.
-///
-/// Each iteration: x' = x -/+ (y >>> i); y' = y +/- (x >>> i); z' = z -/+ L[i]. The shift `>>> i` truncates toward
-/// -inf (matches the Python model's `>> i`). In the fold the shift amount i is the running iteration index, so it is a
-/// variable (barrel) shift and L[i] is a variable index into the flat LUT bus -- unlike the pipelined CORDIC's
-/// per-stage constant shifts. Each update is one controlled add/sub (a + (b ^ {W{sub}}) + sub: one carry chain).
-///
-/// Structure: a single x/y rotator (fast = U iters/cycle, or pipe = one iter / two cycles) that consumes a sigma
-/// stream, plus -- only when PARALLEL is set, for rotation transactions -- a separate z-engine that produces that
-/// stream ahead of time. The sigma sequence is identical either way; "coupled" (lock-step) and "decoupled" differ only
-/// in HOW sigma reaches the rotator: an inline combinational tap off the in-step z-chain / y (coupled), or a registered
-/// read from sig_mem fed by the ahead-running z-engine (decoupled). So the rotator is written once; the z handling is
-/// the only thing that varies. Decoupling lets sincos start its residual-angle correction during the CORDIC.
-///
-/// PARALLEL only helps -- and is only legal -- with the half-rate (pipe) rotator: the z-recurrence is one narrow add,
-/// so its fast rate is one iteration/cycle, which laps a half-rate x/y but merely ties a full-rate one. So a full-rate
-/// rotator stays lock-step; the default should not be changed except for testing. At MODE=2 the z-engine also serves
-/// vectoring transactions, stepping in lock-step.
-///
-/// Handshake: assert `start` for one cycle with x0/y0/z0 valid; `busy` is high while iterating; `done` pulses for one
-/// cycle with xn/yn/zn valid. `start` is ignored while busy. Reset clears the FSM.
+// Folded (iterative) CORDIC engine shared by the ZKF trigonometric operators. One (x, y, z) datapath is reused over
+// several cycles, a configurable number of iterations unrolled per cycle, instead of an N-stage pipeline -- so the
+// area is a single datapath at the cost of an initiation interval equal to the latency.
+//
+// UNROLL100 is the latency knob (iterations per cycle x100); pick the largest that closes timings:
+//     50 = one iteration per two cycles (split shift/add to halve the per-iteration combinational path, at 2N cycles);
+//     100 = one iteration per cycle;
+//     200/300/400 = 2/3/4 iterations per cycle (fewer cycles, longer path).
+//
+// MODE selects the trajectory; the x/y/z update is otherwise identical:
+//
+//   MODE = 0 (ROTATION):  sigma_i = (z_i >= 0) ? +1 : -1   -- drives the angle z to 0; (x, y) rotates by z0.
+//                         Used by zkf_sincos with (x0, y0) = (1/gain, 0) so (xn, yn) ~ (cos z0, sin z0) and
+//                         zn is the small residual _zkf_cordic_unit finishes with one linear rotation.
+//
+//   MODE = 1 (VECTORING): sigma_i = (y_i >= 0) ? -1 : +1   -- drives y to 0; zn = z0 + atan2(y0, x0), xn ~ |(x0,y0)|.
+//                         Used by zkf_atan2.
+//
+//   MODE = 2 (RUNTIME):   either of the above per transaction, vectoring iff `vectoring` is high at `start`.
+//
+// Each iteration: x' = x -/+ (y >>> i); y' = y +/- (x >>> i); z' = z -/+ L[i]. The shift `>>> i` truncates toward
+// -inf (matches the Python model's `>> i`). In the fold the shift amount i is the running iteration index, so it is a
+// variable (barrel) shift and L[i] is a variable index into the flat LUT bus -- unlike the pipelined CORDIC's
+// per-stage constant shifts. Each update is one controlled add/sub (a + (b ^ {W{sub}}) + sub: one carry chain).
+//
+// Structure: a single x/y rotator (fast = U iters/cycle, or pipe = one iter / two cycles) that consumes a sigma
+// stream, plus -- only when PARALLEL is set, for rotation transactions -- a separate z-engine that produces that
+// stream ahead of time. The sigma sequence is identical either way; "coupled" (lock-step) and "decoupled" differ only
+// in HOW sigma reaches the rotator: an inline combinational tap off the in-step z-chain / y (coupled), or a registered
+// read from sig_mem fed by the ahead-running z-engine (decoupled). So the rotator is written once; the z handling is
+// the only thing that varies. Decoupling lets sincos start its residual-angle correction during the CORDIC.
+//
+// PARALLEL only helps -- and is only legal -- with the half-rate (pipe) rotator: the z-recurrence is one narrow add,
+// so its fast rate is one iteration/cycle, which laps a half-rate x/y but merely ties a full-rate one. So a full-rate
+// rotator stays lock-step; the default should not be changed except for testing. At MODE=2 the z-engine also serves
+// vectoring transactions, stepping in lock-step.
+//
+// Handshake: assert `start` for one cycle with x0/y0/z0 valid; `busy` is high while iterating; `done` pulses for one
+// cycle with xn/yn/zn valid. `start` is ignored while busy. Reset clears the FSM.
 
 `default_nettype none
 

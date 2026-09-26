@@ -1,10 +1,10 @@
-/// Combinational reference square root for formal equivalence proofs.
-/// Implementation: special-case classification, then a radix-2 restoring integer square root of
-/// y = sig << (WFRAC + r) (widened BEFORE the shift), then rounding at target precision by direct
-/// midpoint-square comparison: round up iff 4*y > (2*lo+1)^2, ties-to-even applied directly.
-/// Structurally different from the radix-4 chain in zkf_sqrt.v, including at the rounding boundary
-/// (no QFRAC scaling, no remainder-vs-root guard rule).
-/// The unrounded root lo and radicand y are exposed so the harness can assert lo^2 <= y < (lo+1)^2.
+// Combinational reference square root for formal equivalence proofs.
+// Implementation: special-case classification, then a radix-2 restoring integer square root of
+// y = sig << (WFRAC + r) (widened BEFORE the shift), then rounding at target precision by direct
+// midpoint-square comparison: round up iff 4*y > (2*lo+1)^2, ties-to-even applied directly.
+// Structurally different from the radix-4 chain in zkf_sqrt.v, including at the rounding boundary
+// (no QFRAC scaling, no remainder-vs-root guard rule).
+// The unrounded root lo and radicand y are exposed so the harness can assert lo^2 <= y < (lo+1)^2.
 
 `default_nettype none
 

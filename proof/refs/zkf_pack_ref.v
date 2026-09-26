@@ -1,4 +1,4 @@
-/// Combinational reference packer for formal equivalence proofs.
+// Combinational reference packer for formal equivalence proofs.
 
 `default_nettype none
 

@@ -1,5 +1,5 @@
-/// Streamed saturating cast to signed two's-complement integer. round_mode: 0=RNTE, 1=floor, 2=ceil, 3=truncation.
-/// The pipeline latency is 4 + STAGE_INPUT cycles.
+// Streamed saturating cast to signed two's-complement integer. round_mode: 0=RNTE, 1=floor, 2=ceil, 3=truncation.
+// The pipeline latency is 4 + STAGE_INPUT cycles.
 
 `default_nettype none
 

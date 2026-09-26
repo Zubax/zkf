@@ -1,7 +1,7 @@
-/// Combinational reference divider for formal equivalence proofs.
-/// Implementation: special-case classification, then a wide integer division a_sig << QFRAC_REF / b_sig,
-/// then GRS extraction and pack_ref.
-/// Structurally different from the unrolled radix-4 chain in _zkf_div_core.v.
+// Combinational reference divider for formal equivalence proofs.
+// Implementation: special-case classification, then a wide integer division a_sig << QFRAC_REF / b_sig,
+// then GRS extraction and pack_ref.
+// Structurally different from the unrolled radix-4 chain in _zkf_div_core.v.
 
 `default_nettype none
 

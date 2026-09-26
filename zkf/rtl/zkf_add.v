@@ -1,23 +1,23 @@
-/// Streamed Zubax Kulibin float adder.
-///
-/// STAGE_INPUT=0: operands feed the datapath combinationally (default).
-/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-///
-/// STAGE_OUTPUT=0: the result is combinational, zero cycle latency at the output (default).
-/// STAGE_OUTPUT=1: one register stage at the output (+1 cycle).
-///
-/// STAGE_DECODE=0: per-operand decode feeds the s0 capture combinationally.
-/// STAGE_DECODE=1: registers the full decoded-operand bundle between the raw decode and the s0 capture (+1 cycle).
-///
-/// STAGE_ALIGN=0: single-cycle alignment shifter (radix-4 cascade combinational).
-/// STAGE_ALIGN=1: registers one stage inside the alignment shifter, splitting the radix-4 cascade  (+1 cycle).
-///
-/// STAGE_NORMALIZE={0,1,2}: number of internal register barriers in the close-cancellation _zkf_normshift cascade
-/// (direct forward to _zkf_normshift.STAGE_SPLIT). Adds STAGE_NORMALIZE cycles.
-///
-/// STAGE_PACK=0: pack inputs are combinational (default).
-/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
+// Streamed Zubax Kulibin float adder.
+//
+// STAGE_INPUT=0: operands feed the datapath combinationally (default).
+// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+//
+// STAGE_OUTPUT=0: the result is combinational, zero cycle latency at the output (default).
+// STAGE_OUTPUT=1: one register stage at the output (+1 cycle).
+//
+// STAGE_DECODE=0: per-operand decode feeds the s0 capture combinationally.
+// STAGE_DECODE=1: registers the full decoded-operand bundle between the raw decode and the s0 capture (+1 cycle).
+//
+// STAGE_ALIGN=0: single-cycle alignment shifter (radix-4 cascade combinational).
+// STAGE_ALIGN=1: registers one stage inside the alignment shifter, splitting the radix-4 cascade  (+1 cycle).
+//
+// STAGE_NORMALIZE={0,1,2}: number of internal register barriers in the close-cancellation _zkf_normshift cascade
+// (direct forward to _zkf_normshift.STAGE_SPLIT). Adds STAGE_NORMALIZE cycles.
+//
+// STAGE_PACK=0: pack inputs are combinational (default).
+// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
 
 `default_nettype none
 

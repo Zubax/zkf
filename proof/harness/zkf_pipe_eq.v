@@ -1,10 +1,10 @@
-/// Formal harness: zkf_pipe DUT.
-/// Spec: at every cycle after the initial reset, out_valid mirrors shadow_valid[N-1] and (when valid) out
-/// equals shadow_data[N-1]. Both pipelines are driven by the same (in, in_valid, rst) sequence so their
-/// internal state must remain equal for all time.
-///
-/// BMC strategy: assume rst=1 at cycle 0 and rst=0 thereafter. With matching reset-gated shadow registers
-/// the data-pipe registers also align (their inputs are identical) so the equivalence holds from cycle 1 on.
+// Formal harness: zkf_pipe DUT.
+// Spec: at every cycle after the initial reset, out_valid mirrors shadow_valid[N-1] and (when valid) out
+// equals shadow_data[N-1]. Both pipelines are driven by the same (in, in_valid, rst) sequence so their
+// internal state must remain equal for all time.
+//
+// BMC strategy: assume rst=1 at cycle 0 and rst=0 thereafter. With matching reset-gated shadow registers
+// the data-pipe registers also align (their inputs are identical) so the equivalence holds from cycle 1 on.
 
 `default_nettype none
 

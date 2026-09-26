@@ -1,9 +1,9 @@
-/// Streamed min/max sorter built on zkf_cmp_comb.
-/// Inherits the canonical-zero and same-sign-infinity equality semantics from zkf_cmp_comb.
-///
-/// STAGE_INPUT=0: operands feed the sorter combinationally (default).
-/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+// Streamed min/max sorter built on zkf_cmp_comb.
+// Inherits the canonical-zero and same-sign-infinity equality semantics from zkf_cmp_comb.
+//
+// STAGE_INPUT=0: operands feed the sorter combinationally (default).
+// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
 
 `default_nettype none
 

@@ -1,6 +1,6 @@
-/// Formal harness: _zkf_pack DUT vs zkf_pack_ref.
-/// Single-pulse: drive arbitrary inputs at cycle 1 with rst=0/in_valid=1, else in_valid=0.
-/// LATENCY is supplied by run_proofs.py from the shared Python model.
+// Formal harness: _zkf_pack DUT vs zkf_pack_ref.
+// Single-pulse: drive arbitrary inputs at cycle 1 with rst=0/in_valid=1, else in_valid=0.
+// LATENCY is supplied by run_proofs.py from the shared Python model.
 
 `default_nettype none
 

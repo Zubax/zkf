@@ -1,28 +1,28 @@
-/// Streamed Zubax Kulibin fused multiply-add: y = a*b + c.
-/// The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
-/// That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add.
-/// The structure mirrors zkf_add with operand A replaced by the multiplier's full product.
-///
-/// STAGE_INPUT=0: operands feed the datapath combinationally (default).
-/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-///
-/// STAGE_PRODUCT selects the number of extra multiplier stages, it is forwarded to _zkf_pmul as-is, refer there.
-/// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
-///
-/// STAGE_DECODE=0: the decoded/normalized operands feed the magnitude-compare and operand-select combinationally.
-/// STAGE_DECODE=1: register them first, splitting the wide compare+select cone (+1 cycle).
-///
-/// STAGE_ALIGN=0: single-cycle alignment shifter (default).
-/// STAGE_ALIGN=1: split the radix-4 cascade (+1 cycle).
-///
-/// STAGE_NORMALIZE={0,1,2} adds exactly one register stage per unit (+STAGE_NORMALIZE cycles).
-///
-/// STAGE_PACK=0: packer reads its inputs combinationally (default).
-/// STAGE_PACK=1: register the packer inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
-///
-/// STAGE_OUTPUT=0: combinational packed output (default).
-/// STAGE_OUTPUT=1: registered output (+1 cycle).
+// Streamed Zubax Kulibin fused multiply-add: y = a*b + c.
+// The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
+// That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add.
+// The structure mirrors zkf_add with operand A replaced by the multiplier's full product.
+//
+// STAGE_INPUT=0: operands feed the datapath combinationally (default).
+// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+//
+// STAGE_PRODUCT selects the number of extra multiplier stages, it is forwarded to _zkf_pmul as-is, refer there.
+// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
+//
+// STAGE_DECODE=0: the decoded/normalized operands feed the magnitude-compare and operand-select combinationally.
+// STAGE_DECODE=1: register them first, splitting the wide compare+select cone (+1 cycle).
+//
+// STAGE_ALIGN=0: single-cycle alignment shifter (default).
+// STAGE_ALIGN=1: split the radix-4 cascade (+1 cycle).
+//
+// STAGE_NORMALIZE={0,1,2} adds exactly one register stage per unit (+STAGE_NORMALIZE cycles).
+//
+// STAGE_PACK=0: packer reads its inputs combinationally (default).
+// STAGE_PACK=1: register the packer inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
+//
+// STAGE_OUTPUT=0: combinational packed output (default).
+// STAGE_OUTPUT=1: registered output (+1 cycle).
 
 `default_nettype none
 

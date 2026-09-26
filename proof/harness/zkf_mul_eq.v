@@ -1,4 +1,4 @@
-/// Formal harness: zkf_mul DUT vs zkf_mul_ref.
+// Formal harness: zkf_mul DUT vs zkf_mul_ref.
 
 `default_nettype none
 

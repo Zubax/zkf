@@ -1,8 +1,8 @@
-/// Combinational reference for the radix-4 restoring square-root step.
-/// Spec: pick the largest digit d in {0,1,2,3} such that d*(8q+d) <= 16*rem + n4; output
-/// rem_next = 16*rem + n4 - d*(8q+d) and m_next = 3*{q,d} + 1.
-/// This reference is structurally different from the DUT (priority-encode via explicit
-/// constant-multiply comparisons; m_next recomputed from the new prefix, not maintained incrementally).
+// Combinational reference for the radix-4 restoring square-root step.
+// Spec: pick the largest digit d in {0,1,2,3} such that d*(8q+d) <= 16*rem + n4; output
+// rem_next = 16*rem + n4 - d*(8q+d) and m_next = 3*{q,d} + 1.
+// This reference is structurally different from the DUT (priority-encode via explicit
+// constant-multiply comparisons; m_next recomputed from the new prefix, not maintained incrementally).
 
 `default_nettype none
 

@@ -1,12 +1,12 @@
-/// Combinational floating-point compare. Produces three mutually-exclusive one-hot flags.
-///
-/// Non-canonical zero or infinity bit patterns are still treated per spec: any exponent-zero pattern compares
-/// equal to canonical +0, and infinities of the same sign compare equal regardless of input fraction bits.
-/// The class-detection paths run in parallel with the wide compare so they do not extend its critical path.
-///
-/// `a < b` is realized as an explicit subtraction whose borrow-out is the result; this maps directly to the
-/// FPGA's carry chain. `a == b` is an XOR-reduce on the same operands; `a > b` is the
-/// leftover case. See zkf_cmp for a registered variant.
+// Combinational floating-point compare. Produces three mutually-exclusive one-hot flags.
+//
+// Non-canonical zero or infinity bit patterns are still treated per spec: any exponent-zero pattern compares
+// equal to canonical +0, and infinities of the same sign compare equal regardless of input fraction bits.
+// The class-detection paths run in parallel with the wide compare so they do not extend its critical path.
+//
+// `a < b` is realized as an explicit subtraction whose borrow-out is the result; this maps directly to the
+// FPGA's carry chain. `a == b` is an XOR-reduce on the same operands; `a > b` is the
+// leftover case. See zkf_cmp for a registered variant.
 
 `default_nettype none
 

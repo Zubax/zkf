@@ -1,5 +1,5 @@
-/// Formal harness: _zkf_div_radix4_step DUT vs zkf_div_radix4_step_ref.
-/// Combinational, BMC depth 1. Tests with the divider invariants (den normalized, rem < den).
+// Formal harness: _zkf_div_radix4_step DUT vs zkf_div_radix4_step_ref.
+// Combinational, BMC depth 1. Tests with the divider invariants (den normalized, rem < den).
 
 `default_nettype none
 

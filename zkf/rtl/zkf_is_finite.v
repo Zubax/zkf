@@ -1,4 +1,4 @@
-/// Combinational predicate: y = 1 iff x is finite (exponent field is not all-ones).
+// Combinational predicate: y = 1 iff x is finite (exponent field is not all-ones).
 
 `default_nettype none
 

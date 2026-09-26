@@ -1,4 +1,4 @@
-/// Combinational absolute value: zero the sign bit.
+// Combinational absolute value: zero the sign bit.
 
 `default_nettype none
 

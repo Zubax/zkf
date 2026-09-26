@@ -1,4 +1,4 @@
-/// Formal harness: zkf_neg DUT vs. direct bit-twiddle spec.
+// Formal harness: zkf_neg DUT vs. direct bit-twiddle spec.
 
 `default_nettype none
 

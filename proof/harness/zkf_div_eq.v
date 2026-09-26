@@ -1,5 +1,5 @@
-/// Formal harness: zkf_div DUT vs zkf_div_ref.
-/// LATENCY is supplied by run_proofs.py from the shared Python model.
+// Formal harness: zkf_div DUT vs zkf_div_ref.
+// LATENCY is supplied by run_proofs.py from the shared Python model.
 
 `default_nettype none
 

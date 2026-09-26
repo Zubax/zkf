@@ -1,5 +1,5 @@
-/// zkf_sincos (MODE 0), zkf_atan2 (MODE 1) and zkf_cordic (MODE 2), ports as there. The algorithms are documented in
-/// zkf_sincos and zkf_atan2.
+// zkf_sincos (MODE 0), zkf_atan2 (MODE 1) and zkf_cordic (MODE 2), ports as there. The algorithms are documented in
+// zkf_sincos and zkf_atan2.
 
 `default_nettype none
 

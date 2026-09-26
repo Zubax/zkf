@@ -1,17 +1,17 @@
-/// Streamed Zubax Kulibin float multiplier.
-///
-/// STAGE_INPUT=0: operands feed the multiplier combinationally (default).
-/// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-///
-/// STAGE_PRODUCT sets the pipeline depth of _zkf_pmul multiplier (1+STAGE_PRODUCT cycles). Refer to _zkf_pmul.
-/// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
-///
-/// STAGE_PACK=0: pack inputs are combinational (default).
-/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
-///
-/// STAGE_OUTPUT=0: the result is combinational (default).
-/// STAGE_OUTPUT=1: the result is registered; good if the module feeds long external combinational paths (+1 cycle).
+// Streamed Zubax Kulibin float multiplier.
+//
+// STAGE_INPUT=0: operands feed the multiplier combinationally (default).
+// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+//
+// STAGE_PRODUCT sets the pipeline depth of _zkf_pmul multiplier (1+STAGE_PRODUCT cycles). Refer to _zkf_pmul.
+// WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
+//
+// STAGE_PACK=0: pack inputs are combinational (default).
+// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
+//
+// STAGE_OUTPUT=0: the result is combinational (default).
+// STAGE_OUTPUT=1: the result is registered; good if the module feeds long external combinational paths (+1 cycle).
 
 `default_nettype none
 

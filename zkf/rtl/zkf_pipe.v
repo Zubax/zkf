@@ -1,10 +1,10 @@
-/// A delay line of N register stages, each W bits wide. Latency is exactly N cycles; if N=0 (default) it is a no-op
-/// passthrough with clk/rst unused/ignored. Reset clears only the valid flag (stream control); the W-bit payload
-/// registers free-run per the project reset policy, so the payload is meaningful only while out_valid is asserted.
-///
-/// Public utility for aligning a consumer's own control/sideband signals with the output of a Kulibin float operator:
-/// compute the operator's LATENCY locally, pass it to the operator (which checks it) and to a zkf_pipe #(.N(LATENCY))
-/// that delays the sideband by the same number of cycles. This avoids threading sideband ports through the operators.
+// A delay line of N register stages, each W bits wide. Latency is exactly N cycles; if N=0 (default) it is a no-op
+// passthrough with clk/rst unused/ignored. Reset clears only the valid flag (stream control); the W-bit payload
+// registers free-run per the project reset policy, so the payload is meaningful only while out_valid is asserted.
+//
+// Public utility for aligning a consumer's own control/sideband signals with the output of a Kulibin float operator:
+// compute the operator's LATENCY locally, pass it to the operator (which checks it) and to a zkf_pipe #(.N(LATENCY))
+// that delays the sideband by the same number of cycles. This avoids threading sideband ports through the operators.
 
 `default_nettype none
 

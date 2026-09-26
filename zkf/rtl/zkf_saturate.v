@@ -1,5 +1,5 @@
-/// Combinational saturation. If x is finite, returns x as-is. If x is signed infinity,
-/// returns the largest representable finite value with the same sign.
+// Combinational saturation. If x is finite, returns x as-is. If x is signed infinity,
+// returns the largest representable finite value with the same sign.
 
 `default_nettype none
 

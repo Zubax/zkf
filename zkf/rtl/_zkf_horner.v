@@ -1,30 +1,30 @@
-/// Fixed-point Horner polynomial evaluator for the transcendental table+polynomial cores.
-/// Register stages: D*(2+STAGE_PRODUCT).
-/// Zero-bubble, throughput-1. A generic sideband (sb_in -> sb_out), the valid flag, and the reduced argument
-/// (w -> w_out) are pipelined alongside the accumulator so the instantiating module need not know D.
-///
-/// Computes acc = c[D]; then for j = D-1 .. 0: acc = c[j] + floor(acc * w / 2^WRARG), i.e. Horner in the segment-local
-/// argument wn = w / 2^WRARG in [0,1). Coefficients share the fractional scale 2^-CF: c[j] is a signed WCOEF-bit
-/// value at bit offset j*WCOEF of the flat `coeffs` bus. The arithmetic right shift `>>> WRARG` floors toward minus
-/// infinity, matching the Python reference model's truncating integer Horner exactly.
-///
-/// Each degree step is one shared _zkf_pmul multiply (acc*w, w always unsigned -- latency 1+STAGE_PRODUCT) plus
-/// one coefficient-add register stage, so the per-degree depth is 2+STAGE_PRODUCT. The non-arithmetic payload
-/// (live coefficients, w, caller sideband) is delayed in a plain pipe next to the multiplier instead of riding through
-/// _zkf_pmul's internal sideband registers. This is because the payload is wide and passing it through the pmul
-/// sideband hurts placement and timings.
-///
-/// ACC_SIGNED selects the accumulator multiply signedness forwarded to _zkf_pmul.A_SIGNED. log2 (default, =1) keeps a
-/// signed accumulator because its Chebyshev coefficients alternate sign, so intermediate `acc` can go negative. exp2
-/// (=0) has an all-non-negative coefficient set and the recurrence acc = c[j] + (acc*w)>>WRARG preserves
-/// non-negativity for every w, so acc stays >= 0; the fully-unsigned slice grid then packs whole WMULTIPLIER-bit DSP
-/// tiles (no sign bit), roughly a third fewer tiles, with bit-identical results (the product is non-negative either
-/// way, so its raw bits and the floor shift below are unchanged).
-///
-/// WMULTIPLIER and STAGE_PRODUCT are forwarded to _zkf_pmul.
-///
-/// WACC must hold every intermediate `acc` without wrap (the generator sizes it from the actual coefficient set).
-/// Reset clears only the valid pipeline; the datapath registers free-run (project reset strategy).
+// Fixed-point Horner polynomial evaluator for the transcendental table+polynomial cores.
+// Register stages: D*(2+STAGE_PRODUCT).
+// Zero-bubble, throughput-1. A generic sideband (sb_in -> sb_out), the valid flag, and the reduced argument
+// (w -> w_out) are pipelined alongside the accumulator so the instantiating module need not know D.
+//
+// Computes acc = c[D]; then for j = D-1 .. 0: acc = c[j] + floor(acc * w / 2^WRARG), i.e. Horner in the segment-local
+// argument wn = w / 2^WRARG in [0,1). Coefficients share the fractional scale 2^-CF: c[j] is a signed WCOEF-bit
+// value at bit offset j*WCOEF of the flat `coeffs` bus. The arithmetic right shift `>>> WRARG` floors toward minus
+// infinity, matching the Python reference model's truncating integer Horner exactly.
+//
+// Each degree step is one shared _zkf_pmul multiply (acc*w, w always unsigned -- latency 1+STAGE_PRODUCT) plus
+// one coefficient-add register stage, so the per-degree depth is 2+STAGE_PRODUCT. The non-arithmetic payload
+// (live coefficients, w, caller sideband) is delayed in a plain pipe next to the multiplier instead of riding through
+// _zkf_pmul's internal sideband registers. This is because the payload is wide and passing it through the pmul
+// sideband hurts placement and timings.
+//
+// ACC_SIGNED selects the accumulator multiply signedness forwarded to _zkf_pmul.A_SIGNED. log2 (default, =1) keeps a
+// signed accumulator because its Chebyshev coefficients alternate sign, so intermediate `acc` can go negative. exp2
+// (=0) has an all-non-negative coefficient set and the recurrence acc = c[j] + (acc*w)>>WRARG preserves
+// non-negativity for every w, so acc stays >= 0; the fully-unsigned slice grid then packs whole WMULTIPLIER-bit DSP
+// tiles (no sign bit), roughly a third fewer tiles, with bit-identical results (the product is non-negative either
+// way, so its raw bits and the floor shift below are unchanged).
+//
+// WMULTIPLIER and STAGE_PRODUCT are forwarded to _zkf_pmul.
+//
+// WACC must hold every intermediate `acc` without wrap (the generator sizes it from the actual coefficient set).
+// Reset clears only the valid pipeline; the datapath registers free-run (project reset strategy).
 
 `default_nettype none
 

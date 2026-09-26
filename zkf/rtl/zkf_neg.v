@@ -1,6 +1,6 @@
-/// Combinational negation: flip the sign bit.
-/// Applied to canonical +0 this produces a -0 bit pattern which the format still decodes as +0;
-/// sequential modules downstream canonicalize their outputs.
+// Combinational negation: flip the sign bit.
+// Applied to canonical +0 this produces a -0 bit pattern which the format still decodes as +0;
+// sequential modules downstream canonicalize their outputs.
 
 `default_nettype none
 

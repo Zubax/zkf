@@ -1,7 +1,7 @@
-/// Combinational reference for the radix-4 restoring-divide step.
-/// Spec: pick the largest digit in {0,1,2,3} such that digit*den <= 4*rem; output rem_next = 4*rem - digit*den.
-/// This reference is structurally different from the DUT (priority-encode via explicit comparisons,
-/// without parallel candidate-subtract via inverted-borrow flags).
+// Combinational reference for the radix-4 restoring-divide step.
+// Spec: pick the largest digit in {0,1,2,3} such that digit*den <= 4*rem; output rem_next = 4*rem - digit*den.
+// This reference is structurally different from the DUT (priority-encode via explicit comparisons,
+// without parallel candidate-subtract via inverted-borrow flags).
 
 `default_nettype none
 

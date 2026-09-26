@@ -1,12 +1,12 @@
-/// Internal quotient generator for Zubax Kulibin float division.
-///
-/// The quotient bits are produced by an unrolled radix-4 restoring divider.
-/// The final partial remainder is exposed as well since it is a byproduct that is occasionally useful.
-/// The div0 output reports that the divisor's exponent field is zero (i.e., the divisor encodes +0).
-/// It is independent of the result; in particular it is asserted for 0/0 even though the quotient is +0.
-///
-/// Register stages: 2+((WMAN+2+((WMAN+2)%2))/2).
-/// The inputs are not latched but the outputs are. Throughput is one sample per cycle.
+// Internal quotient generator for Zubax Kulibin float division.
+//
+// The quotient bits are produced by an unrolled radix-4 restoring divider.
+// The final partial remainder is exposed as well since it is a byproduct that is occasionally useful.
+// The div0 output reports that the divisor's exponent field is zero (i.e., the divisor encodes +0).
+// It is independent of the result; in particular it is asserted for 0/0 even though the quotient is +0.
+//
+// Register stages: 2+((WMAN+2+((WMAN+2)%2))/2).
+// The inputs are not latched but the outputs are. Throughput is one sample per cycle.
 
 `default_nettype none
 

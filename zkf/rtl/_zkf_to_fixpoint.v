@@ -1,31 +1,31 @@
-/// Streamed float -> signed fixed-point reduction shared by zkf_to_int (FF=0) and zkf_exp2 (FF>0).
-/// Decodes the float, computes the left/right shift amounts as parallel folded-constant subtractions, applies the
-/// barrel shift, and exposes the unsigned post-shift magnitude with binary point at bit FF along with the sign and
-/// the OOR/specials flags. The output is *not* yet two's-complement; the caller forms the signed value via a
-/// {sign, mag} negate as needed (zkf_to_int negates after rounding; zkf_exp2 negates before splitting into i and f).
-///
-/// Register stages: STAGE_INPUT+2. Zero-bubble, throughput-1, no backpressure.
-///
-/// OOR_EXP_THRESHOLD: input-exponent value at or above which `oor` fires, in addition to the intrinsic
-/// "magnitude won't fit in WI signed bits" predicate and `is_inf`. Default is (1 << WEXP) which sits above the
-/// max value `exp_in` can take, so the extrinsic predicate resolves to constant 0 at elaboration; this is what
-/// zkf_to_int wants. zkf_exp2 sets OOR_EXP_THRESHOLD = BIAS+WEXP-1 so the result's integer part is guaranteed
-/// to fit in WEXP signed bits (the value's exponent is already out of representable range above that point).
-///
-/// Output semantics:
-///
-///   - mag[WI+FF-1:0]: unsigned magnitude scaled by 2^FF (binary point at bit FF). Don't-care when oor=1.
-///
-///   - guard: bit at virtual position -1 just below LSB of mag (the RTNE tie bit when the caller rounds at the bit-FF
-///     boundary). Only nonzero when FF=0; structurally constant 0 when FF>0.
-///
-///   - lost_sticky: OR of all bits dropped below `guard` (the combined round|sticky bit). For FF=0 this comes from
-///     the right shifter's own sticky collapse; for FF>0 the dropped bits sit further below mag's LSB.
-///
-///   - sign / is_inf / is_zero: decoded from the input float.
-///
-///   - oor: |a| won't fit in WI signed bits OR exp >= OOR_EXP_THRESHOLD OR input was +-inf. When asserted, mag and
-///     guard/lost_sticky are don't-care; the caller routes to its saturation/force_inf/force_zero path.
+// Streamed float -> signed fixed-point reduction shared by zkf_to_int (FF=0) and zkf_exp2 (FF>0).
+// Decodes the float, computes the left/right shift amounts as parallel folded-constant subtractions, applies the
+// barrel shift, and exposes the unsigned post-shift magnitude with binary point at bit FF along with the sign and
+// the OOR/specials flags. The output is *not* yet two's-complement; the caller forms the signed value via a
+// {sign, mag} negate as needed (zkf_to_int negates after rounding; zkf_exp2 negates before splitting into i and f).
+//
+// Register stages: STAGE_INPUT+2. Zero-bubble, throughput-1, no backpressure.
+//
+// OOR_EXP_THRESHOLD: input-exponent value at or above which `oor` fires, in addition to the intrinsic
+// "magnitude won't fit in WI signed bits" predicate and `is_inf`. Default is (1 << WEXP) which sits above the
+// max value `exp_in` can take, so the extrinsic predicate resolves to constant 0 at elaboration; this is what
+// zkf_to_int wants. zkf_exp2 sets OOR_EXP_THRESHOLD = BIAS+WEXP-1 so the result's integer part is guaranteed
+// to fit in WEXP signed bits (the value's exponent is already out of representable range above that point).
+//
+// Output semantics:
+//
+//   - mag[WI+FF-1:0]: unsigned magnitude scaled by 2^FF (binary point at bit FF). Don't-care when oor=1.
+//
+//   - guard: bit at virtual position -1 just below LSB of mag (the RTNE tie bit when the caller rounds at the bit-FF
+//     boundary). Only nonzero when FF=0; structurally constant 0 when FF>0.
+//
+//   - lost_sticky: OR of all bits dropped below `guard` (the combined round|sticky bit). For FF=0 this comes from
+//     the right shifter's own sticky collapse; for FF>0 the dropped bits sit further below mag's LSB.
+//
+//   - sign / is_inf / is_zero: decoded from the input float.
+//
+//   - oor: |a| won't fit in WI signed bits OR exp >= OOR_EXP_THRESHOLD OR input was +-inf. When asserted, mag and
+//     guard/lost_sticky are don't-care; the caller routes to its saturation/force_inf/force_zero path.
 
 `default_nettype none
 

@@ -1,4 +1,4 @@
-/// Single-transaction handshake of the iterative operators. `res_valid` is a one-cycle strobe with `res`.
+// Single-transaction handshake of the iterative operators. `res_valid` is a one-cycle strobe with `res`.
 
 `default_nettype none
 

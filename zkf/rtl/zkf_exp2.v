@@ -1,30 +1,30 @@
-/// Streamed base-2 exponential for the Zubax Kulibin float format: y = 2**x.
-/// Zero-bubble, throughput-1, no backpressure.
-/// Behavior:
-///
-///   exp2(-inf)   = +0
-///   exp2(+0)     = 1.0
-///   exp2(finite) = 2**x, faithfully rounded
-///   exp2(+inf)   = +inf
-///   tiny finite results follow the zero/MIN_NORMAL boundary rule; overflow maps to +inf
-///
-/// Algorithm:
-///
-///  1. Split x = i + f with i = floor(x) and f in [0,1) by shifting the significand by the exponent into a fixed-point.
-///
-///  2. Then 2**x = 2**f * 2**i, where 2**f in [1,2) is a normalized significand produced by the pipelined per-WMAN
-///     table+polynomial core selected by the generate-if below.
-///
-///  3. The result is packed with exponent i via _zkf_pack, which applies overflow->inf and tiny/MIN_NORMAL boundary.
-///
-/// The reduction is split across register stages (shift-amount computation, barrel shift, negate) and the evaluator's
-/// ROM read is followed by a mandatory fabric register, so no single stage carries both a wide carry chain and a
-/// multiply.
-///
-/// STAGE_PRODUCT selects product computation staging; see _zkf_pmul.
-/// WMULTIPLIER optionally hints the native DSP tile argument width; see _zkf_pmul.
-/// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT, registering the packer's input cone (+1 cycle).
-/// STAGE_OUTPUT={0,1} registers the output.
+// Streamed base-2 exponential for the Zubax Kulibin float format: y = 2**x.
+// Zero-bubble, throughput-1, no backpressure.
+// Behavior:
+//
+//   exp2(-inf)   = +0
+//   exp2(+0)     = 1.0
+//   exp2(finite) = 2**x, faithfully rounded
+//   exp2(+inf)   = +inf
+//   tiny finite results follow the zero/MIN_NORMAL boundary rule; overflow maps to +inf
+//
+// Algorithm:
+//
+//  1. Split x = i + f with i = floor(x) and f in [0,1) by shifting the significand by the exponent into a fixed-point.
+//
+//  2. Then 2**x = 2**f * 2**i, where 2**f in [1,2) is a normalized significand produced by the pipelined per-WMAN
+//     table+polynomial core selected by the generate-if below.
+//
+//  3. The result is packed with exponent i via _zkf_pack, which applies overflow->inf and tiny/MIN_NORMAL boundary.
+//
+// The reduction is split across register stages (shift-amount computation, barrel shift, negate) and the evaluator's
+// ROM read is followed by a mandatory fabric register, so no single stage carries both a wide carry chain and a
+// multiply.
+//
+// STAGE_PRODUCT selects product computation staging; see _zkf_pmul.
+// WMULTIPLIER optionally hints the native DSP tile argument width; see _zkf_pmul.
+// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT, registering the packer's input cone (+1 cycle).
+// STAGE_OUTPUT={0,1} registers the output.
 
 `default_nettype none
 

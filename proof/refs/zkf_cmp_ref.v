@@ -1,8 +1,8 @@
-/// Combinational reference comparator for formal equivalence proofs.
-/// Implements the comparison spec by explicit case analysis on operand class
-/// (zero / negative-finite / positive-finite / negative-inf / positive-inf),
-/// deliberately different from the key-transform trick used in zkf_cmp_comb.v
-/// so that a shared logic bug would not cancel out under equivalence checking.
+// Combinational reference comparator for formal equivalence proofs.
+// Implements the comparison spec by explicit case analysis on operand class
+// (zero / negative-finite / positive-finite / negative-inf / positive-inf),
+// deliberately different from the key-transform trick used in zkf_cmp_comb.v
+// so that a shared logic bug would not cancel out under equivalence checking.
 
 `default_nettype none
 

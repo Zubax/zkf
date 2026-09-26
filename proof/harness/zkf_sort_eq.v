@@ -1,8 +1,8 @@
-/// Formal harness: zkf_sort DUT.
-/// Asserts:
-///   - DUT.min and DUT.max are a permutation of the latched (a, b)
-///   - cmp_ref(min, max) is lt-or-eq (sort orders correctly)
-/// LATENCY is supplied by run_proofs.py from the shared Python model.
+// Formal harness: zkf_sort DUT.
+// Asserts:
+//   - DUT.min and DUT.max are a permutation of the latched (a, b)
+//   - cmp_ref(min, max) is lt-or-eq (sort orders correctly)
+// LATENCY is supplied by run_proofs.py from the shared Python model.
 
 `default_nettype none
 

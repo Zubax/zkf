@@ -1,4 +1,4 @@
-/// Formal harness: zkf_saturate DUT vs. explicit case-analysis spec.
+// Formal harness: zkf_saturate DUT vs. explicit case-analysis spec.
 
 `default_nettype none
 

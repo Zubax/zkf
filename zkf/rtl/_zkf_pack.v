@@ -1,43 +1,43 @@
-/// Pack a normalized unsigned significand into float with infinity and rounding to nearest.
-/// The exact finite input value before rounding is: (-1)^sign * 1.significand_fraction * 2^exp_unbiased
-///
-/// Number of stages = STAGE_INPUT+STAGE_OUTPUT. Pure comb is possible, in which case clk/rst are ignored.
-///
-/// The significand input includes the hidden bit. The guard/round/sticky inputs carry the discarded tail bits.
-/// force_zero and force_inf override the finite value; force_zero wins if both are asserted.
-///
-/// The output is canonical zero for zero or finite magnitudes below 0.5*MIN_NORMAL, signed MIN_NORMAL for finite
-/// magnitudes at or above that boundary but below MIN_NORMAL, round-to-nearest ties-to-even for normal values, and
-/// canonical signed infinity for exponent overflow. Subnormals are not generated.
-///
-/// STAGE_INPUT=0: the packer's combinational cone starts immediately at the input ports (default).
-/// STAGE_INPUT=1: insert one register stage in front of the rounding/saturation cone. Useful when the caller wants
-///     to isolate the packer's rounder from a wide upstream cone (e.g. a close-cancellation normalize). The
-///     accompanying `_zkf_pack_delay` accepts the same parameter so any sideband payload can ride the same delay.
-///
-/// STAGE_OUTPUT=0: the output is combinational, zero cycle latency (default).
-/// STAGE_OUTPUT=1: one register stage at the output.
-///
-/// EXP_IS_BIASED=0: The exp_unbiased port is unbiased and the bias is added here.
-/// EXP_IS_BIASED=1: It already carries the signed biased exponent, so the bias add is skipped - for a caller that
-///     folded the bias into its own exponent arithmetic to shorten its critical path (e.g. zkf_add:
-///     large_exp - normalize_shift is already the biased exponent, avoiding a -BIAS/+BIAS round trip).
-///
-/// ASSUME_NO_OVERFLOW=0 (default): the biased exponent is range-checked and a value above the finite range maps to
-///     canonical signed infinity.
-/// ASSUME_NO_OVERFLOW=1: the caller guarantees the biased exponent stays within the finite range [0, EXP_MAX_FINITE]
-///     for every valid input, so the overflow detector is pruned at elaboration. The force_inf path (still mapped to
-///     infinity) and the zero / MIN_NORMAL underflow paths are unaffected, and a round-carry from EXP_MAX_FINITE to
-///     EXP_INF still produces canonical infinity (it rides the rounding adder, not the detector) unless
-///     SATURATE_ROUND_CARRY says otherwise. Used by bounded-output transcendentals such as zkf_log2, whose result is
-///     always representable for finite x.
-///
-/// SATURATE_ROUND_CARRY=0 (default): a round-carry out of the finite range becomes canonical infinity.
-/// SATURATE_ROUND_CARRY=1: that carry saturates to max-finite instead; a value whose exponent is already out of
-///     range still overflows through the detector, which runs before the rounding increment. For callers whose
-///     input carries its own rounding error and must never invent an infinity from an in-range value.
-///     The result is one ULP below the correctly-rounded infinity -- faithful, not exactly rounded, so
-///     do not enable it for an exactly-rounded operator.
+// Pack a normalized unsigned significand into float with infinity and rounding to nearest.
+// The exact finite input value before rounding is: (-1)^sign * 1.significand_fraction * 2^exp_unbiased
+//
+// Number of stages = STAGE_INPUT+STAGE_OUTPUT. Pure comb is possible, in which case clk/rst are ignored.
+//
+// The significand input includes the hidden bit. The guard/round/sticky inputs carry the discarded tail bits.
+// force_zero and force_inf override the finite value; force_zero wins if both are asserted.
+//
+// The output is canonical zero for zero or finite magnitudes below 0.5*MIN_NORMAL, signed MIN_NORMAL for finite
+// magnitudes at or above that boundary but below MIN_NORMAL, round-to-nearest ties-to-even for normal values, and
+// canonical signed infinity for exponent overflow. Subnormals are not generated.
+//
+// STAGE_INPUT=0: the packer's combinational cone starts immediately at the input ports (default).
+// STAGE_INPUT=1: insert one register stage in front of the rounding/saturation cone. Useful when the caller wants
+//     to isolate the packer's rounder from a wide upstream cone (e.g. a close-cancellation normalize). The
+//     accompanying `_zkf_pack_delay` accepts the same parameter so any sideband payload can ride the same delay.
+//
+// STAGE_OUTPUT=0: the output is combinational, zero cycle latency (default).
+// STAGE_OUTPUT=1: one register stage at the output.
+//
+// EXP_IS_BIASED=0: The exp_unbiased port is unbiased and the bias is added here.
+// EXP_IS_BIASED=1: It already carries the signed biased exponent, so the bias add is skipped - for a caller that
+//     folded the bias into its own exponent arithmetic to shorten its critical path (e.g. zkf_add:
+//     large_exp - normalize_shift is already the biased exponent, avoiding a -BIAS/+BIAS round trip).
+//
+// ASSUME_NO_OVERFLOW=0 (default): the biased exponent is range-checked and a value above the finite range maps to
+//     canonical signed infinity.
+// ASSUME_NO_OVERFLOW=1: the caller guarantees the biased exponent stays within the finite range [0, EXP_MAX_FINITE]
+//     for every valid input, so the overflow detector is pruned at elaboration. The force_inf path (still mapped to
+//     infinity) and the zero / MIN_NORMAL underflow paths are unaffected, and a round-carry from EXP_MAX_FINITE to
+//     EXP_INF still produces canonical infinity (it rides the rounding adder, not the detector) unless
+//     SATURATE_ROUND_CARRY says otherwise. Used by bounded-output transcendentals such as zkf_log2, whose result is
+//     always representable for finite x.
+//
+// SATURATE_ROUND_CARRY=0 (default): a round-carry out of the finite range becomes canonical infinity.
+// SATURATE_ROUND_CARRY=1: that carry saturates to max-finite instead; a value whose exponent is already out of
+//     range still overflows through the detector, which runs before the rounding increment. For callers whose
+//     input carries its own rounding error and must never invent an infinity from an in-range value.
+//     The result is one ULP below the correctly-rounded infinity -- faithful, not exactly rounded, so
+//     do not enable it for an exactly-rounded operator.
 
 `default_nettype none
 
@@ -238,9 +238,9 @@ module _zkf_pack #(
     endgenerate
 endmodule
 
-/// Delay a sideband payload through the same input + output stages as _zkf_pack: pass STAGE_INPUT / STAGE_OUTPUT
-/// to match it. When changing the packer pipeline, update this one as well.
-/// Total delay in cycles = STAGE_INPUT + STAGE_OUTPUT (combinational pass-through when both are 0).
+// Delay a sideband payload through the same input + output stages as _zkf_pack: pass STAGE_INPUT / STAGE_OUTPUT
+// to match it. When changing the packer pipeline, update this one as well.
+// Total delay in cycles = STAGE_INPUT + STAGE_OUTPUT (combinational pass-through when both are 0).
 module _zkf_pack_delay #(parameter W = 1, parameter integer STAGE_INPUT = 0, parameter integer STAGE_OUTPUT = 0)(
     input wire clk, input wire [W-1:0] x, output wire [W-1:0] y);
     zkf_pipe #(.W(W), .N(STAGE_INPUT + STAGE_OUTPUT)) u_pipe (

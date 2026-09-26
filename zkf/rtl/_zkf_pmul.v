@@ -1,36 +1,36 @@
-/// Shared chip-agnostic pipelined integer multiply: p = a * b, exact, with per-operand signedness.
-///
-/// The operands are split into a GA x GB grid of near-equal slices; each slice product is a plain `*` the synthesis
-/// tool maps to however many DSP tiles the target device has. The register between the slice products and their sum
-/// breaks the timing-critical fabric cascade, so wide multiplies close timing on any part.
-///
-/// A_SIGNED / B_SIGNED mark each operand signed (1) or unsigned (0); the caller passes its NATIVE width.
-/// The output `p` is the raw WA+WB product bits; the caller interprets them as signed or unsigned. Behavior:
-///
-///     Fully-unsigned (both 0): An unsigned slice grid -- full WMULTIPLIER-bit slices, unsigned products/sum (an
-///                              18-bit unsigned operand at WMULTIPLIER=18 is ONE tile, no wasted bit).
-///
-///     Signed or mixed: A signed slice grid -- each operand's top slice is sign/zero-extended per its flag, lower
-///                      slices are zero-prepended (a signed*unsigned slice product must carry the unsigned operand
-///                      non-negative-signed, costing the sign bit, hence P = WMULTIPLIER-1). Both grids reconstruct
-///                      the exact product.
-///
-/// STAGE_PRODUCT sets the pipeline depth, or the number of register stages (latency).
-/// WMULTIPLIER chooses the grid construction (no effect on the latency), and applies only when the operands are
-/// actually split (STAGE_PRODUCT >= 2, otherwise ignored):
-///
-///   WMULTIPLIER=0: symmetric split GA = GB = {native, native, 2, 3, 3}[STAGE_PRODUCT].
-///   WMULTIPLIER>0: Each slice fits a WMULTIPLIER-bit signed/unsigned tile; the caller states its DSP width once;
-///                  the core derives the minimal -- possibly asymmetric -- grid, e.g. 66x41 -> 4x3.
-///                  P = WMULTIPLIER for the fully-unsigned grid, WMULTIPLIER-1 when a signed operand is present.
-///
-/// Register stages (latency) = 1+STAGE_PRODUCT:
-///
-///   STAGE_PRODUCT=0: single behavioural `a*b` -> output reg.
-///   STAGE_PRODUCT=1: operand-capture reg, then the SAME native `a*b` -> output reg (enables better auto-tiling).
-///   STAGE_PRODUCT=2: operand-capture reg, manual 2x2 split (one registered partial-product reduction).
-///   STAGE_PRODUCT=3: operand-capture reg, manual 3x3 split (row-sum register, then the column-sum register).
-///   STAGE_PRODUCT=4: same 3x3 grid, but the final column sum is pipelined into two stages (pairwise, then sum).
+// Shared chip-agnostic pipelined integer multiply: p = a * b, exact, with per-operand signedness.
+//
+// The operands are split into a GA x GB grid of near-equal slices; each slice product is a plain `*` the synthesis
+// tool maps to however many DSP tiles the target device has. The register between the slice products and their sum
+// breaks the timing-critical fabric cascade, so wide multiplies close timing on any part.
+//
+// A_SIGNED / B_SIGNED mark each operand signed (1) or unsigned (0); the caller passes its NATIVE width.
+// The output `p` is the raw WA+WB product bits; the caller interprets them as signed or unsigned. Behavior:
+//
+//     Fully-unsigned (both 0): An unsigned slice grid -- full WMULTIPLIER-bit slices, unsigned products/sum (an
+//                              18-bit unsigned operand at WMULTIPLIER=18 is ONE tile, no wasted bit).
+//
+//     Signed or mixed: A signed slice grid -- each operand's top slice is sign/zero-extended per its flag, lower
+//                      slices are zero-prepended (a signed*unsigned slice product must carry the unsigned operand
+//                      non-negative-signed, costing the sign bit, hence P = WMULTIPLIER-1). Both grids reconstruct
+//                      the exact product.
+//
+// STAGE_PRODUCT sets the pipeline depth, or the number of register stages (latency).
+// WMULTIPLIER chooses the grid construction (no effect on the latency), and applies only when the operands are
+// actually split (STAGE_PRODUCT >= 2, otherwise ignored):
+//
+//   WMULTIPLIER=0: symmetric split GA = GB = {native, native, 2, 3, 3}[STAGE_PRODUCT].
+//   WMULTIPLIER>0: Each slice fits a WMULTIPLIER-bit signed/unsigned tile; the caller states its DSP width once;
+//                  the core derives the minimal -- possibly asymmetric -- grid, e.g. 66x41 -> 4x3.
+//                  P = WMULTIPLIER for the fully-unsigned grid, WMULTIPLIER-1 when a signed operand is present.
+//
+// Register stages (latency) = 1+STAGE_PRODUCT:
+//
+//   STAGE_PRODUCT=0: single behavioural `a*b` -> output reg.
+//   STAGE_PRODUCT=1: operand-capture reg, then the SAME native `a*b` -> output reg (enables better auto-tiling).
+//   STAGE_PRODUCT=2: operand-capture reg, manual 2x2 split (one registered partial-product reduction).
+//   STAGE_PRODUCT=3: operand-capture reg, manual 3x3 split (row-sum register, then the column-sum register).
+//   STAGE_PRODUCT=4: same 3x3 grid, but the final column sum is pipelined into two stages (pairwise, then sum).
 
 `default_nettype none
 

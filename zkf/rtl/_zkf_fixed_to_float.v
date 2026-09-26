@@ -1,26 +1,26 @@
-/// Streamed signed-magnitude fixed-point -> normalized float.
-/// Internalizes the _zkf_normshift + sideband delay + pack-input combine + _zkf_pack pipeline. The caller forms the
-/// unsigned magnitude (and registers it), resolves the special-case sign and force_inf ahead of the helper, and passes
-/// generic sideband through sb_in / sb_out for outputs that don't fit the y / valid channels (e.g., zkf_log2's pole
-/// and domain_error flags).
-///
-/// Register stages = STAGE_NORMALIZE+STAGE_NORMALIZE_OUTPUT+STAGE_PACK+STAGE_OUTPUT
-///
-/// Zero-bubble, throughput-1, no backpressure. Reset clears only the control signals.
-///
-/// The result exponent (unbiased/biased depending on EXP_IS_BIASED) is computed as
-/// exp = exp_offset - normshift_count.
-///
-/// EXP_IS_BIASED: 0 = `exp` is unbiased (helper passes it to _zkf_pack so the packer adds the bias);
-///                1 = `exp` is already biased (the caller folded the bias into exp_offset to skip the packer's
-///                    bias add -- used by zkf_from_int with exp_offset = WX-1+BIAS).
-///
-/// ASSUME_NO_OVERFLOW: forwarded to _zkf_pack. 0 = detect exponent overflow -> infinity (default); 1 = the caller
-///                guarantees the result exponent is always in range, so the packer's overflow detector is pruned
-///                (e.g. zkf_log2, whose result is always representable for finite x). force_inf and the underflow
-///                paths are unaffected.
-///
-/// Callers that don't need the sideband should set its width WSB=1 and stub with a constant.
+// Streamed signed-magnitude fixed-point -> normalized float.
+// Internalizes the _zkf_normshift + sideband delay + pack-input combine + _zkf_pack pipeline. The caller forms the
+// unsigned magnitude (and registers it), resolves the special-case sign and force_inf ahead of the helper, and passes
+// generic sideband through sb_in / sb_out for outputs that don't fit the y / valid channels (e.g., zkf_log2's pole
+// and domain_error flags).
+//
+// Register stages = STAGE_NORMALIZE+STAGE_NORMALIZE_OUTPUT+STAGE_PACK+STAGE_OUTPUT
+//
+// Zero-bubble, throughput-1, no backpressure. Reset clears only the control signals.
+//
+// The result exponent (unbiased/biased depending on EXP_IS_BIASED) is computed as
+// exp = exp_offset - normshift_count.
+//
+// EXP_IS_BIASED: 0 = `exp` is unbiased (helper passes it to _zkf_pack so the packer adds the bias);
+//                1 = `exp` is already biased (the caller folded the bias into exp_offset to skip the packer's
+//                    bias add -- used by zkf_from_int with exp_offset = WX-1+BIAS).
+//
+// ASSUME_NO_OVERFLOW: forwarded to _zkf_pack. 0 = detect exponent overflow -> infinity (default); 1 = the caller
+//                guarantees the result exponent is always in range, so the packer's overflow detector is pruned
+//                (e.g. zkf_log2, whose result is always representable for finite x). force_inf and the underflow
+//                paths are unaffected.
+//
+// Callers that don't need the sideband should set its width WSB=1 and stub with a constant.
 
 `default_nettype none
 

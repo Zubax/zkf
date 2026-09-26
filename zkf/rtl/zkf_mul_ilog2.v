@@ -1,20 +1,20 @@
-/// Power-of-two multiplier: y = a * 2^k, where k is a signed integer (ldexp/scalbn).
-/// This is far cheaper than full multiplication (zkf_mul) or division (zkf_div) because the significand is preserved
-/// bit-for-bit and only the biased exponent is shifted by k, and no rounding is required -- the operation is exact
-/// in the format's normal range.
-///
-/// k is a signed value WK bits wide. Any k is legal: shifts that push the result past the format's range simply
-/// saturate to signed infinity (overflow) or flush to zero (underflow), exactly as ldexp would. The default width
-/// spans the entire useful range; widen WK if k is driven from a wider computed value.
-///
-/// STAGE_INPUT=0: operand and k feed the decode combinationally (default).
-/// STAGE_INPUT=1: latch {a, k} before any combinational logic, isolating them from upstream paths (+1 cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-///
-/// STAGE_DECODE=0: single-cycle combinational decode + output mux (no intermediate register).
-/// STAGE_DECODE=1: registers the decoded sign / new_exp / frac / classification predicates before the output mux.
-///     Splits the long route from input port to output register (the dominant delay path at wide WMAN on
-///     placement-sensitive tools). Costs one extra pipeline cycle.
+// Power-of-two multiplier: y = a * 2^k, where k is a signed integer (ldexp/scalbn).
+// This is far cheaper than full multiplication (zkf_mul) or division (zkf_div) because the significand is preserved
+// bit-for-bit and only the biased exponent is shifted by k, and no rounding is required -- the operation is exact
+// in the format's normal range.
+//
+// k is a signed value WK bits wide. Any k is legal: shifts that push the result past the format's range simply
+// saturate to signed infinity (overflow) or flush to zero (underflow), exactly as ldexp would. The default width
+// spans the entire useful range; widen WK if k is driven from a wider computed value.
+//
+// STAGE_INPUT=0: operand and k feed the decode combinationally (default).
+// STAGE_INPUT=1: latch {a, k} before any combinational logic, isolating them from upstream paths (+1 cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+//
+// STAGE_DECODE=0: single-cycle combinational decode + output mux (no intermediate register).
+// STAGE_DECODE=1: registers the decoded sign / new_exp / frac / classification predicates before the output mux.
+//     Splits the long route from input port to output register (the dominant delay path at wide WMAN on
+//     placement-sensitive tools). Costs one extra pipeline cycle.
 
 `default_nettype none
 

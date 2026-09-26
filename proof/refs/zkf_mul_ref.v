@@ -1,6 +1,6 @@
-/// Combinational reference multiplier for formal equivalence proofs.
-/// Independent from zkf_mul.v in style: combinational, single always-block, no pipeline,
-/// no shared GRS-extraction expressions.
+// Combinational reference multiplier for formal equivalence proofs.
+// Independent from zkf_mul.v in style: combinational, single always-block, no pipeline,
+// no shared GRS-extraction expressions.
 
 `default_nettype none
 

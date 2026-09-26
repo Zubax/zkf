@@ -1,5 +1,5 @@
-/// Streamed Zubax Kulibin float adder/subtractor.
-/// y = a + b when op_sub == 0; y = a - b when op_sub == 1.
+// Streamed Zubax Kulibin float adder/subtractor.
+// y = a + b when op_sub == 0; y = a - b when op_sub == 1.
 
 `default_nettype none
 

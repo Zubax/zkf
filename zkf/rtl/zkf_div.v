@@ -1,16 +1,16 @@
-/// Streamed Zubax Kulibin float divider. The quotient is rounded by _zkf_pack; div0 is aligned with q/out_valid.
-/// div0 reports that the divisor's exponent field is zero (i.e., the divisor encodes +0). It is
-/// independent of the quotient: in particular div0 is also asserted for 0/0, where q = +0.
-///
-/// STAGE_INPUT=0: input combinational paths are exposed.
-/// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-///
-/// STAGE_PACK=0: pack inputs are combinational (default).
-/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
-///
-/// STAGE_OUTPUT=0: q and div0 are combinational (default)
-/// STAGE_OUTPUT=1: registered (one extra cycle).
+// Streamed Zubax Kulibin float divider. The quotient is rounded by _zkf_pack; div0 is aligned with q/out_valid.
+// div0 reports that the divisor's exponent field is zero (i.e., the divisor encodes +0). It is
+// independent of the quotient: in particular div0 is also asserted for 0/0, where q = +0.
+//
+// STAGE_INPUT=0: input combinational paths are exposed.
+// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+//
+// STAGE_PACK=0: pack inputs are combinational (default).
+// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
+//
+// STAGE_OUTPUT=0: q and div0 are combinational (default)
+// STAGE_OUTPUT=1: registered (one extra cycle).
 
 `default_nettype none
 

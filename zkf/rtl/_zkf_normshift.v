@@ -1,44 +1,44 @@
-/// Leading-zero-normalizing left shifter: brings the most significant set bit of `x` up to the MSB (bit W-1) and
-/// reports how far it had to shift. Outputs:
-///   - `zero`  : asserted iff x == 0.
-///   - `count` : (W-1) - position_of_leading_one, i.e. the applied left-shift amount. Don't-care when `zero`.
-///   - `y`     : x << count, the normalized vector (leading 1 at bit W-1 for nonzero x).
-///
-/// This fuses what used to be a separate leading-one detector (_zkf_lod) followed by a separate barrel shift: the
-/// same mux cascade that tests-and-shifts also yields the count as the concatenation of its per-level digits, roughly
-/// halving the multiplexer footprint of the count-then-shift pair. Modelled on FloPoCo's Normalizer_Z. Used by the
-/// adder's close-cancellation normalization and by the integer-to-float magnitude normalization.
-///
-/// Implementation: radix-4 cascade, processed largest-shift first, so the depth is half the radix-2 equivalent (which
-/// matters for timing closure at wide W). Level k (weight G = 4^k) inspects the top G, 2G and 3G bits; the number of
-/// all-zero leading G-groups (0..3) is the radix-4 digit, the data is shifted left by digit*G, and the digit is the
-/// count's base-4 place k. Groups/shifts beyond W are clamped at elaboration (only ever selected for x == 0, whose
-/// count is don't-care). Walking high-to-low brings the leading one to the MSB and assembles count = {digits}.
-///
-/// WSHAMT defaults to clog2(W); callers needing a wider count (downstream widths sized off a different bound) may
-/// request WSHAMT > clog2(W) and the count is zero-padded. The internal radix-4 count is 2*ceil(clog2(W)/2) bits and
-/// is truncated to WSHAMT; this is lossless because count <= W-1 < 2^clog2(W) <= 2^WSHAMT for every nonzero input.
-///
-/// STAGE_SPLIT=0: pure combinational, single-cycle (clk unused).
-///
-/// STAGE_SPLIT=1: one register barrier in the middle of the cascade; y/count/zero appear one cycle after x, and the
-/// consumer must add a matching cycle to its pipeline. The early (pre-barrier) digits and zero are delayed one cycle
-/// so the whole count and zero stay aligned with the late digits and the shifted output.
-///
-/// STAGE_SPLIT=2: two register barriers; the first sits right after the top (widest) radix-4 level (where the wide
-/// leading-zero OR-reductions and the largest barrel-shift muxes live) and the second at the existing midpoint. The
-/// pre-barrier digits/zero get the extra cycle of delay so the whole count and zero stay aligned. Useful at wide W
-/// where one barrier still leaves the top two levels in the same combinational stage (a substantial f_max gain at wide
-/// WMAN in zkf_log2; the same path zkf_fma uses for its close-cancellation normalize when STAGE_NORMALIZE=2). Requires
-/// NL4 >= 3 so the two barriers do not coincide.
-///
-/// STAGE_OUTPUT=1: register the fully aligned y/count/zero outputs after the cascade (+1 cycle). This is useful when
-/// the consumer needs a clean boundary after normalization without changing the internal split geometry.
-///
-/// Streaming sideband: in_valid/out_valid and the generic sb_in/sb_out bus are delayed by exactly the module's output
-/// latency (STAGE_SPLIT + STAGE_OUTPUT) so they land aligned with y/count/zero. This lets callers thread their control
-/// payload through the normalizer instead of a parallel zkf_pipe. Reset clears only out_valid; sb and the datapath
-/// free-run per the project reset policy. Callers that don't need the sideband set WSB=1 and stub sb_in with a constant.
+// Leading-zero-normalizing left shifter: brings the most significant set bit of `x` up to the MSB (bit W-1) and
+// reports how far it had to shift. Outputs:
+//   - `zero`  : asserted iff x == 0.
+//   - `count` : (W-1) - position_of_leading_one, i.e. the applied left-shift amount. Don't-care when `zero`.
+//   - `y`     : x << count, the normalized vector (leading 1 at bit W-1 for nonzero x).
+//
+// This fuses what used to be a separate leading-one detector (_zkf_lod) followed by a separate barrel shift: the
+// same mux cascade that tests-and-shifts also yields the count as the concatenation of its per-level digits, roughly
+// halving the multiplexer footprint of the count-then-shift pair. Modelled on FloPoCo's Normalizer_Z. Used by the
+// adder's close-cancellation normalization and by the integer-to-float magnitude normalization.
+//
+// Implementation: radix-4 cascade, processed largest-shift first, so the depth is half the radix-2 equivalent (which
+// matters for timing closure at wide W). Level k (weight G = 4^k) inspects the top G, 2G and 3G bits; the number of
+// all-zero leading G-groups (0..3) is the radix-4 digit, the data is shifted left by digit*G, and the digit is the
+// count's base-4 place k. Groups/shifts beyond W are clamped at elaboration (only ever selected for x == 0, whose
+// count is don't-care). Walking high-to-low brings the leading one to the MSB and assembles count = {digits}.
+//
+// WSHAMT defaults to clog2(W); callers needing a wider count (downstream widths sized off a different bound) may
+// request WSHAMT > clog2(W) and the count is zero-padded. The internal radix-4 count is 2*ceil(clog2(W)/2) bits and
+// is truncated to WSHAMT; this is lossless because count <= W-1 < 2^clog2(W) <= 2^WSHAMT for every nonzero input.
+//
+// STAGE_SPLIT=0: pure combinational, single-cycle (clk unused).
+//
+// STAGE_SPLIT=1: one register barrier in the middle of the cascade; y/count/zero appear one cycle after x, and the
+// consumer must add a matching cycle to its pipeline. The early (pre-barrier) digits and zero are delayed one cycle
+// so the whole count and zero stay aligned with the late digits and the shifted output.
+//
+// STAGE_SPLIT=2: two register barriers; the first sits right after the top (widest) radix-4 level (where the wide
+// leading-zero OR-reductions and the largest barrel-shift muxes live) and the second at the existing midpoint. The
+// pre-barrier digits/zero get the extra cycle of delay so the whole count and zero stay aligned. Useful at wide W
+// where one barrier still leaves the top two levels in the same combinational stage (a substantial f_max gain at wide
+// WMAN in zkf_log2; the same path zkf_fma uses for its close-cancellation normalize when STAGE_NORMALIZE=2). Requires
+// NL4 >= 3 so the two barriers do not coincide.
+//
+// STAGE_OUTPUT=1: register the fully aligned y/count/zero outputs after the cascade (+1 cycle). This is useful when
+// the consumer needs a clean boundary after normalization without changing the internal split geometry.
+//
+// Streaming sideband: in_valid/out_valid and the generic sb_in/sb_out bus are delayed by exactly the module's output
+// latency (STAGE_SPLIT + STAGE_OUTPUT) so they land aligned with y/count/zero. This lets callers thread their control
+// payload through the normalizer instead of a parallel zkf_pipe. Reset clears only out_valid; sb and the datapath
+// free-run per the project reset policy. Callers that don't need the sideband set WSB=1 and stub sb_in with a constant.
 
 `default_nettype none
 

@@ -1,5 +1,5 @@
-/// Formal harness: zkf_cmp DUT vs. zkf_cmp_ref (case-analysis reference).
-/// LATENCY is supplied by run_proofs.py from the shared Python model.
+// Formal harness: zkf_cmp DUT vs. zkf_cmp_ref (case-analysis reference).
+// LATENCY is supplied by run_proofs.py from the shared Python model.
 
 `default_nettype none
 

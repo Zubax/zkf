@@ -1,16 +1,16 @@
-/// Streamed cast from signed two's-complement integer to Zubax Kulibin float.
-///
-/// STAGE_INPUT=0: input combinational paths are exposed.
-/// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (+1 cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-///
-/// STAGE_NORMALIZE=0/1/2: number of internal register stages inside normshift (forward to _zkf_normshift.STAGE_SPLIT).
-///
-/// STAGE_PACK=0: pack inputs are combinational (default).
-/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
-///
-/// STAGE_OUTPUT=0: outputs are combinational (default).
-/// STAGE_OUTPUT=1: registered (+1 cycle).
+// Streamed cast from signed two's-complement integer to Zubax Kulibin float.
+//
+// STAGE_INPUT=0: input combinational paths are exposed.
+// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (+1 cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+//
+// STAGE_NORMALIZE=0/1/2: number of internal register stages inside normshift (forward to _zkf_normshift.STAGE_SPLIT).
+//
+// STAGE_PACK=0: pack inputs are combinational (default).
+// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
+//
+// STAGE_OUTPUT=0: outputs are combinational (default).
+// STAGE_OUTPUT=1: registered (+1 cycle).
 
 `default_nettype none
 

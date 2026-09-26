@@ -1,29 +1,29 @@
-/// Streamed float square root: y = sqrt(x), correctly rounded (RNTE). Zero-bubble, throughput-1.
-/// Behavior:
-///
-///   sqrt(finite>0) = sqrt(x), round-to-nearest ties-to-even
-///   sqrt(+/-0)     = +0                       (sign of zero is ignored)
-///   sqrt(+inf)     = +inf
-///   sqrt(x<0)      = -inf, domain_error=1     (incl. -inf; log2-style poison value)
-///
-/// The output sign bit equals domain_error for every input. domain_error is aligned with y/out_valid.
-///
-/// The root is produced by an unrolled radix-4 restoring recurrence (2 root bits per stage); the first digit is
-/// folded into the decode stage because its selection thresholds are constants.
-/// The result exponent never overflows and the round-up carry into it is provably unreachable
-/// (an all-1 significand always rounds down at even WMAN; at odd WMAN an all-1 raw root forces rem<=raw, guard 0),
-/// so _zkf_pack runs with ASSUME_NO_OVERFLOW=1 while the carry path still rides its combined {exp,significand}
-/// rounding adder.
-///
-/// STAGE_INPUT=0: input combinational paths are exposed.
-/// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
-/// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
-///
-/// STAGE_PACK=0: pack inputs are combinational (default).
-/// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
-///
-/// STAGE_OUTPUT=0: y and domain_error are combinational (default).
-/// STAGE_OUTPUT=1: registered (one extra cycle).
+// Streamed float square root: y = sqrt(x), correctly rounded (RNTE). Zero-bubble, throughput-1.
+// Behavior:
+//
+//   sqrt(finite>0) = sqrt(x), round-to-nearest ties-to-even
+//   sqrt(+/-0)     = +0                       (sign of zero is ignored)
+//   sqrt(+inf)     = +inf
+//   sqrt(x<0)      = -inf, domain_error=1     (incl. -inf; log2-style poison value)
+//
+// The output sign bit equals domain_error for every input. domain_error is aligned with y/out_valid.
+//
+// The root is produced by an unrolled radix-4 restoring recurrence (2 root bits per stage); the first digit is
+// folded into the decode stage because its selection thresholds are constants.
+// The result exponent never overflows and the round-up carry into it is provably unreachable
+// (an all-1 significand always rounds down at even WMAN; at odd WMAN an all-1 raw root forces rem<=raw, guard 0),
+// so _zkf_pack runs with ASSUME_NO_OVERFLOW=1 while the carry path still rides its combined {exp,significand}
+// rounding adder.
+//
+// STAGE_INPUT=0: input combinational paths are exposed.
+// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+//
+// STAGE_PACK=0: pack inputs are combinational (default).
+// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
+//
+// STAGE_OUTPUT=0: y and domain_error are combinational (default).
+// STAGE_OUTPUT=1: registered (one extra cycle).
 
 `default_nettype none
 
@@ -117,28 +117,28 @@ module zkf_sqrt #(
 endmodule
 
 
-/// Internal root generator for Zubax Kulibin float square root.
-///
-/// The root bits are produced by an unrolled radix-4 restoring recurrence. With x = m*2^e and r = e mod 2
-/// (= ~exp[0], BIAS odd), the radicand is m' = m*2^r in [1,4) and sqrt(x) = sqrt(m') * 2^floor(e/2).
-/// The biased result exponent is (exp + BIAS) >> 1: BIAS is odd, so the shifted-away bit is exactly r and the
-/// unsigned shift floors correctly for every field value -- a single adder, no -r correction.
-///
-/// State after digit j: root prefix Q (1+2j bits, normalized), remainder rem = X - Q^2 in [0, 2Q] where X is the
-/// integer value of the radicand bits consumed so far, and M = 3Q+1 maintained incrementally so the d=3 trial
-/// subtrahend stays a plain two-operand carry chain. The first digit is resolved inside the decode stage (its
-/// thresholds are the constants 9/20/33), so the pipeline is 1 + QFRAC/2 register stages.
-///
-/// The final truncated root raw carries QFRAC = WFRAC + (WFRAC % 2) fractional bits. At even WMAN the guard bit
-/// is raw[0]; at odd WMAN guard = (rem > raw), exact because the root exceeds raw + 1/2 iff rem > raw (strict:
-/// rem == raw is reachable and must give guard 0). sticky = (rem != 0) in both parities. Rounding ties are
-/// structurally impossible (a midpoint squared is odd-numerator while the radicand is even), so no round bit.
-/// The truncated root and the final remainder are exposed as byproducts that are occasionally useful.
-/// There is no sign output: the result sign equals domain_error by policy, so a consumer packs with sign
-/// wired to domain_error (as the zkf_sqrt top does).
-///
-/// Register stages: 1 + QFRAC/2 (= 1 + WMAN/2). Inputs are not latched but outputs are. Throughput is one
-/// sample per cycle.
+// Internal root generator for Zubax Kulibin float square root.
+//
+// The root bits are produced by an unrolled radix-4 restoring recurrence. With x = m*2^e and r = e mod 2
+// (= ~exp[0], BIAS odd), the radicand is m' = m*2^r in [1,4) and sqrt(x) = sqrt(m') * 2^floor(e/2).
+// The biased result exponent is (exp + BIAS) >> 1: BIAS is odd, so the shifted-away bit is exactly r and the
+// unsigned shift floors correctly for every field value -- a single adder, no -r correction.
+//
+// State after digit j: root prefix Q (1+2j bits, normalized), remainder rem = X - Q^2 in [0, 2Q] where X is the
+// integer value of the radicand bits consumed so far, and M = 3Q+1 maintained incrementally so the d=3 trial
+// subtrahend stays a plain two-operand carry chain. The first digit is resolved inside the decode stage (its
+// thresholds are the constants 9/20/33), so the pipeline is 1 + QFRAC/2 register stages.
+//
+// The final truncated root raw carries QFRAC = WFRAC + (WFRAC % 2) fractional bits. At even WMAN the guard bit
+// is raw[0]; at odd WMAN guard = (rem > raw), exact because the root exceeds raw + 1/2 iff rem > raw (strict:
+// rem == raw is reachable and must give guard 0). sticky = (rem != 0) in both parities. Rounding ties are
+// structurally impossible (a midpoint squared is odd-numerator while the radicand is even), so no round bit.
+// The truncated root and the final remainder are exposed as byproducts that are occasionally useful.
+// There is no sign output: the result sign equals domain_error by policy, so a consumer packs with sign
+// wired to domain_error (as the zkf_sqrt top does).
+//
+// Register stages: 1 + QFRAC/2 (= 1 + WMAN/2). Inputs are not latched but outputs are. Throughput is one
+// sample per cycle.
 
 module _zkf_sqrt_core #(
     parameter WEXP          = 6,

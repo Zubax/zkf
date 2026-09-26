@@ -1,10 +1,10 @@
-/// Formal harness: _zkf_sqrt_radix4_step DUT vs zkf_sqrt_radix4_step_ref, combinational, BMC depth 1.
-/// One checker per prefix width: the widths used by the end-to-end proofs (WQ=1, 3, 5: WMAN=6/7 stages,
-/// WQ=1 being the constant-folded decode-stage first digit) plus the late-stage widths WQ=17 (w6m18
-/// production) and WQ=51 (WMAN=53 class), catching unsized or signed constant mistakes and borrow
-/// extraction past 32 bits. Each checker derives M = 3Q+1 exactly as
-/// the pipeline maintains it (the step contract), assumes the normalized-prefix and remainder invariants,
-/// and asserts equivalence plus the recurrence identity and the 0 <= rem' <= 2Q' invariant.
+// Formal harness: _zkf_sqrt_radix4_step DUT vs zkf_sqrt_radix4_step_ref, combinational, BMC depth 1.
+// One checker per prefix width: the widths used by the end-to-end proofs (WQ=1, 3, 5: WMAN=6/7 stages,
+// WQ=1 being the constant-folded decode-stage first digit) plus the late-stage widths WQ=17 (w6m18
+// production) and WQ=51 (WMAN=53 class), catching unsized or signed constant mistakes and borrow
+// extraction past 32 bits. Each checker derives M = 3Q+1 exactly as
+// the pipeline maintains it (the step contract), assumes the normalized-prefix and remainder invariants,
+// and asserts equivalence plus the recurrence identity and the 0 <= rem' <= 2Q' invariant.
 
 `default_nettype none
 
