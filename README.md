@@ -262,7 +262,7 @@ ERR_GUARD = 8, i.e. between `2^-(ERR_GUARD+1) = 1/512` and `2^-ERR_GUARD = 1/256
 helper's `[1, 2)` interval — small enough that the round bit is structurally trustworthy,
 so faithful rounding is automatic.
 
-A mis-round against round-to-nearest-ties-to-even is possible only when the true value lies within `≈2^-(ERR_GUARD-1)`
+A mis-round against round-to-nearest-ties-to-even is possible only when the true value lies within `≈2^-ERR_GUARD`
 ULP of a midpoint between adjacent representable values, bounding the worst-case mis-round rate at `≈2^-7 ≈ 0.8%`;
 raising ERR_GUARD by one bit halves that rate at the cost of bumping the polynomial degree (and a Horner stage)
 at some WMAN, but the Table-Maker's Dilemma rules out correctly-rounded-everywhere at WMAN = 53 regardless of budget,
