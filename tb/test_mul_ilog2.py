@@ -129,7 +129,7 @@ async def mul_ilog2_runtime_cases(dut) -> None:
         wk=wk,
         stage_input=context.stage_input,
         stage_decode=context.stage_decode,
-    ).latency
+    ).timing.latency
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: Case) -> dict[str, int]:

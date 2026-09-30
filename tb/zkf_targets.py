@@ -13,10 +13,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-# Shared table sources, spelled out once and reused by the transcendental filesets.
-_EXP2_TABLES = [f"zkf/rtl/_tables/_zkf_exp2_m{w}.v" for w in (16, 18, 24, 27, 32, 36, 48, 53)]
-_LOG2_TABLES = [f"zkf/rtl/_tables/_zkf_log2_m{w}.v" for w in (16, 18, 24, 27, 32, 36, 48, 53)]
-_CORDIC_TABLES = [f"zkf/rtl/_tables/_zkf_cordic_m{w}.v" for w in (16, 18, 24, 27, 32, 36, 48, 53)]
+from zkf._reference import trans_specs, trig_specs
+
+# Shared table sources, one per generated table, reused by the transcendental filesets.
+_EXP2_TABLES = [f"zkf/rtl/_tables/_zkf_exp2_m{w}.v" for f, w in sorted(trans_specs()) if f == "exp2"]
+_LOG2_TABLES = [f"zkf/rtl/_tables/_zkf_log2_m{w}.v" for f, w in sorted(trans_specs()) if f == "log2"]
+_CORDIC_TABLES = [f"zkf/rtl/_tables/_zkf_cordic_m{w}.v" for w in sorted(trig_specs())]
 
 _TRIG_SOURCES = [
     "zkf/rtl/_zkf_pack.v",

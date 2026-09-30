@@ -208,7 +208,7 @@ async def to_int_runtime_cases(dut) -> None:
     drive_unsigned(dut.a, 0)
     dut.round_mode.value = 0
 
-    register_stages = fmt.model_of("to_int")(wint=wint, stage_input=context.stage_input).latency
+    register_stages = fmt.model_of("to_int")(wint=wint, stage_input=context.stage_input).timing.latency
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, wint)})
 
     def drive_case(case: ToIntCase) -> dict[str, int]:

@@ -160,7 +160,7 @@ async def addsub_runtime_cases(dut) -> None:
         stage_normalize=context.stage_normalize,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    ).latency
+    ).timing.latency
     scoreboard = RegisterStageScoreboard(dut, register_stages, context, {"y": (dut.y, fmt.wfull)})
 
     def drive_case(case: AddSubCase) -> dict[str, int]:

@@ -38,8 +38,8 @@ module zkf_from_int #(
         if ((WEXP < 2) || (WMAN < 4) || (WINT < 2)) begin : g_invalid
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // Shift by WEXP >= 32 would overflow Verilog's integer constant arithmetic and yield tool-dependent values.
-        if (WEXP >= 32) begin : g_invalid_wexp_too_wide
+        // WEXP >= 31 slices the exponent offset past the 32-bit integer constant it comes from: tool-dependent values.
+        if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_from_int_wexp_too_wide_unportable u_invalid();
         end
         if ((LATENCY != 0) && (LATENCY != LATENCY_REF)) begin : g_invalid_latency

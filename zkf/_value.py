@@ -395,6 +395,7 @@ class Zkf:
     def exp2(self) -> Zkf:
         """2 ** self (the zkf_exp2 operator)."""
         fmt, bits = self.fmt, self.bits
+        spec = trans_spec("exp2", fmt.wman)
         d = self
         if d.is_inf:
             return Zkf(fmt, canonical_inf(fmt, 0) if not d.negative else zero(fmt))  # +inf -> +inf, -inf -> +0
@@ -405,7 +406,6 @@ class Zkf:
         if e >= fmt.wexp - 1:
             return Zkf(fmt, canonical_inf(fmt, 0) if not d.negative else zero(fmt))
 
-        spec = trans_spec("exp2", fmt.wman)
         cf, rw = spec["cf"], spec["rw"]
         ff = spec["k"] + rw  # full reduced-argument width FF = K + RW
         sig = significand(fmt, bits)
@@ -431,6 +431,7 @@ class Zkf:
     def log2(self) -> Log2Result:
         """log2(self) plus the domain-error (self<0) and pole (self==0) status flags."""
         fmt, bits = self.fmt, self.bits
+        spec = trans_spec("log2", fmt.wman)
         d = self
         if d.is_inf and not d.negative:
             return Log2Result(Zkf(fmt, canonical_inf(fmt, 0)), False, False)  # log2(+inf) = +inf
@@ -440,7 +441,6 @@ class Zkf:
             return Log2Result(Zkf(fmt, canonical_inf(fmt, 1)), True, False)  # log2(x<0) = -inf, domain error
 
         e = d.exp - fmt.bias
-        spec = trans_spec("log2", fmt.wman)
         cf, rw = spec["cf"], spec["rw"]
 
         # Symmetric argument reduction (mirrors the phase-2 RTL re-center; defines the bit-exact contract). x = m*2^e,
@@ -474,6 +474,7 @@ class Zkf:
     def sincos(self) -> SinCos:
         """(sin(2*pi*self), cos(2*pi*self), quadrant) -- the zkf_sincos operator."""
         fmt, bits = self.fmt, self.bits
+        spec = trig_spec(fmt.wman)
         d = self
         if d.is_inf:
             s = canonical_inf(fmt, d.negative)
@@ -481,7 +482,6 @@ class Zkf:
         if d.is_zero:
             return SinCos(Zkf(fmt, zero(fmt)), Zkf(fmt, normal(fmt, 0, fmt.bias, 0)), 0)  # sin(0)=+0, cos(0)=+1
 
-        spec = trig_spec(fmt.wman)
         xf, zf = spec["xf"], spec["zf"]
         # const2pi arrives PRE-NARROWED from the table (top WMAN+5 bits == round(2*pi * 2**const2pi_s)); const2pi_s is
         # the single source of scale for every consuming shift / exp-offset. Mirrors zkf/rtl/_zkf_cordic_unit.v.
@@ -573,14 +573,13 @@ class Zkf:
         descales x_K by 1/gain (== KINV).
         """
         self._require_same(x)
-        if self.fmt.wexp < 5:
-            raise ValueError(f"atan2 requires WEXP >= 5, got {self.fmt.wexp}")
+        check_format_width("atan2 WEXP", self.fmt.wexp, 5)
+        spec = trig_spec(self.fmt.wman)
         fmt, y_bits, x_bits = self.fmt, self.bits, x.bits
         sp = atan2_special(fmt, y_bits, x_bits)
         if sp is not None:
             return Atan2Result(Zkf(fmt, sp[0]), Zkf(fmt, sp[1]))
 
-        spec = trig_spec(fmt.wman)
         # xf is the SHARED engine width (table WX/KINV/INV_TAU and the returned x_K/y_K all at 2**-xf). xf_atan2 is
         # atan2's own x/y width, driving only the divider quotient budget F; equal today, read separately to decouple.
         xf, zf = spec["xf"], spec["zf"]

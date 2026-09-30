@@ -17,7 +17,7 @@ import sys
 from common import REPO
 
 sys.path.insert(0, str(REPO))
-from zkf import CordicModel, OperatorModel, ZkfFormat  # noqa: E402  (path set up immediately above)
+from zkf import OperatorModel, Timing, ZkfFormat  # noqa: E402  (path set up immediately above)
 
 
 @dataclass(frozen=True)
@@ -960,10 +960,10 @@ def model_for(spec: ModuleSpec) -> OperatorModel:
 
 
 def register_stages(spec: ModuleSpec) -> int | tuple[int, int]:
-    model = model_for(spec)
-    if isinstance(model, CordicModel):
-        return model.latency_rotation, model.latency_vectoring
-    return model.latency
+    timing = model_for(spec).timing
+    if isinstance(timing, Timing):
+        return timing.latency
+    return timing[0].latency, timing[1].latency
 
 
 def format_register_stages(stages: int | tuple[int, int]) -> str:

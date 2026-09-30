@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, fields
 from fractions import Fraction
 from typing import ClassVar
 
 from ._reference import (
+    check_format_width,
     normal as normal_bits,
     pack_bits,
     pow2_fraction,
@@ -15,6 +16,12 @@ from ._reference import (
     signed_int_min,
     zero as zero_bits,
 )
+
+
+@dataclass(frozen=True, slots=True)
+class Timing:
+    latency: int
+    initiation_interval: int
 
 
 @dataclass(frozen=True)
@@ -42,15 +49,20 @@ class OperatorModel:
         return ", ".join(f".{name}({value})" for name, value in self.params.items())
 
     @property
-    def latency(self) -> int:
+    def timing(self) -> Timing | Mapping[int, Timing]:
+        """
+        A Timing if the operator's timing does not depend on its mode (even if a mode input selects the arithmetic);
+        otherwise a mapping from every legal value of the mode-selecting input to that mode's Timing. A mode's
+        initiation interval counts the cycles from accepting a transaction in that mode to accepting the next one of
+        any mode, with no output back-pressure.
+        """
         raise NotImplementedError
 
-    @property
-    def initiation_interval(self) -> int:
-        return 1
-
     def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
-        return {**params, "LATENCY": self.latency}
+        timing = self.timing
+        if not isinstance(timing, Timing):
+            raise TypeError(f"{self.module} has per-mode timing, so it has no single LATENCY")
+        return {**params, "LATENCY": timing.latency}
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,10 +73,8 @@ class ZkfFormat:
     wman: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.wexp, int) or self.wexp < 2:
-            raise ValueError(f"Bad exponent: {self.wexp}")
-        if not isinstance(self.wman, int) or self.wman < 4:
-            raise ValueError(f"Bad mantissa: {self.wman}")
+        check_format_width("WEXP", self.wexp, 2)
+        check_format_width("WMAN", self.wman, 4)
 
     def model_of(self, name: str) -> Callable[..., OperatorModel]:
         for model_cls in _operator_model_descendants():

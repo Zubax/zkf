@@ -15,6 +15,7 @@ The source lists, toplevels, and cocotb modules that FuseSoC used to supply now 
 from __future__ import annotations
 
 import hashlib
+import itertools
 import os
 import re
 import subprocess
@@ -175,15 +176,6 @@ def test_ilog2_elaboration(tmp_path, overrides, valid) -> None:
     _elaborate(tmp_path, "zkf_ilog2", overrides, ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_ilog2.v"], valid=valid)
 
 
-@pytest.mark.parametrize("top", ["zkf_atan2", "zkf_cordic"])
-@pytest.mark.parametrize("wexp,valid", [(2, False), (4, False), (5, True), (6, True)])
-def test_vectoring_wexp_floor(tmp_path, top, wexp, valid) -> None:
-    """Vectoring requires WEXP >= 5; 4 pins the boundary, 2 the case where theta's codomain is sub-normal."""
-    _elaborate(
-        tmp_path, top, {"WEXP": wexp, "WMAN": 16}, _TRIG_SOURCES, valid=valid, marker="_zkf_invalid_wexp_or_wman"
-    )
-
-
 _TRIG_LATENCY_KNOBS = [
     ((6, 18), {}),
     ((5, 16), {"unroll100": 50, "stage_input": 1, "stage_product": 1}),
@@ -273,24 +265,6 @@ def test_cordic_unit_nets_driven(tmp_path, mode) -> None:
     assert not undriven, "\n".join(undriven)
 
 
-@pytest.mark.parametrize("wexp,valid", [(4, False), (5, True)])
-def test_atan2_wexp_floor_model(wexp, valid) -> None:
-    """The RTL guard, the operator model and the public entry point must agree on the floor, not just the RTL."""
-    import zkf
-    from zkf._operators import Atan2Model
-
-    fmt = zkf.ZkfFormat(wexp, 16)
-    one = fmt.encode(1)
-    if valid:
-        Atan2Model(fmt=fmt)
-        one.atan2(one)
-    else:
-        with pytest.raises(ValueError):
-            Atan2Model(fmt=fmt)
-        with pytest.raises(ValueError):
-            one.atan2(one)
-
-
 def test_cordic_modes_rows_cover_every_sigma_arm() -> None:
     # A dropped row would pass every coverage gate (see _cordic_modes).
     rows = {
@@ -301,16 +275,65 @@ def test_cordic_modes_rows_cover_every_sigma_arm() -> None:
     assert rows >= {(tier, full, par) for tier in ("pr", "deep") for full, par in ((False, 0), (False, 1), (True, 0))}
 
 
-@pytest.mark.parametrize("model", ["SincosModel", "Atan2Model", "Exp2Model", "Log2Model"])
-def test_model_wexp_ceiling(model) -> None:
-    """A model describes a buildable instance, so it refuses the WEXP >= 31 its RTL refuses."""
-    import zkf
-    import zkf._operators
+def _format_bounds() -> list:
+    """
+    (model, wexp, wman, format knobs, RTL refusal marker or None) on both sides of every format bound a model mirrors.
+    Table-backed WMANs come from the generated specs: the smallest supported one and the next one without a table.
+    """
+    from zkf._reference import trans_specs, trig_specs
 
-    cls = getattr(zkf._operators, model)
-    cls(fmt=zkf.ZkfFormat(30, 16))
-    with pytest.raises(ValueError):
-        cls(fmt=zkf.ZkfFormat(31, 16))
+    def span(wmans) -> tuple[int, int]:
+        return min(wmans), next(w for w in itertools.count(min(wmans)) if w not in wmans)
+
+    exp2, exp2_absent = span({w for f, w in trans_specs() if f == "exp2"})
+    log2, log2_absent = span({w for f, w in trans_specs() if f == "log2"})
+    trig, trig_absent = span(set(trig_specs()))
+    wexp_or_wman = "_zkf_invalid_wexp_or_wman"
+    rows = [
+        ("Exp2Model", 1, exp2, {}, wexp_or_wman),  # ZkfFormat's own floor
+        ("Exp2Model", 30, exp2, {}, None),
+        ("Exp2Model", 31, exp2, {}, "_zkf_invalid_exp2_wexp_too_wide_unportable"),
+        ("Exp2Model", 8, exp2_absent, {}, f"_zkf_exp2_m{exp2_absent}"),
+        ("Log2Model", 30, log2, {}, None),
+        ("Log2Model", 31, log2, {}, wexp_or_wman),
+        ("Log2Model", 8, log2_absent, {}, f"_zkf_log2_m{log2_absent}"),
+        ("SincosModel", 2, trig, {}, None),
+        ("SincosModel", 30, trig, {}, None),
+        ("SincosModel", 31, trig, {}, wexp_or_wman),
+        ("SincosModel", 8, trig_absent, {}, f"_zkf_cordic_m{trig_absent}"),
+        ("ToIntModel", 30, 16, {"wint": 2}, None),
+        ("ToIntModel", 31, 16, {}, "_zkf_invalid_to_fixpoint_wexp_too_wide_unportable"),
+        ("ToIntModel", 8, 16, {"wint": 1}, wexp_or_wman),
+        ("FromIntModel", 30, 16, {"wint": 2}, None),
+        ("FromIntModel", 31, 16, {}, "_zkf_invalid_from_int_wexp_too_wide_unportable"),
+        ("FromIntModel", 8, 16, {"wint": 1}, wexp_or_wman),
+        ("RoundModel", 31, 16, {}, None),
+        ("RoundModel", 32, 16, {}, "_zkf_invalid_round_wexp_too_wide_unportable"),
+        ("Ilog2Model", 8, 16, {"wint": 9}, None),
+        ("Ilog2Model", 8, 16, {"wint": 8}, "_zkf_invalid_ilog2_wint"),
+        ("MulIlog2Model", 8, 16, {"wk": 1}, None),
+        ("MulIlog2Model", 8, 16, {"wk": 0}, "_zkf_invalid_mul_ilog2_wk"),
+    ]
+    for model in ("Atan2Model", "CordicModel"):  # 2 is where theta's codomain is sub-normal
+        rows += [(model, w, trig, {}, None if 5 <= w <= 30 else wexp_or_wman) for w in (2, 4, 5, 30, 31)]
+        rows.append((model, 8, trig_absent, {}, f"_zkf_cordic_m{trig_absent}"))
+    return rows
+
+
+@pytest.mark.parametrize("model,wexp,wman,knobs,marker", _format_bounds())
+def test_model_format_bounds(tmp_path, model, wexp, wman, knobs, marker) -> None:
+    """A model describes a buildable instance: it constructs iff its RTL elaborates, else raises UnsupportedFormat."""
+    import zkf
+
+    cls = getattr(zkf, model)
+    if marker is None:
+        m = cls(zkf.ZkfFormat(wexp, wman), **knobs)
+        _elaborate(tmp_path, m.module, m.params, _RTL_SOURCES)
+    else:
+        with pytest.raises(zkf.UnsupportedFormat):
+            cls(zkf.ZkfFormat(wexp, wman), **knobs)
+        params = {"WEXP": wexp, "WMAN": wman, **{k.upper(): v for k, v in knobs.items()}}
+        _elaborate(tmp_path, cls.module, params, _RTL_SOURCES, valid=False, marker=marker)
 
 
 @pytest.mark.parametrize("generator", ["zkf_trig", "zkf_transcendental"])
@@ -347,5 +370,6 @@ def test_pack_wexp_unbiased_floor_model(wu, eb, valid) -> None:
     if valid:
         PackModel(fmt=fmt, wexp_unbiased=wu, exp_is_biased=eb)
     else:
-        with pytest.raises(ValueError):
+        with pytest.raises(ValueError) as refusal:
             PackModel(fmt=fmt, wexp_unbiased=wu, exp_is_biased=eb)
+        assert not isinstance(refusal.value, zkf.UnsupportedFormat), "WEXP_UNBIASED is a knob, not a format"

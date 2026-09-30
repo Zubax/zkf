@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from ._format import OperatorModel, ZkfFormat
-from ._reference import trans_spec, trig_spec
+from types import MappingProxyType
+from ._format import OperatorModel, Timing, ZkfFormat
+from ._reference import UnsupportedFormat, check_format_width, trans_spec, trig_spec
 
 
 @dataclass(frozen=True)
@@ -12,8 +14,8 @@ class _UnaryCombModel(OperatorModel):
         return {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman}
 
     @property
-    def latency(self) -> int:
-        return 0
+    def timing(self) -> Timing:
+        return Timing(0, 1)
 
 
 @dataclass(frozen=True)
@@ -60,8 +62,8 @@ class PipeModel(OperatorModel):
         return {"W": self._w, "N": self.n}
 
     @property
-    def latency(self) -> int:
-        return self.n
+    def timing(self) -> Timing:
+        return Timing(self.n, 1)
 
 
 @dataclass(frozen=True)
@@ -115,8 +117,8 @@ class PackModel(OperatorModel):
         }
 
     @property
-    def latency(self) -> int:
-        return self.stage_input + self.stage_output
+    def timing(self) -> Timing:
+        return Timing(self.stage_input + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -133,8 +135,8 @@ class _CompareModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return 1 + self.stage_input
+    def timing(self) -> Timing:
+        return Timing(1 + self.stage_input, 1)
 
 
 @dataclass(frozen=True)
@@ -181,8 +183,8 @@ class _AdderModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return (
+    def timing(self) -> Timing:
+        latency = (
             4
             + self.stage_input
             + self.stage_decode
@@ -191,6 +193,7 @@ class _AdderModel(OperatorModel):
             + self.stage_pack
             + self.stage_output
         )
+        return Timing(latency, 1)
 
 
 @dataclass(frozen=True)
@@ -234,8 +237,8 @@ class MulModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return 1 + self.stage_input + self.stage_product + self.stage_pack + self.stage_output
+    def timing(self) -> Timing:
+        return Timing(1 + self.stage_input + self.stage_product + self.stage_pack + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -279,8 +282,8 @@ class FmaModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return (
+    def timing(self) -> Timing:
+        latency = (
             5
             + self.stage_input
             + self.stage_product
@@ -290,6 +293,7 @@ class FmaModel(OperatorModel):
             + self.stage_pack
             + self.stage_output
         )
+        return Timing(latency, 1)
 
 
 @dataclass(frozen=True)
@@ -299,7 +303,7 @@ class Ilog2Model(OperatorModel):
     stage_input: int = 0
 
     def __post_init__(self) -> None:
-        _check_int_range(self.wint, self.fmt.wexp + 1, None)
+        _check_format(self, "WINT", self.wint, self.fmt.wexp + 1)
         _check_int_range(self.stage_input, 0, None)
 
     @property
@@ -309,8 +313,8 @@ class Ilog2Model(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return 1 + self.stage_input
+    def timing(self) -> Timing:
+        return Timing(1 + self.stage_input, 1)
 
 
 @dataclass(frozen=True)
@@ -322,7 +326,7 @@ class MulIlog2Model(OperatorModel):
 
     def __post_init__(self) -> None:
         if self.wk is not None:
-            _check_int_range(self.wk, 1, None)
+            _check_format(self, "WK", self.wk, 1)
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_decode, 0, 1)
 
@@ -351,8 +355,8 @@ class MulIlog2Model(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return 1 + self.stage_input + self.stage_decode
+    def timing(self) -> Timing:
+        return Timing(1 + self.stage_input + self.stage_decode, 1)
 
 
 @dataclass(frozen=True)
@@ -378,8 +382,8 @@ class DivCoreModel(OperatorModel):
         }
 
     @property
-    def latency(self) -> int:
-        return 2 + self.qfrac // 2
+    def timing(self) -> Timing:
+        return Timing(2 + self.qfrac // 2, 1)
 
 
 @dataclass(frozen=True)
@@ -407,8 +411,8 @@ class DivModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return DivCoreModel(self.fmt).latency + self.stage_input + self.stage_pack + self.stage_output
+    def timing(self) -> Timing:
+        return Timing(DivCoreModel(self.fmt).timing.latency + self.stage_input + self.stage_pack + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -429,8 +433,8 @@ class SqrtCoreModel(OperatorModel):
         }
 
     @property
-    def latency(self) -> int:
-        return 1 + self.qfrac // 2
+    def timing(self) -> Timing:
+        return Timing(1 + self.qfrac // 2, 1)
 
 
 @dataclass(frozen=True)
@@ -458,8 +462,10 @@ class SqrtModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return SqrtCoreModel(self.fmt).latency + self.stage_input + self.stage_pack + self.stage_output
+    def timing(self) -> Timing:
+        return Timing(
+            SqrtCoreModel(self.fmt).timing.latency + self.stage_input + self.stage_pack + self.stage_output, 1
+        )
 
 
 @dataclass(frozen=True)
@@ -472,7 +478,8 @@ class FromIntModel(OperatorModel):
     stage_output: int = 0
 
     def __post_init__(self) -> None:
-        _check_int_range(self.wint, 2, None)
+        _check_format(self, "WEXP", self.fmt.wexp, 2, 30)  # zkf_from_int.v's guard
+        _check_format(self, "WINT", self.wint, 2)
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_normalize, 0, 2)
         norm_width = max(self.wint, self.fmt.wman + 3)
@@ -496,8 +503,8 @@ class FromIntModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return 1 + self.stage_input + self.stage_normalize + self.stage_pack + self.stage_output
+    def timing(self) -> Timing:
+        return Timing(1 + self.stage_input + self.stage_normalize + self.stage_pack + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -507,7 +514,8 @@ class ToIntModel(OperatorModel):
     stage_input: int = 0
 
     def __post_init__(self) -> None:
-        _check_int_range(self.wint, 2, None)
+        _check_format(self, "WEXP", self.fmt.wexp, 2, 30)  # _zkf_to_fixpoint's guard
+        _check_format(self, "WINT", self.wint, 2)
         _check_int_range(self.stage_input, 0, None)
 
     @property
@@ -517,8 +525,8 @@ class ToIntModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return 4 + self.stage_input
+    def timing(self) -> Timing:
+        return Timing(4 + self.stage_input, 1)
 
 
 @dataclass(frozen=True)
@@ -530,7 +538,10 @@ class ResizeModel(OperatorModel):
     stage_output: int = 0
 
     def __post_init__(self) -> None:
-        ZkfFormat(self._wexp_in, self._wman_in)
+        try:
+            ZkfFormat(self._wexp_in, self._wman_in)
+        except UnsupportedFormat as ex:
+            raise UnsupportedFormat(f"{self.module} input: {ex}") from None
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_output, 0, 1)
 
@@ -565,8 +576,8 @@ class ResizeModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return self.stage_input + self.stage_output
+    def timing(self) -> Timing:
+        return Timing(self.stage_input + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -578,6 +589,7 @@ class RoundModel(OperatorModel):
     stage_output: int = 0
 
     def __post_init__(self) -> None:
+        _check_format(self, "WEXP", self.fmt.wexp, 2, 31)  # zkf_round.v's guard
         _check_int_range(self.stage_input, 0, None)
         for value in (self.stage_decode, self.stage_pack, self.stage_output):
             _check_int_range(value, 0, 1)
@@ -596,8 +608,8 @@ class RoundModel(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
-        return self.stage_input + self.stage_decode + self.stage_pack + self.stage_output
+    def timing(self) -> Timing:
+        return Timing(self.stage_input + self.stage_decode + self.stage_pack + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -611,7 +623,8 @@ class Exp2Model(OperatorModel):
     wmultiplier: int = 0
 
     def __post_init__(self) -> None:
-        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_exp2.v's WEXP guard
+        _check_format(self, "WEXP", self.fmt.wexp, 2, 30)  # zkf_exp2.v's guard
+        trans_spec("exp2", self.fmt.wman)
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_product, 0, 4)
         for value in (self.stage_reduce, self.stage_pack, self.stage_output):
@@ -634,9 +647,9 @@ class Exp2Model(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
+    def timing(self) -> Timing:
         degree = trans_spec("exp2", self.fmt.wman)["d"]
-        return (
+        latency = (
             self.stage_input
             + self.stage_reduce
             + 4
@@ -644,6 +657,7 @@ class Exp2Model(OperatorModel):
             + self.stage_pack
             + self.stage_output
         )
+        return Timing(latency, 1)
 
 
 @dataclass(frozen=True)
@@ -660,8 +674,8 @@ class Log2Model(OperatorModel):
     wmultiplier: int = 0
 
     def __post_init__(self) -> None:
+        _check_format(self, "WEXP", self.fmt.wexp, 2, 30)  # zkf_log2.v's guard
         spec = trans_spec("log2", self.fmt.wman)
-        _check_int_range(self.fmt.wexp, 2, 30)  # mirrors zkf_log2.v's WEXP guard
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_product, 0, 4)
         if self.stage_product_final is not None:
@@ -712,9 +726,9 @@ class Log2Model(OperatorModel):
         )
 
     @property
-    def latency(self) -> int:
+    def timing(self) -> Timing:
         degree = trans_spec("log2", self.fmt.wman)["d"]
-        return (
+        latency = (
             self.stage_input
             + self.stage_decode
             + 5
@@ -725,6 +739,7 @@ class Log2Model(OperatorModel):
             + degree * (2 + self.stage_product)
             + self.stage_output
         )
+        return Timing(latency, 1)
 
 
 @dataclass(frozen=True)
@@ -739,8 +754,8 @@ class _TrigModel(OperatorModel):
     wmultiplier: int = 0
 
     def __post_init__(self) -> None:
-        _check_int_range(self.fmt.wexp, self._wexp_min, 30)  # the ceiling mirrors _zkf_cordic_unit's
-        trig_spec(self.fmt.wman)  # refuses a WMAN without a generated table
+        _check_format(self, "WEXP", self.fmt.wexp, self._wexp_min, 30)  # the ceiling mirrors _zkf_cordic_unit's
+        trig_spec(self.fmt.wman)
         _check_int_range(self.unroll100, 100, None, {50})
         _check_int_range(self.stage_product, 0, 4)
         _check_int_range(self.stage_normalize, 0, 2)
@@ -765,10 +780,6 @@ class _TrigModel(OperatorModel):
             }
         )
 
-    @property
-    def initiation_interval(self) -> int:
-        return self.latency + 1
-
 
 @dataclass(frozen=True)
 class SincosModel(_TrigModel):
@@ -776,12 +787,12 @@ class SincosModel(_TrigModel):
     _wexp_min = 2  # mirrors _zkf_pack's floor
 
     @property
-    def latency(self) -> int:
+    def timing(self) -> Timing:
         k = trig_spec(self.fmt.wman)["n_sincos"]
         xycyc = (k * 100 + self.unroll100 - 1) // self.unroll100
         parallel = self.unroll100 < 100
         saved = min(1 + self.stage_product, xycyc - k) if parallel else 0
-        return (
+        latency = (
             11
             + (2 * self.stage_product)
             + xycyc
@@ -791,6 +802,7 @@ class SincosModel(_TrigModel):
             + self.stage_pack
             + self.stage_output
         )
+        return Timing(latency, latency + 1)
 
 
 @dataclass(frozen=True)
@@ -798,14 +810,14 @@ class Atan2Model(_TrigModel):
     module = "zkf_atan2"
 
     @property
-    def latency(self) -> int:
+    def timing(self) -> Timing:
         spec = trig_spec(self.fmt.wman)
         n = spec["n_atan2"]
         xf = spec["xf_atan2"]
         steps = (xf + 1) // 2
         div_cycles = steps + 1
         xycyc = (n * 100 + self.unroll100 - 1) // self.unroll100
-        return (
+        latency = (
             7
             + self.stage_input
             + xycyc
@@ -815,30 +827,28 @@ class Atan2Model(_TrigModel):
             + self.stage_pack
             + self.stage_output
         )
+        return Timing(latency, latency + 1)
 
 
 @dataclass(frozen=True)
 class CordicModel(_TrigModel):
+    """The timing is keyed by the `vectoring` input."""
+
     module = "zkf_cordic"
 
     def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
-        return {**params, "LATENCY_ROTATION": self.latency_rotation, "LATENCY_VECTORING": self.latency_vectoring}
+        timing = self.timing
+        return {**params, "LATENCY_ROTATION": timing[0].latency, "LATENCY_VECTORING": timing[1].latency}
 
     @property
-    def latency_rotation(self) -> int:
-        return SincosModel(self.fmt, **self.config).latency
+    def timing(self) -> Mapping[int, Timing]:
+        return MappingProxyType(
+            {0: SincosModel(self.fmt, **self.config).timing, 1: Atan2Model(self.fmt, **self.config).timing}
+        )
 
-    @property
-    def latency_vectoring(self) -> int:
-        return Atan2Model(self.fmt, **self.config).latency
 
-    @property
-    def latency(self) -> int:
-        raise ValueError("zkf_cordic's latency depends on the mode: see latency_rotation and latency_vectoring")
-
-    @property
-    def initiation_interval(self) -> int:
-        raise ValueError("zkf_cordic's initiation interval depends on the mode: each mode's latency + 1")
+def _check_format(model: OperatorModel, name: str, value: int, min: int, max: int | None = None) -> None:
+    check_format_width(f"{model.module} {name}", value, min, max)
 
 
 def _check_int_range(value: int, min: int | None, max: int | None, /, extra: set[int] | None = None) -> None:

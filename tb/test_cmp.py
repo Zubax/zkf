@@ -156,7 +156,7 @@ async def cmp_runtime_cases(dut) -> None:
     dut.a.value = 0
     dut.b.value = 0
 
-    register_stages = fmt.model_of("cmp")(stage_input=context.stage_input).latency
+    register_stages = fmt.model_of("cmp")(stage_input=context.stage_input).timing.latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

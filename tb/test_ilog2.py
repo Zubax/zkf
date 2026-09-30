@@ -33,7 +33,7 @@ async def ilog2_cases(dut) -> None:
     start_clock(dut)
     dut.in_valid.value = 0
     dut.a.value = 0
-    stages = fmt.model_of("ilog2")(wint=wint, stage_input=context.stage_input).latency
+    stages = fmt.model_of("ilog2")(wint=wint, stage_input=context.stage_input).timing.latency
     outputs = {"y": (dut.y, wint), **{name: (getattr(dut, name), 1) for name in ("zero", "infinity", "negative")}}
     scoreboard = RegisterStageScoreboard(dut, stages, context, outputs)
 

@@ -9,7 +9,7 @@ import cocotb
 import numpy as np
 from cocotb.triggers import RisingEdge
 
-from zkf import ZkfFormat
+from zkf import SincosModel, Timing, ZkfFormat
 from zkf._reference import trig_spec
 from zkf_bits import hex_bits, mask
 from zkf_operands import normal
@@ -116,20 +116,22 @@ def cases_for(
     return cases
 
 
-def expected_latency(context) -> int:
+def expected_timing(context) -> Timing:
     fmt = ZkfFormat(context.wexp, context.wman)
-    latency = fmt.model_of("sincos")(
+    timing = SincosModel(
+        fmt,
         unroll100=context.unroll100,
         stage_input=context.stage_input,
         stage_output=context.stage_output,
         stage_product=context.stage_product,
         stage_normalize=context.stage_normalize,
         stage_pack=context.stage_pack,
-    ).latency
+    ).timing
     if context.parallel != int(context.unroll100 < 100):
         assert context.unroll100 == 50 and context.parallel == 0
-        latency += 1 + context.stage_product
-    return latency
+        delay = 1 + context.stage_product  # the testing-only PARALLEL override delays the result and its retirement
+        timing = Timing(timing.latency + delay, timing.initiation_interval + delay)
+    return timing
 
 
 @cocotb.test()
@@ -137,7 +139,8 @@ async def sincos_runtime_cases(dut) -> None:
     # Latency is data-independent and published: measure accept->out_valid so the model cannot drift from the RTL.
     context = float_context("sincos")
     fmt = ZkfFormat(context.wexp, context.wman)
-    latency = expected_latency(context)
+    timing = expected_timing(context)
+    latency = timing.latency
     check_width("x", dut.x, fmt.wfull, context)
     check_width("sin", dut.sin, fmt.wfull, context)
     check_width("cos", dut.cos, fmt.wfull, context)
@@ -172,6 +175,7 @@ async def sincos_runtime_cases(dut) -> None:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
+            assert int(dut.in_ready.value) == 0, f"{context.prefix()}: in_ready high while busy (case {index})"
         assert guard == latency, (
             f"{context.prefix()} case={index}: measured latency {guard} != model {latency} "
             f"(unroll100={context.unroll100} parallel={context.parallel} SPROD={context.stage_product} "
@@ -180,7 +184,7 @@ async def sincos_runtime_cases(dut) -> None:
         got = {"sin": int(dut.sin.value), "cos": int(dut.cos.value), "quadrant": int(dut.quadrant.value)}
         exp = {"sin": case.sin, "cos": case.cos, "quadrant": case.quadrant}
         assert got == exp, f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
-        await expect_reaccept(dut, f"{context.prefix()} case={index}")
+        await expect_reaccept(dut, f"{context.prefix()} case={index}", timing.initiation_interval - latency)
         checked += 1
     assert checked == len(cases), f"{context.prefix()} checked {checked}, expected {len(cases)}"
 

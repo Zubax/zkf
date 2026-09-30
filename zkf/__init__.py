@@ -1,6 +1,6 @@
 """ZKF (Zubax Kulibin float) engine: bit-exact reference model plus packaged RTL sources."""
 
-from ._format import OperatorModel as OperatorModel, ZkfFormat as ZkfFormat
+from ._format import OperatorModel as OperatorModel, Timing as Timing, ZkfFormat as ZkfFormat
 from ._operators import (
     AbsModel as AbsModel,
     Atan2Model as Atan2Model,
@@ -36,8 +36,8 @@ from ._value import (
     SqrtResult as SqrtResult,
     Zkf as Zkf,
 )
-from ._reference import RoundMode as RoundMode
+from ._reference import RoundMode as RoundMode, UnsupportedFormat as UnsupportedFormat
 from ._rtl import get_rtl as get_rtl
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.7.0"
+__version__ = "0.7.1"

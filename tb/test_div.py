@@ -358,7 +358,7 @@ async def div_runtime_cases(dut) -> None:
         stage_input=context.stage_input,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    ).latency
+    ).timing.latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

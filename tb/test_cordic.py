@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import cocotb
@@ -11,7 +12,7 @@ from cocotb.triggers import ReadOnly, RisingEdge
 
 from test_atan2 import cases_for as atan2_cases
 from test_sincos import cases_for as sincos_cases
-from zkf import ZkfFormat
+from zkf import CordicModel, Timing, ZkfFormat
 from zkf_bits import hex_bits
 from zkf_operands import random_bits
 from zkf_params import check_width, float_context
@@ -56,16 +57,21 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[CordicCa
     return [cases[i] for i in rng.permutation(len(cases))]
 
 
-def expected_latency(context) -> dict[bool, int]:
-    model = ZkfFormat(context.wexp, context.wman).model_of("cordic")(
+def expected_timing(context) -> Mapping[int, Timing]:
+    """Keyed by `vectoring`; the benches index it with the case's bool, which hashes as 0/1."""
+    return CordicModel(
+        ZkfFormat(context.wexp, context.wman),
         unroll100=context.unroll100,
         stage_input=context.stage_input,
         stage_product=context.stage_product,
         stage_normalize=context.stage_normalize,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    )
-    return {False: model.latency_rotation, True: model.latency_vectoring}
+    ).timing
+
+
+def max_latency(context) -> int:
+    return max(t.latency for t in expected_timing(context).values())
 
 
 def _outputs(dut) -> dict[str, int]:
@@ -108,15 +114,16 @@ def _scramble(dut, rng: np.random.Generator, wfull: int) -> None:
 async def cordic_runtime_cases(dut) -> None:
     context = float_context("cordic")
     fmt = ZkfFormat(context.wexp, context.wman)
-    latency = expected_latency(context)
+    timing = expected_timing(context)
     for name in ("a", "b", "r0", "r1"):
         check_width(name, getattr(dut, name), fmt.wfull, context)
     cases = cases_for(fmt, context.kind, context.seed, context.count)
-    assert {c.vectoring for c in cases} == {False, True}, f"{context.prefix()}: both modes must be exercised"
+    transitions = {(a.vectoring, b.vectoring) for a, b in zip(cases, cases[1:])}
+    assert len(transitions) == 4, f"{context.prefix()}: back-to-back cases must cover every mode transition"
     rng = np.random.default_rng(context.seed + 1)
     await _reset(dut, out_ready=1)
 
-    timeout = max(latency.values()) + 8
+    timeout = max_latency(context) + 8
     for index, case in enumerate(cases):
         guard = 0
         while int(dut.in_ready.value) == 0:
@@ -131,18 +138,19 @@ async def cordic_runtime_cases(dut) -> None:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
-        want = latency[case.vectoring]
-        assert guard == want, f"{context.prefix()} {case.describe(fmt)}: latency {guard} != model {want}"
+            assert int(dut.in_ready.value) == 0, f"{context.prefix()}: in_ready high while busy (case {index})"
+        want = timing[case.vectoring]
+        assert guard == want.latency, f"{context.prefix()} {case.describe(fmt)}: latency {guard} != model {want}"
         got, exp = _outputs(dut), _expected(case)
         assert got == exp, f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
-        await expect_reaccept(dut, f"{context.prefix()} case={index}")
+        await expect_reaccept(dut, f"{context.prefix()} case={index}", want.initiation_interval - want.latency)
 
 
 @cocotb.test()
 async def cordic_random_handshake(dut) -> None:
     context = float_context("cordic")
     fmt = ZkfFormat(context.wexp, context.wman)
-    latency = expected_latency(context)
+    timing = expected_timing(context)
     cases = cases_for(fmt, context.kind, context.seed, context.count)[:128]
     rng = np.random.default_rng(context.seed + 2)
     await _reset(dut, out_ready=0)
@@ -150,7 +158,7 @@ async def cordic_random_handshake(dut) -> None:
     issued, taken, cycle = 0, 0, 0
     pending: tuple[CordicCase, int] | None = None
     held: CordicCase | None = None
-    budget = 8 * len(cases) * (max(latency.values()) + 2)
+    budget = 8 * len(cases) * (max_latency(context) + 2)
     while taken < len(cases):
         assert cycle < budget, f"{context.prefix()}: {taken}/{len(cases)} results in {budget} cycles"
         offer = issued < len(cases) and rng.random() < 0.5
@@ -168,7 +176,7 @@ async def cordic_random_handshake(dut) -> None:
                 held, accepted_at = pending
                 pending = None
                 assert (
-                    cycle - accepted_at == latency[held.vectoring]
+                    cycle - accepted_at == timing[held.vectoring].latency
                 ), f"{context.prefix()} {held.describe(fmt)}: latency"
             got = _outputs(dut)
             assert got == _expected(held), f"{context.prefix()} {held.describe(fmt)}: got {got}"
@@ -176,7 +184,9 @@ async def cordic_random_handshake(dut) -> None:
                 held, taken = None, taken + 1
         if pending is not None:
             case, accepted_at = pending
-            assert cycle - accepted_at < latency[case.vectoring], f"{context.prefix()} {case.describe(fmt)}: no result"
+            assert (
+                cycle - accepted_at < timing[case.vectoring].latency
+            ), f"{context.prefix()} {case.describe(fmt)}: no result"
         if offer and int(dut.in_ready.value):
             pending, issued = (cases[issued], cycle), issued + 1
         await RisingEdge(dut.clk)
@@ -200,5 +210,5 @@ async def cordic_reset_boundaries(dut) -> None:
         lambda: _outputs(dut),
         _expected,
         lambda case: case.describe(fmt),
-        max(expected_latency(context).values()) + 8,
+        max_latency(context) + 8,
     )

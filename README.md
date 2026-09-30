@@ -73,11 +73,11 @@ The module fails synthesis if the supplied value disagrees with its real stage c
 the latency cannot slip through unnoticed -- the build breaks and points you at the stale constant.
 Pair `LATENCY` with `zkf_pipe` to delay your own control or sideband signals so they land with the operator's output.
 A zero `LATENCY` is a special value indicating that the latency should not be checked (the default).
-Some modules may have a separate latency parameter per operating mode, like `zkf_cordic`.
+Some modules may have a separate latency parameter per operating mode, like `zkf_cordic`; see the model's `timing`.
 
 The `LATENCY` value is a sum of some constant baseline number of stages,
 plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).
-Compute it like `ZkfFormat(WEXP, WMAN).model_of("mul")(stage_product=1).latency`.
+Compute it like `zkf.MulModel(zkf.ZkfFormat(WEXP, WMAN), stage_product=1).timing.latency`.
 
 Generated lookup table ROMs are plain initialized Verilog arrays. They expose `ZKF_ATTRIBUTE_ROM_PRE` and
 `ZKF_ATTRIBUTE_ROM_POST` as optional hooks around the ROM declaration for tool-specific attributes.
@@ -284,7 +284,7 @@ timings, check your synthesis settings first, and if necessary override `ZKF_ATT
 
 ## Sizing the exponent and the significand (WEXP/WMAN)
 
-WEXP can be chosen freely, subject to any floor the operator's header documents, while WMAN is sensitive to the chip's
+WEXP can be chosen freely within the operator's limits, while WMAN is sensitive to the chip's
 DSP capabilities and thus requires careful selection to achieve best resource utilization.
 
 |WMAN |≈ε (interval)| Description                                                                                 |

@@ -123,7 +123,7 @@ async def log2_runtime_cases(dut) -> None:
         stage_normalize_output=context.stage_normalize_output,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    ).latency
+    ).timing.latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

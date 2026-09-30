@@ -740,6 +740,8 @@ def _per_pr(sim, out: list) -> None:
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=0, sn=1))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=0, pa=1))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=1, sn=1, pa=1))
+    # The WEXP ceiling the model admits.
+    out.append(_cast("from_int", sim, "pr", "w30_m16_int32_directed", 30, 16, 32, "directed", 0, 0))
     # zkf_round: the bench sweeps every operand across all four rounding modes; UNARY covers the formats (w2_m4
     # reaches the round-up-overflows-to-inf corner). Stage knobs: STAGE_INPUT via zkf_pipe, STAGE_PACK/OUTPUT ->
     # _zkf_pack; exercised once each plus all-on to catch latency-bookkeeping regressions.
