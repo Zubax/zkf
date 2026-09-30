@@ -348,7 +348,7 @@ async def pack_runtime_cases(dut) -> None:
         saturate_round_carry=saturate_round_carry,
         stage_input=context.stage_input,
         stage_output=context.stage_output,
-    ).latency
+    ).timing.latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

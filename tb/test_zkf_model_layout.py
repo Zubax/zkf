@@ -9,6 +9,7 @@ are excluded: ZKF does not support them and NaN payload/sign handling is not por
 from __future__ import annotations
 
 from fractions import Fraction
+import itertools
 from math import isqrt
 from pathlib import Path
 import random
@@ -21,7 +22,10 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # tb/ (harness siblings)
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))  # repo root (the zkf package)
 
-from zkf import RoundMode, Zkf, ZkfFormat  # noqa: E402
+import zkf  # noqa: E402
+from zkf import RoundMode, Timing, UnsupportedFormat, Zkf, ZkfFormat  # noqa: E402
+from zkf._format import _operator_model_descendants  # noqa: E402
+from zkf._reference import trans_specs, trig_specs  # noqa: E402
 from zkf.oracle import add, div, mul, sqrt  # noqa: E402
 from zkf_bits import hex_bits, mask, pow2_fraction  # noqa: E402
 from zkf_operands import canonical_inf, normal, pack_bits, zero  # noqa: E402
@@ -116,12 +120,91 @@ class ZkfModelLayoutTest(unittest.TestCase):
                 for stage_input in (0, 1, 2):
                     model = fmt.model_of("ilog2")(wint=wint, stage_input=stage_input)
                     self.assertIsInstance(model, Ilog2Model)
-                    self.assertEqual(model.latency, 1 + stage_input)
-                    self.assertEqual(model.params["LATENCY"], model.latency)
+                    self.assertEqual(model.timing, Timing(1 + stage_input, 1))
+                    self.assertEqual(model.params["LATENCY"], model.timing.latency)
                     self.assertEqual(model.params["WINT"], wint)
-            for config in ({"wint": wexp}, {"stage_input": -1}):
-                with self.assertRaises(ValueError):
-                    fmt.model_of("ilog2")(**config)
+            with self.assertRaises(UnsupportedFormat):
+                fmt.model_of("ilog2")(wint=wexp)
+            self.assert_knob_error(lambda: fmt.model_of("ilog2")(stage_input=-1))
+
+    def assert_knob_error(self, make) -> None:
+        with self.assertRaises(ValueError) as refusal:
+            make()
+        self.assertNotIsInstance(refusal.exception, UnsupportedFormat)
+
+    def test_timing(self) -> None:
+        fmt = ZkfFormat(8, 24)
+        moded = {zkf.CordicModel}
+        for cls in _operator_model_descendants():
+            if getattr(cls, "module", None) is not None:  # private bases name no module
+                with self.subTest(model=cls.__name__):
+                    self.assertEqual(isinstance(cls(fmt).timing, Timing), cls not in moded)
+        self.assertEqual(zkf.MulModel(fmt, stage_product=1, stage_output=1).timing, Timing(3, 1))
+        for config in ({}, {"unroll100": 50, "stage_product": 2, "stage_pack": 1}):
+            with self.subTest(config=config):
+                cordic = zkf.CordicModel(fmt, **config)
+                modes = {0: zkf.SincosModel(fmt, **config).timing, 1: zkf.Atan2Model(fmt, **config).timing}
+                self.assertEqual(dict(cordic.timing), modes)
+                for timing in modes.values():
+                    self.assertEqual(timing.initiation_interval, timing.latency + 1)
+                self.assertEqual(
+                    (cordic.params["LATENCY_ROTATION"], cordic.params["LATENCY_VECTORING"]),
+                    (modes[0].latency, modes[1].latency),
+                )
+                self.assertNotIn("LATENCY", cordic.params)
+
+    def test_unsupported_format(self) -> None:
+        def untabled(wmans: set[int]) -> int:
+            return next(w for w in itertools.count(min(wmans)) if w not in wmans)
+
+        exp2_wmans = {w for f, w in trans_specs() if f == "exp2"}
+        exp2 = untabled(exp2_wmans)
+        log2 = untabled({w for f, w in trans_specs() if f == "log2"})
+        trig = untabled(set(trig_specs()))
+        exp2_tabled, trig_tabled = min(exp2_wmans), min(trig_specs())
+        refused = [
+            lambda: ZkfFormat(1, 4),
+            lambda: ZkfFormat(2, 3),
+            lambda: zkf.Exp2Model(ZkfFormat(8, exp2)),  # at construction, before anything reads the table
+            lambda: zkf.Log2Model(ZkfFormat(8, log2)),
+            lambda: zkf.CordicModel(ZkfFormat(8, trig)),
+            lambda: zkf.ResizeModel(ZkfFormat(8, 24), wexp_in=1),
+            lambda: zkf.ResizeModel(ZkfFormat(8, 24), wman_in=3),
+            # Operands the reference answers without its table are refused all the same.
+            lambda: ZkfFormat(8, exp2).zero().exp2(),
+            lambda: ZkfFormat(8, exp2).inf().exp2(),
+            lambda: ZkfFormat(8, log2).zero().log2(),
+            lambda: ZkfFormat(8, log2).inf().log2(),
+            lambda: ZkfFormat(8, trig).zero().sincos(),
+            lambda: ZkfFormat(8, trig).inf().sincos(),
+            lambda: ZkfFormat(8, trig).zero().atan2(ZkfFormat(8, trig).encode(1)),
+            lambda: ZkfFormat(4, trig_tabled).encode(1).atan2(ZkfFormat(4, trig_tabled).encode(1)),
+            lambda: ZkfFormat(8, 24).from_int(1, 0),
+            # A bad format is reported as such even alongside a bad knob.
+            lambda: zkf.Exp2Model(ZkfFormat(31, exp2_tabled), stage_pack=5),
+            lambda: zkf.Ilog2Model(ZkfFormat(8, 24), wint=8, stage_input=-1),
+            lambda: zkf.SincosModel(ZkfFormat(8, trig), unroll100=75),
+        ]
+        for index, make in enumerate(refused):
+            with self.subTest(case=index):
+                with self.assertRaises(UnsupportedFormat):
+                    make()
+        # Support is per operation: the reference computes where the RTL, hence the model, cannot.
+        self.assertEqual(ZkfFormat(31, exp2_tabled).encode(1).exp2(), ZkfFormat(31, exp2_tabled).encode(2))
+        with self.assertRaises(UnsupportedFormat):
+            zkf.Exp2Model(ZkfFormat(31, exp2_tabled))
+        ZkfFormat(5, trig_tabled).encode(1).atan2(ZkfFormat(5, trig_tabled).encode(1))
+
+    def test_knob_errors(self) -> None:
+        fmt = ZkfFormat(8, 24)
+        for make in (
+            lambda: zkf.MulModel(fmt, stage_pack=3),
+            lambda: zkf.Atan2Model(fmt, unroll100=75),
+            lambda: zkf.AddModel(ZkfFormat(8, 4), stage_normalize=2),  # _zkf_normshift too narrow to split twice
+            lambda: zkf.PipeModel(fmt, w=0),
+            lambda: zkf.Ilog2Model(fmt, wint=32.0),  # a non-integer width is a caller bug, not a format
+        ):
+            self.assert_knob_error(make)
 
     def test_public_api_round_mode(self) -> None:
         self.assertIsInstance(RoundMode.NEAREST_EVEN, int)
@@ -368,7 +451,7 @@ class ZkfModelLayoutTest(unittest.TestCase):
         self.assertFalse(hasattr(fmt.wrap(0), "to_int"))
         for method in methods:
             with self.subTest(method=method, wint=1):
-                with self.assertRaises(ValueError):
+                with self.assertRaises(UnsupportedFormat):
                     getattr(fmt.wrap(0), method)(1)
 
     def assert_random_normal_layout(

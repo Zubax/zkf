@@ -36,11 +36,12 @@ def drive_unsigned(handle, value: int) -> None:
     handle.value = value & mask(len(handle))
 
 
-async def expect_reaccept(dut, prefix: str) -> None:
-    """The initiation interval is exactly LATENCY + 1: consumers such as Holoso schedule against it without looking."""
-    assert int(dut.in_ready.value) == 0, f"{prefix}: in_ready high while the result is unread"
-    await RisingEdge(dut.clk)
-    assert int(dut.in_ready.value) == 1, f"{prefix}: in_ready not back one cycle after the result (II != LATENCY+1)"
+async def expect_reaccept(dut, prefix: str, gap: int) -> None:
+    """in_ready rises exactly `gap` = II - LATENCY cycles after the result, pinning the model's initiation interval."""
+    for _ in range(gap):
+        assert int(dut.in_ready.value) == 0, f"{prefix}: in_ready high before the initiation interval elapsed"
+        await RisingEdge(dut.clk)
+    assert int(dut.in_ready.value) == 1, f"{prefix}: in_ready not back {gap} cycle(s) after the result"
 
 
 async def reset_boundaries(

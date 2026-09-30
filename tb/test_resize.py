@@ -161,7 +161,7 @@ async def resize_runtime_cases(dut) -> None:
         wman_in=fmt_in.wman,
         stage_input=context.stage_input,
         stage_output=context.stage_output,
-    ).latency
+    ).timing.latency
     scoreboard = RegisterStageScoreboard(
         dut,
         register_stages,

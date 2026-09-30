@@ -6,6 +6,15 @@ import math
 from fractions import Fraction
 
 
+class UnsupportedFormat(ValueError):
+    """
+    The operation cannot serve this format: WEXP, WMAN, or an integer width such as WINT is out of range, or WMAN has
+    no generated table. An invalid tuning knob raises a plain ValueError instead. Support is per operation: an operator
+    model refuses what its RTL cannot build, a Zkf method only what the reference does not define (so exp2 at WEXP=31
+    computes as a value but has no model).
+    """
+
+
 def bits_to_signed(value: int, width: int) -> int:
     value &= mask(width)
     sign_bit = 1 << (width - 1)
@@ -148,15 +157,23 @@ def ordered_key(fmt: ZkfFormat, bits: int) -> int:
     return (~canonical & mask(fmt.wfull)) if sign else (canonical | (1 << fmt.sign_shift))
 
 
+def check_format_width(name: str, value: int, min: int, max: int | None = None) -> None:
+    """Refuse a format width (WEXP, WMAN, WINT, ...) outside min..max; a non-integer is a plain ValueError."""
+    if not isinstance(value, int):
+        raise ValueError(f"{name} must be an integer, got {value!r}")
+    if value < min:
+        raise UnsupportedFormat(f"{name}={value} is below the minimum {min}")
+    if max is not None and value > max:
+        raise UnsupportedFormat(f"{name}={value} is above the maximum {max}")
+
+
 def signed_int_min(wint: int) -> int:
-    if wint < 2:
-        raise ValueError(f"wint must be at least 2, got {wint}")
+    check_format_width("WINT", wint, 2)
     return -(1 << (wint - 1))
 
 
 def signed_int_max(wint: int) -> int:
-    if wint < 2:
-        raise ValueError(f"wint must be at least 2, got {wint}")
+    check_format_width("WINT", wint, 2)
     return (1 << (wint - 1)) - 1
 
 
@@ -205,7 +222,8 @@ def trans_spec(func: str, wman: int) -> dict:
     try:
         return trans_specs()[(func, wman)]
     except KeyError:
-        raise KeyError(f"no {func} table for WMAN={wman}; run zkf_transcendental.py --emit")
+        supported = sorted(w for f, w in trans_specs() if f == func)
+        raise UnsupportedFormat(f"no {func} table for WMAN={wman}; supported: {supported}") from None
 
 
 def trans_sqrt2_threshold(wfrac: int) -> int:
@@ -237,7 +255,7 @@ def trig_spec(wman: int) -> dict:
     try:
         return trig_specs()[wman]
     except KeyError:
-        raise KeyError(f"no sincos table for WMAN={wman}; run zkf_trig.py --emit")
+        raise UnsupportedFormat(f"no CORDIC table for WMAN={wman}; supported: {sorted(trig_specs())}") from None
 
 
 def atan2_bypass_shift(fmt: ZkfFormat) -> int:

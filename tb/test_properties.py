@@ -76,13 +76,13 @@ def infer_stages(
 ) -> int:
     name = str(dut._name)
     if "mul" in name:
-        return fmt.model_of("mul")(stage_product=stage_product, stage_output=stage_output).latency
+        return fmt.model_of("mul")(stage_product=stage_product, stage_output=stage_output).timing.latency
     if "addsub" in name or "add" in name:
         return fmt.model_of("add")(
             stage_decode=stage_decode,
             stage_align=stage_align,
             stage_output=stage_output,
-        ).latency
+        ).timing.latency
     raise RuntimeError(f"unknown toplevel for property test: {name}")
 
 

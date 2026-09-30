@@ -9,7 +9,7 @@ import numpy as np
 from cocotb.triggers import RisingEdge
 
 import zkf.oracle
-from zkf import Zkf, ZkfFormat
+from zkf import Atan2Model, Zkf, ZkfFormat
 from zkf._reference import atan2_bypass_shift
 from zkf_bits import hex_bits, mask
 from zkf_operands import (
@@ -187,14 +187,16 @@ async def atan2_runtime_cases(dut) -> None:
     # Latency is data-independent and published: measure accept->out_valid so the model cannot drift from the RTL.
     context = float_context("atan2")
     fmt = ZkfFormat(context.wexp, context.wman)
-    expected_latency = fmt.model_of("atan2")(
+    timing = Atan2Model(
+        fmt,
         unroll100=context.unroll100,
         stage_input=context.stage_input,
         stage_product=context.stage_product,
         stage_normalize=context.stage_normalize,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
-    ).latency
+    ).timing
+    expected_latency = timing.latency
     check_width("y", dut.y, fmt.wfull, context)
     check_width("x", dut.x, fmt.wfull, context)
     check_width("theta", dut.theta, fmt.wfull, context)
@@ -233,6 +235,7 @@ async def atan2_runtime_cases(dut) -> None:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: out_valid timeout (case {index})"
+            assert int(dut.in_ready.value) == 0, f"{context.prefix()}: in_ready high while busy (case {index})"
         assert guard == expected_latency, (
             f"{context.prefix()} case={index}: measured latency {guard} != model {expected_latency} "
             f"(unroll100={context.unroll100} SI={context.stage_input} SP={context.stage_product} "
@@ -247,7 +250,7 @@ async def atan2_runtime_cases(dut) -> None:
             )
         exp = {"theta": case.theta, "mag": case.mag}
         assert got == exp, f"{context.prefix()} case={index} {case.describe(fmt)}: got {got} expected {exp}"
-        await expect_reaccept(dut, f"{context.prefix()} case={index}")
+        await expect_reaccept(dut, f"{context.prefix()} case={index}", timing.initiation_interval - expected_latency)
         checked += 1
     assert checked == len(cases), f"{context.prefix()} checked {checked}, expected {len(cases)}"
 

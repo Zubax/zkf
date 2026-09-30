@@ -24,7 +24,7 @@ For each module we write:
 - A **SymbiYosys flow** under `sby/` — one `.sby` file per proof, naming the parameter set,
   engine, BMC depth, and the file list. `run_proofs.py` injects `LATENCY` for pipelined DUTs.
 
-Latency values come from `ZkfFormat(WEXP, WMAN).model_of(<operator>)(...).latency`.
+Latency values come from `ZkfFormat(WEXP, WMAN).model_of(<operator>)(...).timing.latency`.
 
 For combinational modules the spec is small enough that the harness asserts the spec directly without a separate
 reference module.

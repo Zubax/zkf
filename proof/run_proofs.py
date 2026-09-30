@@ -173,7 +173,7 @@ def proof_latency(harness: str, params: dict[str, int]) -> int | None:
     factory = fmt.model_of(kind)
     defaults = factory()
     model = factory(**{name: values[name] for name in defaults.config.keys() if name in values})
-    return model.latency
+    return model.timing.latency
 
 
 def _inject_chparam_latency(line: str, latency: int) -> str:
