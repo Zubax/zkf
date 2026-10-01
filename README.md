@@ -113,7 +113,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_log2`            | ⇻ | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
 | `zkf_sincos`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)` for `x` in turns; exposes `quadrant`. | Faithful rounding, see below|
 | `zkf_atan2`           | ⇻ |latency+1| `atan2(y,x)` in turns ∈ (−0.5,0.5] and `hypot(y,x)`.           | Faithful rounding, see below|
-| `zkf_cordic`          | ⇻ |latency+1| `zkf_sincos` or `zkf_atan2`, chosen per transaction.           | As those two, latencies too |
+| `zkf_cordic`          | ⇻ |latency+1| `zkf_sincos` or `zkf_atan2`, chosen per transaction or `MODE`. | As those two, latencies too |
 | `zkf_pipe`            |   | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
 
 #### Notably absent functions

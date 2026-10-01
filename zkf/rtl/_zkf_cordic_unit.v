@@ -1,5 +1,5 @@
-// zkf_sincos (MODE 0), zkf_atan2 (MODE 1) and zkf_cordic (MODE 2), ports as there. The algorithms are documented in
-// zkf_sincos and zkf_atan2.
+// zkf_sincos (MODE 0), zkf_atan2 (MODE 1) and zkf_cordic (any MODE, 2 by default), ports as there. The algorithms are
+// documented in zkf_sincos and zkf_atan2.
 
 `default_nettype none
 
@@ -100,8 +100,9 @@ module _zkf_cordic_unit #(
         if (((MODE != 0) && (WEXP < 5)) || (WEXP >= 31)) begin : g_invalid_wexp_or_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        if (((LATENCY_ROTATION != 0) && (LATENCY_ROTATION != LATENCY_ROTATION_REF)) ||
-            ((LATENCY_VECTORING != 0) && (LATENCY_VECTORING != LATENCY_VECTORING_REF))) begin : g_invalid_latency
+        if (((MODE != 1) && (LATENCY_ROTATION != 0) && (LATENCY_ROTATION != LATENCY_ROTATION_REF)) ||
+            ((MODE != 0) && (LATENCY_VECTORING != 0) && (LATENCY_VECTORING != LATENCY_VECTORING_REF)))
+        begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate

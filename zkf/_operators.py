@@ -832,19 +832,32 @@ class Atan2Model(_TrigModel):
 
 @dataclass(frozen=True)
 class CordicModel(_TrigModel):
-    """The timing is keyed by the `vectoring` input."""
+    """`mode` is the RTL's MODE. At 2 the timing is keyed by the `vectoring` input; a fixed mode has one Timing."""
 
     module = "zkf_cordic"
+    mode: int = 2
 
-    def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
-        timing = self.timing
-        return {**params, "LATENCY_ROTATION": timing[0].latency, "LATENCY_VECTORING": timing[1].latency}
+    def __post_init__(self) -> None:
+        _check_int_range(self.mode, 0, 2)  # ahead of the format, whose floor it sets
+        super().__post_init__()
 
     @property
-    def timing(self) -> Mapping[int, Timing]:
-        return MappingProxyType(
-            {0: SincosModel(self.fmt, **self.config).timing, 1: Atan2Model(self.fmt, **self.config).timing}
-        )
+    def _wexp_min(self) -> int:
+        return SincosModel._wexp_min if self.mode == 0 else Atan2Model._wexp_min
+
+    def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
+        names = ("LATENCY_ROTATION", "LATENCY_VECTORING")
+        timing = self.timing
+        timings = {self.mode: timing} if isinstance(timing, Timing) else timing
+        return {**params, "MODE": self.mode, **{names[mode]: t.latency for mode, t in timings.items()}}
+
+    @property
+    def timing(self) -> Timing | Mapping[int, Timing]:
+        config = {name: value for name, value in self.config.items() if name != "mode"}
+        models = (SincosModel, Atan2Model)
+        if self.mode != 2:
+            return models[self.mode](self.fmt, **config).timing
+        return MappingProxyType({mode: model(self.fmt, **config).timing for mode, model in enumerate(models)})
 
 
 def _check_format(model: OperatorModel, name: str, value: int, min: int, max: int | None = None) -> None:

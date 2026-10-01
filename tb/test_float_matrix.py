@@ -185,21 +185,23 @@ _TRIG_LATENCY_KNOBS = [
 
 
 @pytest.mark.parametrize(
-    "model,field",
+    "model,mode,field",
     [
-        ("SincosModel", "LATENCY"),
-        ("Atan2Model", "LATENCY"),
-        ("CordicModel", "LATENCY_ROTATION"),
-        ("CordicModel", "LATENCY_VECTORING"),
+        ("SincosModel", {}, "LATENCY"),
+        ("Atan2Model", {}, "LATENCY"),
+        ("CordicModel", {}, "LATENCY_ROTATION"),
+        ("CordicModel", {}, "LATENCY_VECTORING"),
+        ("CordicModel", {"mode": 0}, "LATENCY_ROTATION"),
+        ("CordicModel", {"mode": 1}, "LATENCY_VECTORING"),
     ],
 )
 @pytest.mark.parametrize("knobs", range(len(_TRIG_LATENCY_KNOBS)))
 @pytest.mark.parametrize("delta", [0, -1, 1])
-def test_trig_latency_guard(tmp_path, model, field, knobs, delta) -> None:
+def test_trig_latency_guard(tmp_path, model, mode, field, knobs, delta) -> None:
     import zkf
 
     fmt, config = _TRIG_LATENCY_KNOBS[knobs]
-    m = getattr(zkf, model)(zkf.ZkfFormat(*fmt), **config)
+    m = getattr(zkf, model)(zkf.ZkfFormat(*fmt), **config, **mode)
     params = {**m.params, field: m.params[field] + delta}
     _elaborate(tmp_path, m.module, params, _TRIG_SOURCES, valid=delta == 0, marker="_zkf_invalid_latency_mismatch")
 
@@ -227,6 +229,21 @@ _RTL_MODULES = sorted(re.findall(r"^module\s+(\w+)", "\n".join(p.read_text() for
 def test_module_elaborates_with_defaults(tmp_path, top) -> None:
     """Yosys, and so Holoso's flow, elaborates every module it reads at its defaults."""
     _elaborate(tmp_path, top, {}, _RTL_SOURCES)
+
+
+@pytest.mark.parametrize("mode,valid", [(0, True), (1, True), (2, True), (3, False), (-1, False)])
+def test_cordic_mode_range(tmp_path, mode, valid) -> None:
+    _elaborate(tmp_path, "zkf_cordic", {"MODE": mode}, _TRIG_SOURCES, valid=valid, marker="_zkf_invalid_cordic_mode")
+
+
+@pytest.mark.parametrize("mode", [0, 1])
+def test_cordic_absent_mode_latency_ignored(tmp_path, mode) -> None:
+    """Fixing the mode of an instance that pins both latencies must not break it."""
+    import zkf
+
+    params = {**zkf.CordicModel(zkf.ZkfFormat(5, 16), unroll100=50).params, "MODE": mode}
+    params["LATENCY_ROTATION" if mode else "LATENCY_VECTORING"] = 1
+    _elaborate(tmp_path, "zkf_cordic", params, _TRIG_SOURCES)
 
 
 @pytest.mark.parametrize("mode,parallel,valid", [(0, 1, True), (1, 1, False), (2, 1, True), (2, 0, True)])
@@ -317,6 +334,9 @@ def _format_bounds() -> list:
     for model in ("Atan2Model", "CordicModel"):  # 2 is where theta's codomain is sub-normal
         rows += [(model, w, trig, {}, None if 5 <= w <= 30 else wexp_or_wman) for w in (2, 4, 5, 30, 31)]
         rows.append((model, 8, trig_absent, {}, f"_zkf_cordic_m{trig_absent}"))
+    # A fixed MODE takes its dedicated operator's bounds.
+    rows += [("CordicModel", w, trig, {"mode": 0}, None if w <= 30 else wexp_or_wman) for w in (2, 4, 30, 31)]
+    rows += [("CordicModel", w, trig, {"mode": 1}, None if w >= 5 else wexp_or_wman) for w in (4, 5)]
     return rows
 
 

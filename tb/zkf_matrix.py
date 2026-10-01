@@ -459,13 +459,17 @@ def _trans(
     un=None,
     parallel=None,
     wm=None,
+    mode=None,
 ) -> Run:
     # Each module takes only its own knobs (the driver passes only a module.s own declared parameters). Knob legend: si/sp/so =
     # STAGE_INPUT/PRODUCT/OUTPUT, wm = WMULTIPLIER (_zkf_pmul DSP-tile-grid hint), sr = STAGE_REDUCE (exp2),
     # sd/spf/sno = STAGE_DECODE/PRODUCT_FINAL/NORMALIZE_OUTPUT (log2), un = UNROLL100, parallel = PARALLEL
-    # (decoupled z-path), sn = STAGE_NORMALIZE, pa = STAGE_PACK.
+    # (decoupled z-path), sn = STAGE_NORMALIZE, pa = STAGE_PACK, mode = MODE (cordic).
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
+    if mode is not None:
+        vlog.append(("MODE", mode))
+        suffix += f"_mode{mode}"
     if un is not None:
         vlog.append(("UNROLL100", un))
         suffix += f"_un{un}"
@@ -710,6 +714,11 @@ def _per_pr(sim, out: list) -> None:
         ("w8_m36_synth", 8, 36, {"un": 50, "si": 1, "sp": 4, "wm": 18, "sn": 2, "pa": 2, "so": 1}),
         ("w8_m48", 8, 48, {"un": 50}),
         ("w11_m53", 11, 53, {}),
+        # Fixed MODE: un=50 decouples the z-path in rotation only; w4 is below vectoring's WEXP floor.
+        ("w4_m16", 4, 16, {"mode": 0}),
+        ("w5_m16", 5, 16, {"mode": 1}),
+        ("w5_m16_unroll", 5, 16, {"mode": 0, "un": 50}),
+        ("w5_m16_unroll", 5, 16, {"mode": 1, "un": 50}),
     ]:
         out.append(_trans("cordic", sim, "pr", cfg, w, m, "random", 256, **knobs))
     # zkf_mul_ilog2 (runtime k): same format sweep, both decode depths. Default WK=WEXP+1 already covers shifts that

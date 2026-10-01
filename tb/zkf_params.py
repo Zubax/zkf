@@ -42,6 +42,7 @@ class TestContext:
     stage_output: int = 0  # pack-based ops: 0 = combinational (default), 1 = registered (+1 cycle)
     unroll100: int = 100  # zkf_sincos: CORDIC iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
     parallel: int = 0  # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
+    mode: int = 2  # zkf_cordic: mirrors the MODE vlogparam
     exp_is_biased: int = 0  # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees in-range exponent)
     saturate_round_carry: int = 0  # _zkf_pack: 1 = a round-carry out of range saturates to max-finite, not inf
@@ -73,6 +74,8 @@ class TestContext:
             knob_suffix += " SO=0"
         if self.parallel:
             knob_suffix += " PAR"
+        if self.mode != 2:
+            knob_suffix += f" MODE={self.mode}"
         if self.exp_is_biased:
             knob_suffix += f" EB={self.exp_is_biased}"
         if self.assume_no_overflow:
@@ -281,6 +284,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_output=_stage_output(),
         unroll100=unroll100,
         parallel=_parallel(unroll100) if suite == "sincos" else 0,
+        mode=plusarg_int("ZKF_MODE", 2),
         exp_is_biased=_flag("ZKF_EXP_IS_BIASED"),
         assume_no_overflow=_flag("ZKF_ASSUME_NO_OVERFLOW"),
         saturate_round_carry=_flag("ZKF_SATURATE_ROUND_CARRY"),

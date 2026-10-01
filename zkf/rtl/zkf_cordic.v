@@ -1,4 +1,4 @@
-// Iterative (single-transaction) CORDIC with the mode chosen per transaction:
+// Iterative (single-transaction) CORDIC with the mode chosen per transaction or fixed by MODE:
 // - sine and cosine of a phase expressed in turns (2pi radians per unit);
 // - two-argument arctangent in turns and the vector magnitude.
 // One engine serves both modes, so a design needing both functions carries one datapath instead of separate zkf_sincos
@@ -13,9 +13,12 @@
 // `out_ready` accepts it. With out_ready high, in_ready reasserts one cycle after retirement.
 //
 // Results, accuracy and special cases are exactly zkf_sincos's (rotation) or zkf_atan2's (vectoring) at the same
-// parameters. Requires WEXP >= 5.
+// parameters. Use with WEXP >= 5.
 //
 // Tuning knobs:
+//
+// MODE={0,1,2}: 2 chooses the mode per transaction. 0 (rotation) and 1 (vectoring) fix it, which drops the other mode's
+//     datapath and ignores `vectoring` and the other mode's latency parameter.
 //
 // WMULTIPLIER: Optional DSP multiplier argument width hint for the shared multiplier. By default (zero), wide
 //     products are split symmetrically, which is not always optimal. If nonzero, the minimal (possibly asymmetric)
@@ -51,14 +54,15 @@ module zkf_cordic #(
     parameter STAGE_PACK      = 0,
     parameter STAGE_OUTPUT    = 0,
     parameter LATENCY_ROTATION  = 0,
-    parameter LATENCY_VECTORING = 0
+    parameter LATENCY_VECTORING = 0,
+    parameter MODE              = 2
 ) (
     input  wire                 clk,
     input  wire                 rst,
 
     input  wire                 in_valid,    // start a transaction (sampled only when in_ready)
     output wire                 in_ready,    // high when idle and able to accept a transaction
-    input  wire                 vectoring,
+    input  wire                 vectoring,   // ignored unless MODE=2
     input  wire [WEXP+WMAN-1:0] a,
     input  wire [WEXP+WMAN-1:0] b,
 
@@ -69,7 +73,7 @@ module zkf_cordic #(
     output wire [1:0]           quadrant
 );
     _zkf_cordic_unit #(
-        .WEXP(WEXP), .WMAN(WMAN), .MODE(2), .WMULTIPLIER(WMULTIPLIER), .UNROLL100(UNROLL100),
+        .WEXP(WEXP), .WMAN(WMAN), .MODE(MODE), .WMULTIPLIER(WMULTIPLIER), .UNROLL100(UNROLL100),
         .STAGE_INPUT(STAGE_INPUT), .STAGE_PRODUCT(STAGE_PRODUCT), .STAGE_NORMALIZE(STAGE_NORMALIZE),
         .STAGE_PACK(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT), .LATENCY_ROTATION(LATENCY_ROTATION),
         .LATENCY_VECTORING(LATENCY_VECTORING)

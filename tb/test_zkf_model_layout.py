@@ -152,6 +152,19 @@ class ZkfModelLayoutTest(unittest.TestCase):
                     (modes[0].latency, modes[1].latency),
                 )
                 self.assertNotIn("LATENCY", cordic.params)
+                self.assertEqual(cordic.params["MODE"], 2)
+                # A fixed mode is its dedicated operator: one Timing, and only that mode's latency is pinned.
+                for mode, name, absent in (
+                    (0, "LATENCY_ROTATION", "LATENCY_VECTORING"),
+                    (1, "LATENCY_VECTORING", "LATENCY_ROTATION"),
+                ):
+                    fixed = zkf.CordicModel(fmt, mode=mode, **config)
+                    self.assertEqual(fixed.timing, modes[mode])
+                    self.assertEqual((fixed.params["MODE"], fixed.params[name]), (mode, modes[mode].latency))
+                    self.assertNotIn(absent, fixed.params)
+        self.assertEqual(zkf.CordicModel(ZkfFormat(2, 24), mode=0).timing, zkf.SincosModel(ZkfFormat(2, 24)).timing)
+        for mode in (-1, 3):
+            self.assert_knob_error(lambda: zkf.CordicModel(ZkfFormat(4, 24), mode=mode))
 
     def test_unsupported_format(self) -> None:
         def untabled(wmans: set[int]) -> int:

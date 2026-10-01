@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""zkf_cordic against Zkf.sincos / Zkf.atan2, which the dedicated operators' benches pin to their RTL."""
+"""
+zkf_cordic against Zkf.sincos / Zkf.atan2, which the dedicated operators' benches pin to their RTL. At a fixed MODE
+only that mode's cases run and `vectoring` is noise.
+"""
 
 from __future__ import annotations
 
@@ -39,28 +42,32 @@ def rotation(fmt: ZkfFormat, label: str, x: int, noise: int) -> CordicCase:
     return CordicCase(label, False, x, noise, r.sin.bits, r.cos.bits, r.quadrant)
 
 
-def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[CordicCase]:
+def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int, mode: int = 2) -> list[CordicCase]:
     rng = np.random.default_rng(seed)
-    cases = [
-        CordicCase(c.label, False, c.x, random_bits(fmt.wfull, rng), c.sin, c.cos, c.quadrant)
-        for c in sincos_cases(fmt, kind, seed, count)
-    ]
-    # Rotation near k/2 turn, where |sin| is smallest: its underflow decision (reachable when BIAS < WFRAC) and the
-    # union packer's re-based exponent both sit here.
-    bias = (1 << (fmt.wexp - 1)) - 1
-    for exp in (bias - 1, bias):
-        center = exp << fmt.wfrac
-        for ulps in (1, 2, 3, 5, 8):
-            for bits in (center - ulps, center + ulps):
-                cases.append(rotation(fmt, "half-turn", bits, random_bits(fmt.wfull, rng)))
-    cases += [CordicCase(c.label, True, c.y, c.x, c.theta, c.mag, 0) for c in atan2_cases(fmt, kind, seed, count)]
+    cases = []
+    if mode != 1:
+        cases += [
+            CordicCase(c.label, False, c.x, random_bits(fmt.wfull, rng), c.sin, c.cos, c.quadrant)
+            for c in sincos_cases(fmt, kind, seed, count)
+        ]
+        # Rotation near k/2 turn, where |sin| is smallest: its underflow decision (reachable when BIAS < WFRAC) and
+        # the union packer's re-based exponent both sit here.
+        bias = (1 << (fmt.wexp - 1)) - 1
+        for exp in (bias - 1, bias):
+            center = exp << fmt.wfrac
+            for ulps in (1, 2, 3, 5, 8):
+                for bits in (center - ulps, center + ulps):
+                    cases.append(rotation(fmt, "half-turn", bits, random_bits(fmt.wfull, rng)))
+    if mode != 0:
+        cases += [CordicCase(c.label, True, c.y, c.x, c.theta, c.mag, 0) for c in atan2_cases(fmt, kind, seed, count)]
     return [cases[i] for i in rng.permutation(len(cases))]
 
 
 def expected_timing(context) -> Mapping[int, Timing]:
-    """Keyed by `vectoring`; the benches index it with the case's bool, which hashes as 0/1."""
-    return CordicModel(
+    """Keyed by the case's `vectoring` bool, which hashes as 0/1."""
+    timing = CordicModel(
         ZkfFormat(context.wexp, context.wman),
+        mode=context.mode,
         unroll100=context.unroll100,
         stage_input=context.stage_input,
         stage_product=context.stage_product,
@@ -68,6 +75,7 @@ def expected_timing(context) -> Mapping[int, Timing]:
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
     ).timing
+    return {context.mode: timing} if isinstance(timing, Timing) else timing
 
 
 def max_latency(context) -> int:
@@ -96,9 +104,9 @@ async def _reset(dut, out_ready: int) -> None:
     await RisingEdge(dut.clk)
 
 
-def _issue(dut, case: CordicCase) -> None:
+def _issue(dut, case: CordicCase, rng: np.random.Generator, mode: int) -> None:
     dut.in_valid.value = 1
-    dut.vectoring.value = int(case.vectoring)
+    dut.vectoring.value = int(case.vectoring if mode == 2 else rng.integers(0, 2))
     drive_unsigned(dut.a, case.a)
     drive_unsigned(dut.b, case.b)
 
@@ -117,9 +125,9 @@ async def cordic_runtime_cases(dut) -> None:
     timing = expected_timing(context)
     for name in ("a", "b", "r0", "r1"):
         check_width(name, getattr(dut, name), fmt.wfull, context)
-    cases = cases_for(fmt, context.kind, context.seed, context.count)
+    cases = cases_for(fmt, context.kind, context.seed, context.count, context.mode)
     transitions = {(a.vectoring, b.vectoring) for a, b in zip(cases, cases[1:])}
-    assert len(transitions) == 4, f"{context.prefix()}: back-to-back cases must cover every mode transition"
+    assert len(transitions) == (4 if context.mode == 2 else 1), f"{context.prefix()}: mode transitions {transitions}"
     rng = np.random.default_rng(context.seed + 1)
     await _reset(dut, out_ready=1)
 
@@ -130,7 +138,7 @@ async def cordic_runtime_cases(dut) -> None:
             await RisingEdge(dut.clk)
             guard += 1
             assert guard < timeout, f"{context.prefix()}: in_ready stuck low (case {index})"
-        _issue(dut, case)
+        _issue(dut, case, rng, context.mode)
         await RisingEdge(dut.clk)
         _scramble(dut, rng, fmt.wfull)
         guard = 0
@@ -151,7 +159,7 @@ async def cordic_random_handshake(dut) -> None:
     context = float_context("cordic")
     fmt = ZkfFormat(context.wexp, context.wman)
     timing = expected_timing(context)
-    cases = cases_for(fmt, context.kind, context.seed, context.count)[:128]
+    cases = cases_for(fmt, context.kind, context.seed, context.count, context.mode)[:128]
     rng = np.random.default_rng(context.seed + 2)
     await _reset(dut, out_ready=0)
 
@@ -163,7 +171,7 @@ async def cordic_random_handshake(dut) -> None:
         assert cycle < budget, f"{context.prefix()}: {taken}/{len(cases)} results in {budget} cycles"
         offer = issued < len(cases) and rng.random() < 0.5
         if offer:
-            _issue(dut, cases[issued])
+            _issue(dut, cases[issued], rng, context.mode)
         else:
             _scramble(dut, rng, fmt.wfull)
         dut.out_ready.value = out_ready = int(rng.random() < 0.5)
@@ -197,15 +205,15 @@ async def cordic_random_handshake(dut) -> None:
 async def cordic_reset_boundaries(dut) -> None:
     context = float_context("cordic")
     fmt = ZkfFormat(context.wexp, context.wman)
-    directed = [c for c in cases_for(fmt, "directed", context.seed, 0) if c.r0 and c.r1]
-    rot = next(c for c in directed if not c.vectoring)
-    vec = next(c for c in directed if c.vectoring)
+    directed = [c for c in cases_for(fmt, "directed", context.seed, 0, context.mode) if c.r0 and c.r1]
+    one = directed[0]
+    other = next(c for c in directed if c.vectoring != one.vectoring or (context.mode != 2 and c.r0 != one.r0))
     rng = np.random.default_rng(context.seed + 3)
     await reset_boundaries(
         dut,
         context.prefix(),
-        [(rot, vec), (vec, rot)],
-        lambda case: _issue(dut, case),
+        [(one, other), (other, one)],
+        lambda case: _issue(dut, case, rng, context.mode),
         lambda: _scramble(dut, rng, fmt.wfull),
         lambda: _outputs(dut),
         _expected,
