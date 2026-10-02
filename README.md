@@ -110,9 +110,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_sqrt`            | ⇻ | 1       | `√x`; `−inf`&`domain_error` iff `x<0`.                         | Correct rounding, 0.5 ULP   |
 | `zkf_exp2`            | ⇻ | 1       | `2^x`                                                          | Faithful rounding, see below|
 | `zkf_log2`            | ⇻ | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
-| `zkf_sincos`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)` for `x` in turns; exposes `quadrant`. | Faithful rounding, see below|
-| `zkf_atan2`           | ⇻ |latency+1| `atan2(y,x)` in turns ∈ (−0.5,0.5] and `hypot(y,x)`.           | Faithful rounding, see below|
-| `zkf_cordic`          | ⇻ |latency+1| `zkf_sincos` or `zkf_atan2`, chosen per transaction or `MODE`. | As those two, latencies too |
+| `zkf_cordic`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (−0.5,0.5], `hypot(y,x)`. | Faithful rounding, see below; function per transaction or fixed by `MODE`|
 | `zkf_pipe`            |   | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
 
 #### Notably absent functions
@@ -129,8 +127,8 @@ The basic modules available enable simple computation of a huge variety of deriv
 Bare angle functions follow the usual radian convention; helpers suffixed `_turns` expose ZKF's native turn
 representation.
 
-    sin_turns(x), cos_turns(x)  = zkf_sincos(x)                     ; x in turns
-    atan2_turns(y,x)            = zkf_atan2(y, x)                   ; angle in turns ∈ (−0.5,0.5]
+    sin_turns(x), cos_turns(x)  = zkf_cordic(x)                     ; rotation; x in turns
+    atan2_turns(y,x)            = zkf_cordic(y, x)                  ; vectoring; angle in turns ∈ (−0.5,0.5]
     atan_turns(x)               = atan2_turns(x, 1)
 
     normalize_angle(x)          = x − 2π⋅floor((x + π) / (2π))      ; [-π,+π)
@@ -157,7 +155,7 @@ representation.
     asin(x)             = atan2(x, sqrt(1 − x⋅x))                       ; x ∈ [-1,+1]
     acos(x)             = atan2(sqrt(1 − x⋅x), x)                       ; x ∈ [-1,+1]
     h                   = max(abs(x), abs(y))
-    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf_atan2
+    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf_cordic
 
     min(a,b), max(a,b)  = sort(a,b)
     clamp(x, lo, hi)    = min(max(x, lo), hi)
@@ -216,9 +214,9 @@ Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; 
 round to +0; magnitudes in `[min_normal/2, min_normal)` round to signed min_normal), no −0, no exceptions,
 overflow produces ±∞.
 
-`zkf_atan2`'s magnitude errs toward finite within one ULP of the overflow threshold rather than inventing an infinity.
-Any faithfully-rounded operator may return either +0 or ±min_normal for a result landing very near the `min_normal/2`
-midpoint, since which side is correct is decided by bits a faithful operator does not carry.
+`zkf_cordic`'s vectoring magnitude errs toward finite within one ULP of the overflow threshold rather than inventing an
+infinity. Any faithfully-rounded operator may return either +0 or ±min_normal for a result landing very near the
+`min_normal/2` midpoint, since which side is correct is decided by bits a faithful operator does not carry.
 
 Infinity cases that would be NaN in IEEE 754:
 
@@ -272,7 +270,7 @@ The fixed-point datapath then carries GUARD = ERR_GUARD + 4 = 12 extra fractiona
 truncating Horner's LSB noise — which is the smallest split that keeps the round bit clear of the noise floor under
 truncating arithmetic; widening it further has no accuracy benefit and just pays in DSP/LUT/FF area.
 
-The trigonometric modules (sincos, atan2) carry the same faithful-rounding contract.
+`zkf_cordic` carries the same faithful-rounding contract.
 
 <img src="docs/zkf_transcendental_accuracy.svg">
 

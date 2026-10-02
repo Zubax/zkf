@@ -208,7 +208,7 @@ def saturating_y(fmt: ZkfFormat) -> int:
     """
     The y that, against x = max_finite, puts hypot in the middle of the round-up window (max + 1/2 ULP, max + 1 ULP]
     -- so the magnitude's rounding increment carries into the exponent and only _zkf_pack's SATURATE_ROUND_CARRY
-    keeps the result finite. y is normal at every format zkf_atan2 accepts.
+    keeps the result finite. y is normal at every format vectoring accepts.
 
     Worked in ULP units with the encoding built rather than computed, so nothing scales with WEXP (materializing y
     would need a 2**(2**WEXP)-sized rational): with max = U*ulp and U = 2**WMAN - 1,

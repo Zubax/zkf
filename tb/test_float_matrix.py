@@ -41,7 +41,7 @@ for _p in (str(TB_DIR), str(MODEL_DIR)):
     if _p not in sys.path:
         sys.path.insert(0, _p)
 
-from zkf_matrix import build_matrix  # noqa: E402
+from zkf_matrix import ROTATION_SHARDS, build_matrix  # noqa: E402
 from zkf_results import check_results  # noqa: E402
 from zkf_targets import FILESETS, TARGETS  # noqa: E402
 
@@ -156,7 +156,7 @@ def _elaborate(tmp_path, top: str, params: dict, sources, *, valid: bool = True,
     assert valid or marker is None or marker in result.stderr, result.stderr
 
 
-_TRIG_SOURCES = TARGETS["sim_cordic"].sources()
+_CORDIC_SOURCES = TARGETS["sim_cordic"].sources()
 
 
 @pytest.mark.parametrize(
@@ -194,7 +194,7 @@ def test_rint_elaboration(tmp_path, overrides, valid) -> None:
     _elaborate(tmp_path, "zkf_rint", overrides, sources, valid=valid, marker="_zkf_invalid_latency_mismatch")
 
 
-_TRIG_LATENCY_KNOBS = [
+_CORDIC_LATENCY_KNOBS = [
     ((6, 18), {}),
     ((5, 16), {"unroll100": 50, "stage_input": 1, "stage_product": 1}),
     ((8, 36), {"unroll100": 50, "stage_product": 4, "wmultiplier": 18, "stage_normalize": 2, "stage_pack": 1}),
@@ -203,28 +203,21 @@ _TRIG_LATENCY_KNOBS = [
 
 
 @pytest.mark.parametrize(
-    "model,mode,field",
-    [
-        ("SincosModel", {}, "LATENCY"),
-        ("Atan2Model", {}, "LATENCY"),
-        ("CordicModel", {}, "LATENCY_ROTATION"),
-        ("CordicModel", {}, "LATENCY_VECTORING"),
-        ("CordicModel", {"mode": 0}, "LATENCY_ROTATION"),
-        ("CordicModel", {"mode": 1}, "LATENCY_VECTORING"),
-    ],
+    "mode,field",
+    [(2, "LATENCY_ROTATION"), (2, "LATENCY_VECTORING"), (0, "LATENCY_ROTATION"), (1, "LATENCY_VECTORING")],
 )
-@pytest.mark.parametrize("knobs", range(len(_TRIG_LATENCY_KNOBS)))
+@pytest.mark.parametrize("knobs", range(len(_CORDIC_LATENCY_KNOBS)))
 @pytest.mark.parametrize("delta", [0, -1, 1])
-def test_trig_latency_guard(tmp_path, model, mode, field, knobs, delta) -> None:
+def test_cordic_latency_guard(tmp_path, mode, field, knobs, delta) -> None:
     import zkf
 
-    fmt, config = _TRIG_LATENCY_KNOBS[knobs]
-    m = getattr(zkf, model)(zkf.ZkfFormat(*fmt), **config, **mode)
+    fmt, config = _CORDIC_LATENCY_KNOBS[knobs]
+    m = zkf.CordicModel(zkf.ZkfFormat(*fmt), **config, mode=mode)
     params = {**m.params, field: m.params[field] + delta}
-    _elaborate(tmp_path, m.module, params, _TRIG_SOURCES, valid=delta == 0, marker="_zkf_invalid_latency_mismatch")
+    _elaborate(tmp_path, m.module, params, _CORDIC_SOURCES, valid=delta == 0, marker="_zkf_invalid_latency_mismatch")
 
 
-@pytest.mark.parametrize("top", ["zkf_sincos", "zkf_atan2", "zkf_cordic"])
+@pytest.mark.parametrize("mode", [0, 1, 2])
 @pytest.mark.parametrize(
     "knob,value,marker",
     [
@@ -235,8 +228,9 @@ def test_trig_latency_guard(tmp_path, model, mode, field, knobs, delta) -> None:
         ("STAGE_OUTPUT", 2, "_zkf_invalid_stage_output"),
     ],
 )
-def test_trig_stage_range(tmp_path, top, knob, value, marker) -> None:
-    _elaborate(tmp_path, top, {knob: value}, _TRIG_SOURCES, valid=marker is None, marker=marker)
+def test_cordic_stage_range(tmp_path, mode, knob, value, marker) -> None:
+    params = {"MODE": mode, knob: value}
+    _elaborate(tmp_path, "zkf_cordic", params, _CORDIC_SOURCES, valid=marker is None, marker=marker)
 
 
 _RTL_SOURCES = sorted((REPO_ROOT / "zkf" / "rtl").rglob("*.v"))
@@ -251,7 +245,7 @@ def test_module_elaborates_with_defaults(tmp_path, top) -> None:
 
 @pytest.mark.parametrize("mode,valid", [(0, True), (1, True), (2, True), (3, False), (-1, False)])
 def test_cordic_mode_range(tmp_path, mode, valid) -> None:
-    _elaborate(tmp_path, "zkf_cordic", {"MODE": mode}, _TRIG_SOURCES, valid=valid, marker="_zkf_invalid_cordic_mode")
+    _elaborate(tmp_path, "zkf_cordic", {"MODE": mode}, _CORDIC_SOURCES, valid=valid, marker="_zkf_invalid_cordic_mode")
 
 
 @pytest.mark.parametrize("mode", [0, 1])
@@ -261,7 +255,7 @@ def test_cordic_absent_mode_latency_ignored(tmp_path, mode) -> None:
 
     params = {**zkf.CordicModel(zkf.ZkfFormat(5, 16), unroll100=50).params, "MODE": mode}
     params["LATENCY_ROTATION" if mode else "LATENCY_VECTORING"] = 1
-    _elaborate(tmp_path, "zkf_cordic", params, _TRIG_SOURCES)
+    _elaborate(tmp_path, "zkf_cordic", params, _CORDIC_SOURCES)
 
 
 @pytest.mark.parametrize("mode,parallel,valid", [(0, 1, True), (1, 1, False), (2, 1, True), (2, 0, True)])
@@ -278,7 +272,7 @@ def test_cordic_parallel_needs_rotation_mode(tmp_path, mode, parallel, valid) ->
 
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
-def test_cordic_unit_nets_driven(tmp_path, mode) -> None:
+def test_cordic_nets_driven(tmp_path, mode) -> None:
     """The absent datapath's tie-off must name every net it would drive; simulators and synthesis let a miss pass."""
     result = subprocess.run(
         [
@@ -287,16 +281,16 @@ def test_cordic_unit_nets_driven(tmp_path, mode) -> None:
             "-Wall",
             "-Wno-fatal",
             "--top-module",
-            "_zkf_cordic_unit",
+            "zkf_cordic",
             f"-GMODE={mode}",
-            *[str(REPO_ROOT / src) for src in _TRIG_SOURCES],
+            *[str(REPO_ROOT / src) for src in _CORDIC_SOURCES],
         ],
         capture_output=True,
         text=True,
         cwd=tmp_path,
     )
     assert result.returncode == 0, result.stderr
-    undriven = re.findall(r"^%Warning-\w+: .*_zkf_cordic_unit\.v:\d+:\d+: .*not driven.*$", result.stderr, re.MULTILINE)
+    undriven = re.findall(r"^%Warning-\w+: .*zkf_cordic\.v:\d+:\d+: .*not driven.*$", result.stderr, re.MULTILINE)
     assert not undriven, "\n".join(undriven)
 
 
@@ -308,6 +302,25 @@ def test_cordic_modes_rows_cover_every_sigma_arm() -> None:
         if r.module == "cordic_modes"
     }
     assert rows >= {(tier, full, par) for tier in ("pr", "deep") for full, par in ((False, 0), (False, 1), (True, 0))}
+
+
+def test_exhaustive_rotation_rows_are_sharded() -> None:
+    # An unsharded sweep passes just the same, an order of magnitude slower.
+    rows = [
+        dict(r.plus)
+        for r in build_matrix()
+        if r.module == "cordic" and dict(r.vlog).get("MODE") == 0 and dict(r.plus)["ZKF_KIND"] == "exhaustive"
+    ]
+    assert rows and all(row.get("ZKF_SHARD_COUNT") == ROTATION_SHARDS for row in rows)
+    assert {row["ZKF_SHARD_INDEX"] for row in rows} == set(range(ROTATION_SHARDS))
+
+
+def test_synth_model_takes_spec_mode(monkeypatch) -> None:
+    monkeypatch.syspath_prepend(str(REPO_ROOT / "synth"))
+    from modules import ModuleSpec, model_for
+
+    spec = ModuleSpec(name="", label="", top="", kind="cordic", wexp=2, wman=16, wexp_unbiased=0, mode=0)
+    assert model_for(spec).params["MODE"] == 0  # below the floor of the other modes
 
 
 def _format_bounds() -> list:
@@ -332,10 +345,6 @@ def _format_bounds() -> list:
         ("Log2Model", 30, log2, {}, None),
         ("Log2Model", 31, log2, {}, wexp_or_wman),
         ("Log2Model", 8, log2_absent, {}, f"_zkf_log2_m{log2_absent}"),
-        ("SincosModel", 2, trig, {}, None),
-        ("SincosModel", 30, trig, {}, None),
-        ("SincosModel", 31, trig, {}, wexp_or_wman),
-        ("SincosModel", 8, trig_absent, {}, f"_zkf_cordic_m{trig_absent}"),
         ("FromIntModel", 30, 16, {"wint": 2}, None),
         ("FromIntModel", 31, 16, {}, "_zkf_invalid_from_int_wexp_too_wide_unportable"),
         ("FromIntModel", 8, 16, {"wint": 1}, wexp_or_wman),
@@ -347,12 +356,13 @@ def _format_bounds() -> list:
         ("MulIlog2Model", 8, 16, {"wk": 1}, None),
         ("MulIlog2Model", 8, 16, {"wk": 0}, "_zkf_invalid_mul_ilog2_wk"),
     ]
-    for model in ("Atan2Model", "CordicModel"):  # 2 is where theta's codomain is sub-normal
-        rows += [(model, w, trig, {}, None if 5 <= w <= 30 else wexp_or_wman) for w in (2, 4, 5, 30, 31)]
-        rows.append((model, 8, trig_absent, {}, f"_zkf_cordic_m{trig_absent}"))
-    # A fixed MODE takes its dedicated operator's bounds.
+    # Vectoring's floor is 5 (2 is where theta's codomain is sub-normal); rotation alone goes down to the packer's 2.
+    for mode in (1, 2):
+        rows += [
+            ("CordicModel", w, trig, {"mode": mode}, None if 5 <= w <= 30 else wexp_or_wman) for w in (2, 4, 5, 30, 31)
+        ]
     rows += [("CordicModel", w, trig, {"mode": 0}, None if w <= 30 else wexp_or_wman) for w in (2, 4, 30, 31)]
-    rows += [("CordicModel", w, trig, {"mode": 1}, None if w >= 5 else wexp_or_wman) for w in (4, 5)]
+    rows += [("CordicModel", 8, trig_absent, {"mode": mode}, f"_zkf_cordic_m{trig_absent}") for mode in (0, 1, 2)]
     return rows
 
 

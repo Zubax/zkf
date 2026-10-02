@@ -37,7 +37,7 @@ class ModuleSpec:
     wman_out: int = 0
     stage_input: int = 0  # zkf_div, zkf_from_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
     stage_reduce: int = 0  # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input.
-    stage_product: int = 0  # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul pipeline depth / split 0..4.
+    stage_product: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul pipeline depth / split 0..4.
     stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
     stage_align: int = 0  # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
     stage_decode: int = 0  # zkf_add, zkf_addsub, zkf_mul_ilog2, zkf_fma, zkf_log2: 0 or 1.
@@ -47,8 +47,9 @@ class ModuleSpec:
     stage_shift: int = 0  # zkf_rint
     stage_round: int = 0  # zkf_rint
     stage_output: int = 0  # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
-    unroll100: int = 100  # zkf_sincos: CORDIC iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
-    wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul DSP tile-width hint (0 = symmetric;
+    unroll100: int = 100  # zkf_cordic: iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
+    mode: int = 2  # zkf_cordic: 0 = rotation, 1 = vectoring, 2 = per transaction.
+    wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul DSP tile-width hint (0 = symmetric;
     #   >=8 -> slice grid).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
 
@@ -644,18 +645,18 @@ MODULES = [
         stage_output=1,
         emit_schematic=False,
     ),
-    # sin/cos of a phase in turns: a turns-reduction front end, an iterative folded CORDIC (one datapath reused), the
-    # tiny-input bypass multiply, and one shared _zkf_fixed_to_float back end. The rotation array is pure logic; the
-    # only DSPs are the shared 2*pi linear-correction multiply. STAGE_NORMALIZE=2 + STAGE_PACK=1 keep the shared
-    # fixed-to-float pre-pack cone under the 100 MHz gate across PNR seeds.
+    # zkf_cordic fixed to rotation: a turns-reduction front end, the folded engine, the tiny-input bypass multiply, and
+    # one shared _zkf_fixed_to_float back end. The rotation array is pure logic; the only DSPs are the shared 2*pi
+    # linear-correction multiply. STAGE_NORMALIZE=2 + STAGE_PACK=1 keep the shared fixed-to-float pre-pack cone under
+    # the 100 MHz gate across PNR seeds.
     ModuleSpec(
-        name="zkf_sincos",
-        label="zkf_sincos (sin/cos of x turns, iterative folded CORDIC; one datapath reused over ceil(K*100/UNROLL100) "
-        "cycles + a shared linear-correction multiply; accept interval is latency+1. The only DSPs are the 2*pi "
-        "correction; it "
+        name="zkf_cordic_rot",
+        label="zkf_cordic (MODE=0: sin/cos of x turns; one datapath reused over ceil(K*100/UNROLL100) cycles + a "
+        "shared linear-correction multiply; accept interval is latency+1. The only DSPs are the 2*pi correction; it "
         "fits the LFE5U-25F many times over. UNROLL100=100: one iteration per cycle, the shortest path)",
-        top="zkf_sincos_synth_top",
-        kind="sincos",
+        top="zkf_cordic_rot_synth_top",
+        kind="cordic",
+        mode=0,
         wexp=6,
         wman=18,
         wexp_unbiased=0,
@@ -669,12 +670,13 @@ MODULES = [
     # WEXP=8, WMAN=36: same folded engine, more iterations on a wider datapath. Still the default LFE5U-25F (the
     # rotation array uses no DSPs; only the correction multiplies do).
     ModuleSpec(
-        name="zkf_sincos_w8m36",
-        label="zkf_sincos (WEXP=8, WMAN=36, iterative folded CORDIC; UNROLL100=50 with the default decoupled "
-        "z-path so the PHI correction overlaps the CORDIC, -4 cycles + STAGE_PRODUCT=3 "
-        "(3x3 split) + STAGE_NORMALIZE=2 + STAGE_PACK=1; engine half-rate, 2 cycles/iteration; LFE5U-25F)",
-        top="zkf_sincos_w8m36_synth_top",
-        kind="sincos",
+        name="zkf_cordic_rot_w8m36",
+        label="zkf_cordic (MODE=0, WEXP=8, WMAN=36; UNROLL100=50 with the decoupled z-path so the PHI correction "
+        "overlaps the CORDIC, -4 cycles + STAGE_PRODUCT=3 (3x3 split) + STAGE_NORMALIZE=2 + STAGE_PACK=1; engine "
+        "half-rate, 2 cycles/iteration; LFE5U-25F)",
+        top="zkf_cordic_rot_w8m36_synth_top",
+        kind="cordic",
+        mode=0,
         wexp=8,
         wman=36,
         wexp_unbiased=0,
@@ -687,17 +689,16 @@ MODULES = [
         stage_pack=1,
         emit_schematic=False,
     ),
-    # zkf_atan2 (two-input vectoring CORDIC): atan2(y, x) in turns + hypot(y, x). One folded engine + a folded radix-4
-    # divider (the _zkf_div_core primitives) + the shared _zkf_pmul + one shared _zkf_fixed_to_float back-end
-    # (time-multiplexed over the magnitude then theta). WEXP=6, WMAN=18 on LFE5U-25F (the same default device as
-    # zkf_sincos).
+    # zkf_cordic fixed to vectoring: the folded engine + a folded radix-4 divider (the _zkf_div_core primitives) + the
+    # shared _zkf_pmul + one shared _zkf_fixed_to_float back-end (time-multiplexed over the magnitude then theta).
     ModuleSpec(
-        name="zkf_atan2",
-        label="zkf_atan2 (atan2(y, x) in turns + hypot(y, x), iterative vectoring CORDIC; one datapath reused over "
+        name="zkf_cordic_vec",
+        label="zkf_cordic (MODE=1: atan2(y, x) in turns + hypot(y, x); one datapath reused over "
         "ceil(N*100/UNROLL100) engine cycles + a ceil(XF/2)-cycle radix-4 divide; UNROLL100=100 full rate "
         "+ shared _zkf_pmul STAGE_PRODUCT=2 WMULTIPLIER=18 + STAGE_NORMALIZE=2 + STAGE_PACK=1)",
-        top="zkf_atan2_synth_top",
-        kind="atan2",
+        top="zkf_cordic_vec_synth_top",
+        kind="cordic",
+        mode=1,
         wexp=6,
         wman=18,
         wexp_unbiased=0,
@@ -710,14 +711,14 @@ MODULES = [
     ),
     # WEXP=8, WMAN=36: the wider datapath enables the optional stages needed to close 100 MHz on all flows.
     ModuleSpec(
-        name="zkf_atan2_w8m36",
-        label="zkf_atan2 (WEXP=8, WMAN=36, vectoring CORDIC; UNROLL100=50 (half-rate) + stock 1-phase folded radix-4 "
-        "divider (ceil(XF/2) steps + a one-cycle 3*den setup) + shared "
-        "_zkf_pmul (STAGE_PRODUCT=4, WMULTIPLIER=18, KINV/INV_TAU narrowed to WMAN+5 -> 61x41 product "
-        "in a 4x3 grid) + "
-        "STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT; the same default LFE5U-25F as zkf_sincos_w8m36)",
-        top="zkf_atan2_w8m36_synth_top",
-        kind="atan2",
+        name="zkf_cordic_vec_w8m36",
+        label="zkf_cordic (MODE=1, WEXP=8, WMAN=36; UNROLL100=50 (half-rate) + stock 1-phase folded radix-4 divider "
+        "(ceil(XF/2) steps + a one-cycle 3*den setup) + shared _zkf_pmul (STAGE_PRODUCT=4, WMULTIPLIER=18, "
+        "KINV/INV_TAU narrowed to WMAN+5 -> 61x41 product in a 4x3 grid) + STAGE_NORMALIZE=2 + STAGE_PACK=1 + "
+        "STAGE_OUTPUT; LFE5U-25F)",
+        top="zkf_cordic_vec_w8m36_synth_top",
+        kind="cordic",
+        mode=1,
         wexp=8,
         wman=36,
         wexp_unbiased=0,
@@ -732,14 +733,14 @@ MODULES = [
         stage_output=1,
         emit_schematic=False,
     ),
-    # zkf_cordic, compared against the dedicated w8m36 pair on the same part: zkf_atan2_w8m36's knobs leave the shared
+    # MODE=2, compared against the fixed-mode w8m36 pair on the same part: zkf_cordic_vec_w8m36's knobs leave the shared
     # rounder -> result select -> STAGE_OUTPUT register path placement-bound (Yosys ~91-105 MHz across seeds), so
     # STAGE_PACK=2 registers the rounded result and STAGE_INPUT=1 relieves the shared selects (+2 cycles); the radix-4
     # divider step (~102-110 MHz) sits behind it.
     ModuleSpec(
         name="zkf_cordic_w8m36",
-        label="zkf_cordic (WEXP=8, WMAN=36, rotation or vectoring per transaction; one shared engine + _zkf_pmul + "
-        "_zkf_fixed_to_float; zkf_atan2_w8m36's knobs + STAGE_INPUT=1 + STAGE_PACK=2)",
+        label="zkf_cordic (MODE=2, WEXP=8, WMAN=36, rotation or vectoring per transaction; one shared engine + "
+        "_zkf_pmul + _zkf_fixed_to_float; zkf_cordic_vec_w8m36's knobs + STAGE_INPUT=1 + STAGE_PACK=2)",
         top="zkf_cordic_w8m36_synth_top",
         kind="cordic",
         wexp=8,
@@ -855,23 +856,21 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             # pack-input/output pipeline shared with zkf_from_int.
             sources += [hdl / "_zkf_normshift.v", hdl / "_zkf_fixed_to_float.v"]
         return sources + [hdl / "_zkf_horner.v", *tables, hdl / f"zkf_{spec.kind}.v"]
-    if spec.kind in ("sincos", "atan2", "cordic"):
-        # One private datapath (_zkf_cordic_unit) under all three; the default-WMAN (18) table is included as well so
-        # Yosys's hierarchy -check is satisfied for the generic modules.
+    if spec.kind == "cordic":
+        # The default-WMAN (18) table is included as well so Yosys's hierarchy -check is satisfied for the generic
+        # modules.
         tables = [hdl / "_tables" / f"_zkf_cordic_m{w}.v" for w in sorted({18, spec.wman})]
-        divider = [] if spec.kind == "sincos" else [hdl / "_zkf_div_core.v"]
         return [
             hdl / "_zkf_pack.v",
             hdl / "zkf_pipe.v",
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_fixed_to_float.v",
             hdl / "_zkf_pmul.v",
+            hdl / "_zkf_div_core.v",
             hdl / "_zkf_cordic_core.v",
             *tables,
             hdl / "_zkf_txn.v",
-            hdl / "_zkf_cordic_unit.v",
-            *divider,
-            hdl / f"zkf_{spec.kind}.v",
+            hdl / "zkf_cordic.v",
         ]
     raise ValueError(f"unsupported module kind: {spec.kind}")
 
@@ -885,6 +884,7 @@ def model_for(spec: ModuleSpec) -> OperatorModel:
         "wexp_in": spec.wexp_in or None,
         "wman_in": spec.wman_in or None,
         "unroll100": spec.unroll100,
+        "mode": spec.mode,
         "stage_input": spec.stage_input,
         "stage_reduce": spec.stage_reduce,
         "stage_product": spec.stage_product,
@@ -900,7 +900,7 @@ def model_for(spec: ModuleSpec) -> OperatorModel:
         "wmultiplier": spec.wmultiplier,
     }
     factory = fmt.model_of(spec.kind)
-    defaults = factory()
+    defaults = factory(**({"mode": spec.mode} if spec.kind == "cordic" else {}))  # the mode sets the format bounds
     return factory(**{name: values[name] for name in defaults.config.keys() if name in values})
 
 

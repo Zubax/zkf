@@ -3,7 +3,6 @@
 from ._format import OperatorModel as OperatorModel, Timing as Timing, ZkfFormat as ZkfFormat
 from ._operators import (
     AbsModel as AbsModel,
-    Atan2Model as Atan2Model,
     CordicModel as CordicModel,
     CmpModel as CmpModel,
     AddModel as AddModel,
@@ -22,7 +21,6 @@ from ._operators import (
     ResizeModel as ResizeModel,
     RintModel as RintModel,
     SaturateModel as SaturateModel,
-    SincosModel as SincosModel,
     SortModel as SortModel,
     SqrtModel as SqrtModel,
 )

@@ -1,5 +1,5 @@
 // Exactness bench for the shared pipelined multiply _zkf_pmul: proves p == a*b (with per-operand signedness) for
-// every STAGE_PRODUCT in {0,1,2,3,4}, both signedness flags, and several (WA,WB) including the exact sincos widths.
+// every STAGE_PRODUCT in {0,1,2,3,4}, both signedness flags, and several (WA,WB) including the exact cordic widths.
 // Inputs are held stable and the result sampled after the deepest pipeline settles, so one check covers any latency.
 
 `timescale 1ns / 1ps
@@ -40,7 +40,7 @@ module _zkf_pmul_tb;
     reg  [63:0] b_drv = 64'd0;
     integer     fails = 0;
 
-    // SS = signed*signed (sincos), UU = unsigned (mul/fma), SU/US mixed. Widths cover the exact sincos shared-
+    // SS = signed*signed (cordic), UU = unsigned (mul/fma), SU/US mixed. Widths cover the exact cordic shared-
     // multiply sizes (29x20 = WMAN11, 39x24 = WMAN18, 66x41 = WMAN36) plus asymmetric (13x25), matched (18x18),
     // and the minimum widths (3x4) that still allow the 3x3 split. STAGE_PRODUCT 0..3 each, plus the SP=4 block below.
     localparam integer N = 62;

@@ -1368,17 +1368,14 @@ endmodule
 """)
 
 
-_TRIG_PORTS = {  # the payload ports beyond the in_valid/in_ready/out_valid/out_ready handshake
-    "sincos": (("x",), ("sin", "cos", "quadrant")),
-    "atan2": (("y", "x"), ("theta", "mag")),
-    "cordic": (("vectoring", "a", "b"), ("r0", "r1", "quadrant")),
-}
-
-
-def write_trig_wrapper(spec: ModuleSpec, path: Path) -> None:
-    inputs, outputs = _TRIG_PORTS[spec.kind]
+def write_cordic_wrapper(spec: ModuleSpec, path: Path) -> None:
+    # A fixed mode gets only the ports it uses, as an instance in a design would leave the others tied off or open.
+    wfull = spec.wexp + spec.wman
+    inputs = {0: ("a",), 1: ("a", "b"), 2: ("vectoring", "a", "b")}[spec.mode]
+    outputs = ("r0", "r1") if spec.mode == 1 else ("r0", "r1", "quadrant")
+    unused = {"vectoring": f"1'b{int(spec.mode == 1)}", "b": f"{{{wfull}{{1'b0}}}}", "quadrant": ""}  # "" = open
     widths = {"vectoring": "", "quadrant": "[1:0] "}
-    w = {name: widths.get(name, f"[{spec.wexp + spec.wman - 1}:0] ") for name in inputs + outputs}
+    w = {name: widths.get(name, f"[{wfull - 1}:0] ") for name in inputs + outputs}
     w.update({name: "" for name in ("in_valid", "in_ready", "out_valid", "out_ready")})
     head = ("in_valid", "in_ready", *inputs, "out_valid", "out_ready", *outputs)
     direction = {name: "output" if name in ("in_ready", "out_valid", *outputs) else "input " for name in head}
@@ -1387,6 +1384,7 @@ def write_trig_wrapper(spec: ModuleSpec, path: Path) -> None:
     control = (("in_valid", "in_valid"), ("in_ready", "dut_in_ready"), ("out_valid", "dut_out_valid"))
     control += (("out_ready", "out_ready"),)
     connections = {name: f"r_{name}" if name in captured else f"dut_{name}" for name in head}
+    dut = ("in_valid", "in_ready", "vectoring", "a", "b", "out_valid", "out_ready", "r0", "r1", "quadrant")
     lines = ["`default_nettype none", "", f"module {spec.top} (", "    input  wire clk,", "    input  wire rst,"]
     lines += [f"    {direction[n]} wire {w[n]}{n}{',' if i < len(head) - 1 else ''}" for i, n in enumerate(head)]
     lines += [
@@ -1400,8 +1398,10 @@ def write_trig_wrapper(spec: ModuleSpec, path: Path) -> None:
     for name in driven:
         lines += [f"    {SYNTH_REG_ATTR}", f"    reg {w[name]}r_{name};"]
     lines += [f"    assign {name} = r_{name};" for name in driven]
-    lines += [f"    zkf_{spec.kind} #(", f"        {_verilog_params(spec)}", "    ) dut (", "        .clk(clk),"]
-    lines += ["        .rst(rst),"] + [f"        .{n}({connections[n]})," for n in head]
+    lines += ["    zkf_cordic #(", f"        {_verilog_params(spec)}", "    ) dut (", "        .clk(clk),"]
+    lines += ["        .rst(rst),"] + [
+        f"        .{n}({connections[n] if n in connections else unused[n]})," for n in dut
+    ]
     lines[-1] = lines[-1].rstrip(",")
     lines += ["    );", "    always @(posedge clk) begin", "        if (rst) begin"]
     lines += [f"            r_{name} <= 1'b0;" for name, _ in control] + ["        end else begin"]
@@ -1449,7 +1449,7 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_exp2_wrapper(spec, path)
     elif spec.kind == "log2":
         write_log2_wrapper(spec, path)
-    elif spec.kind in _TRIG_PORTS:
-        write_trig_wrapper(spec, path)
+    elif spec.kind == "cordic":
+        write_cordic_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")

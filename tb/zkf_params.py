@@ -32,7 +32,7 @@ class TestContext:
     wk: int | None = None  # zkf_mul_ilog2: width of the signed runtime shift k
     stage_input: int = 0  # input-register knob for sequential float operators
     stage_reduce: int = 0  # zkf_exp2: register the reduced fixed-point before the evaluator ROM
-    stage_product: int = 0  # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_sincos / zkf_atan2
+    stage_product: int = 0  # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_cordic
     stage_product_final: int = 0  # zkf_log2 final f*C(f) multiply; defaults to stage_product in float_context()
     stage_align: int = 0  # zkf_add / zkf_addsub / zkf_fma
     stage_decode: int = 0  # zkf_mul_ilog2 / zkf_fma / zkf_log2
@@ -42,8 +42,8 @@ class TestContext:
     stage_shift: int = 0  # zkf_rint
     stage_round: int = 0  # zkf_rint
     stage_output: int = 0  # pack-based ops: 0 = combinational (default), 1 = registered (+1 cycle)
-    unroll100: int = 100  # zkf_sincos: CORDIC iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
-    parallel: int = 0  # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
+    unroll100: int = 100  # zkf_cordic: iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
+    parallel: int = 0  # zkf_cordic: run rotation's z-path ahead of x/y (mirrors the PARALLEL vlogparam)
     mode: int = 2  # zkf_cordic: mirrors the MODE vlogparam
     exp_is_biased: int = 0  # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees in-range exponent)
@@ -241,9 +241,9 @@ def _unroll100() -> int:
     return value
 
 
-def _parallel(unroll100: int) -> int:
-    # Mirror the RTL PARALLEL vlogparam; its default is (UNROLL100 < 100), so derive the same default here.
-    value = plusarg_int("ZKF_PARALLEL", 1 if unroll100 < 100 else 0)
+def _parallel(unroll100: int, mode: int) -> int:
+    # Mirror the RTL PARALLEL vlogparam and its default.
+    value = plusarg_int("ZKF_PARALLEL", 1 if (mode != 1 and unroll100 < 100) else 0)
     if value not in (0, 1):
         raise ValueError(f"ZKF_PARALLEL must be 0 or 1, got {value}")
     if value and unroll100 != 50:
@@ -279,6 +279,7 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         raise ValueError(f"ZKF_WEXP_UNBIASED={wexp_unbiased} is too narrow for ZKF_WEXP={wexp}")
     stage_product = _stage_product()
     unroll100 = _unroll100()
+    mode = plusarg_int("ZKF_MODE", 2)
     shard_index, shard_count = _shard()
     return TestContext(
         suite=suite,
@@ -303,8 +304,8 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_pack=_stage_pack(),
         stage_output=_stage_output(),
         unroll100=unroll100,
-        parallel=_parallel(unroll100) if suite == "sincos" else 0,
-        mode=plusarg_int("ZKF_MODE", 2),
+        parallel=_parallel(unroll100, mode) if suite == "cordic" else 0,
+        mode=mode,
         exp_is_biased=_flag("ZKF_EXP_IS_BIASED"),
         assume_no_overflow=_flag("ZKF_ASSUME_NO_OVERFLOW"),
         saturate_round_carry=_flag("ZKF_SATURATE_ROUND_CARRY"),
