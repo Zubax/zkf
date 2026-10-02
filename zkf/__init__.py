@@ -21,12 +21,10 @@ from ._operators import (
     PipeModel as PipeModel,
     ResizeModel as ResizeModel,
     RintModel as RintModel,
-    RoundModel as RoundModel,
     SaturateModel as SaturateModel,
     SincosModel as SincosModel,
     SortModel as SortModel,
     SqrtModel as SqrtModel,
-    ToIntModel as ToIntModel,
 )
 from ._value import (
     Atan2Result as Atan2Result,
@@ -41,4 +39,4 @@ from ._reference import RoundMode as RoundMode, UnsupportedFormat as Unsupported
 from ._rtl import get_rtl as get_rtl
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.7.2"
+__version__ = "0.8.0"

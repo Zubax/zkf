@@ -35,7 +35,7 @@ class ModuleSpec:
     wman_in: int = 0
     wexp_out: int = 0
     wman_out: int = 0
-    stage_input: int = 0  # zkf_div, zkf_from_int, zkf_to_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
+    stage_input: int = 0  # zkf_div, zkf_from_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
     stage_reduce: int = 0  # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input.
     stage_product: int = 0  # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul pipeline depth / split 0..4.
     stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
@@ -441,47 +441,6 @@ MODULES = [
         stage_normalize=1,
     ),
     ModuleSpec(
-        name="zkf_to_int",
-        label="zkf_to_int (WINT=32)",
-        top="zkf_to_int_synth_top",
-        kind="to_int",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        wint=32,
-    ),
-    ModuleSpec(
-        name="zkf_to_int_w8m36_i44",
-        label="zkf_to_int (WEXP=8, WMAN=36, WINT=44)",
-        top="zkf_to_int_w8m36_i44_synth_top",
-        kind="to_int",
-        wexp=8,
-        wman=36,
-        wexp_unbiased=0,
-        wint=44,
-    ),
-    ModuleSpec(
-        name="zkf_to_int_si1",
-        label="zkf_to_int (WINT=32, STAGE_INPUT=1)",
-        top="zkf_to_int_si1_synth_top",
-        kind="to_int",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        wint=32,
-        stage_input=1,
-    ),
-    ModuleSpec(
-        name="zkf_to_int_w8m36",
-        label="zkf_to_int (WEXP=8, WMAN=36, WINT=32)",
-        top="zkf_to_int_w8m36_synth_top",
-        kind="to_int",
-        wexp=8,
-        wman=36,
-        wexp_unbiased=0,
-        wint=32,
-    ),
-    ModuleSpec(
         name="zkf_resize_narrow",
         label="zkf_resize 6/18 -> 5/11 (narrowing)",
         top="zkf_resize_narrow_synth_top",
@@ -560,34 +519,6 @@ MODULES = [
         wman_in=18,
         wexp_out=8,
         wman_out=36,
-    ),
-    # zkf_round (round-to-integer-valued float; runtime round_mode). The rounder is a variable-position
-    # boundary-mask + guard/sticky reduction + increment adder feeding _zkf_pack as a pre-biased assembler
-    # (EXP_IS_BIASED=1, no bias round-trip). Unpipelined the cone is ~21 ns, so the headline configs carry
-    # STAGE_DECODE=1 (split mask generation from the reduction/add) and STAGE_PACK=1 (register the rounder->packer
-    # cut). At 8/36 the wider 36-bit reduction also needs STAGE_OUTPUT=1 to hold 100 MHz on the Spartan/nextpnr flow.
-    ModuleSpec(
-        name="zkf_round",
-        label="zkf_round (WEXP=6, WMAN=18, STAGE_DECODE=1 + STAGE_PACK=1)",
-        top="zkf_round_synth_top",
-        kind="round",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        stage_decode=1,
-        stage_pack=1,
-    ),
-    ModuleSpec(
-        name="zkf_round_w8m36",
-        label="zkf_round (WEXP=8, WMAN=36, STAGE_DECODE=1 + STAGE_PACK=1 + STAGE_OUTPUT=1)",
-        top="zkf_round_w8m36_synth_top",
-        kind="round",
-        wexp=8,
-        wman=36,
-        wexp_unbiased=0,
-        stage_decode=1,
-        stage_pack=1,
-        stage_output=1,
     ),
     # zkf_rint: one stage ahead of the rounding decision closes 100 MHz for both results.
     ModuleSpec(
@@ -897,24 +828,11 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_fixed_to_float.v",
             hdl / "zkf_from_int.v",
         ]
-    if spec.kind == "to_int":
-        return [
-            hdl / "zkf_pipe.v",
-            hdl / "_zkf_rshift_sticky.v",
-            hdl / "_zkf_to_fixpoint.v",
-            hdl / "zkf_to_int.v",
-        ]
     if spec.kind == "resize":
         return [
             hdl / "_zkf_pack.v",
             hdl / "zkf_pipe.v",
             hdl / "zkf_resize.v",
-        ]
-    if spec.kind == "round":
-        return [
-            hdl / "_zkf_pack.v",
-            hdl / "zkf_pipe.v",
-            hdl / "zkf_round.v",
         ]
     if spec.kind == "rint":
         return [hdl / "zkf_pipe.v", hdl / "zkf_rint.v"]
@@ -931,9 +849,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         tables = [table(w) for w in sorted({DEFAULT_WMAN, spec.wman})]
         sources = [hdl / "_zkf_pack.v", hdl / "zkf_pipe.v", hdl / "_zkf_pmul.v"]
         if spec.kind == "exp2":
-            # exp2's _zkf_to_fixpoint helper uses _zkf_rshift_sticky for the right-shift path; the helper itself
-            # owns the decode + folded-constant predicate cone shared with zkf_to_int.
-            sources += [hdl / "_zkf_rshift_sticky.v", hdl / "_zkf_to_fixpoint.v"]
+            sources += [hdl / "_zkf_rshift_sticky.v"]
         if spec.kind == "log2":
             # log2's _zkf_fixed_to_float helper owns the _zkf_normshift instance, optional combine register, and
             # pack-input/output pipeline shared with zkf_from_int.

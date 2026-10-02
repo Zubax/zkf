@@ -125,7 +125,7 @@ TRANS_ATAN2 = [
 ]
 # pipe:     (config, width, stages, count)
 PIPE = [("w8_n0", 8, 0, 64), ("w8_n4", 8, 4, 96), ("w24_n2", 24, 2, 96)]
-# from_int/to_int: (config, wexp, wman, wint, kind, count)
+# from_int/rint: (config, wexp, wman, wint, kind, count)
 FROM_INT = [
     ("w2_m4_int4_exhaustive", 2, 4, 4, "exhaustive", 0),
     ("w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0),
@@ -138,10 +138,20 @@ FROM_INT = [
     # at this width, so directed covers the boundary deterministically.
     ("w6_m18_int128_directed", 6, 18, 128, "directed", 0),
 ]
-TO_INT = FROM_INT + [
+# The exhaustive extras: w2_m4_int8 a float round-up to inf whose integer is in range, w5_m4_int12 the wide shifts and
+# the exponent rail, w4_m6_int5 the round-up into the positive rail with WINT < WMAN, w3_m4_int5 the integer taking the
+# whole significand, w2_m9_int2 a fraction count that outgrows both the exponent and the integer.
+RINT = FROM_INT + [
     ("w2_m4_int2_exhaustive", 2, 4, 2, "exhaustive", 0),
+    ("w2_m4_int8_exhaustive", 2, 4, 8, "exhaustive", 0),
+    ("w5_m4_int12_exhaustive", 5, 4, 12, "exhaustive", 0),
+    ("w4_m6_int5_exhaustive", 4, 6, 5, "exhaustive", 0),
+    ("w3_m4_int5_exhaustive", 3, 4, 5, "exhaustive", 0),
+    ("w2_m9_int2_exhaustive", 2, 9, 2, "exhaustive", 0),
+    ("w6_m18_int24_random", 6, 18, 24, "random", 768),
     ("w8_m36_int44_random", 8, 36, 44, "random", 768),
     ("w11_m53_int32_random", 11, 53, 32, "random", 384),
+    ("w11_m53_int64_random", 11, 53, 64, "random", 384),
 ]
 # resize: (config, wexp_in, wman_in, wexp_out, wman_out, kind, count). Covers every (WMAN, WEXP) quadrant so each
 # zkf_resize elaboration-time branch runs: widen-only fast path, pack/g_widen (g_same_width, g_zero_pad), and
@@ -207,7 +217,7 @@ FMA_EXT = [
 
 @dataclass
 class Run:
-    module: str  # mul, add, pack, to_int, pipe, ...
+    module: str  # mul, add, pack, rint, pipe, ...
     sim: str  # icarus | verilator
     tier: str  # pr | deep | properties | fast
     config: str  # config name including knob suffixes
@@ -404,24 +414,6 @@ def _resize(sim, tier, base, wi, mi, wo, mo, kind, count, si, so=None) -> Run:
         vlog.append(("STAGE_OUTPUT", so))
         suffix += f"_so{so}"
     return _run("resize", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
-
-
-def _round(sim, tier, base, w, m, kind, count, *, si=None, sd=None, pa=None, so=None) -> Run:
-    vlog = [("WEXP", w), ("WMAN", m)]
-    suffix = ""
-    if si is not None:
-        vlog.append(("STAGE_INPUT", si))
-        suffix += f"_si{si}"
-    if sd is not None:
-        vlog.append(("STAGE_DECODE", sd))
-        suffix += f"_sd{sd}"
-    if pa is not None:
-        vlog.append(("STAGE_PACK", pa))
-        suffix += f"_pa{pa}"
-    if so is not None:
-        vlog.append(("STAGE_OUTPUT", so))
-        suffix += f"_so{so}"
-    return _run("round", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
 
 
 def _rint(sim, tier, base, w, m, wint, kind, count, *, si=None, ss=None, sr=None, so=None) -> Run:
@@ -756,8 +748,6 @@ def _per_pr(sim, out: list) -> None:
     for si in (0, 1):
         for cfg, w, m, wint, k, c in FROM_INT:
             out.append(_cast("from_int", sim, "pr", cfg, w, m, wint, k, c, si))
-        for cfg, w, m, wint, k, c in TO_INT:
-            out.append(_cast("to_int", sim, "pr", cfg, w, m, wint, k, c, si))
         for cfg, wi, mi, wo, mo, k, c in RESIZE:
             out.append(_resize(sim, "pr", cfg, wi, mi, wo, mo, k, c, si))
     # zkf_from_int knobs: STAGE_NORMALIZE -> _zkf_normshift.STAGE_SPLIT, STAGE_PACK -> _zkf_pack.STAGE_INPUT.
@@ -766,29 +756,8 @@ def _per_pr(sim, out: list) -> None:
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8_exhaustive", 3, 4, 8, "exhaustive", 0, si=1, sn=1, pa=1))
     # The WEXP ceiling the model admits.
     out.append(_cast("from_int", sim, "pr", "w30_m16_int32_directed", 30, 16, 32, "directed", 0, 0))
-    # zkf_round: the bench sweeps every operand across all four rounding modes; UNARY covers the formats (w2_m4
-    # reaches the round-up-overflows-to-inf corner). Stage knobs: STAGE_INPUT via zkf_pipe, STAGE_PACK/OUTPUT ->
-    # _zkf_pack; exercised once each plus all-on to catch latency-bookkeeping regressions.
-    for cfg, w, m, k, c in UNARY:
-        out.append(_round(sim, "pr", cfg, w, m, k, c))
-    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
-    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sd=1))
-    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
-    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, so=1))
-    out.append(_round(sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, sd=1, pa=1, so=1))
-    # zkf_rint: every operand across all four rounding modes, both results checked. The exhaustive extras reach what
-    # TO_INT's cannot: w2_m4_int8 a float round-up to inf whose integer is in range, w5_m4_int12 the wide shifts and
-    # the exponent rail, w4_m6_int5 the round-up into the positive rail with WINT < WMAN, w3_m4_int5 the integer
-    # taking the whole significand, w2_m9_int2 a fraction count that outgrows both the exponent and the integer.
-    for cfg, w, m, wint, k, c in TO_INT + [
-        ("w2_m4_int8_exhaustive", 2, 4, 8, "exhaustive", 0),
-        ("w5_m4_int12_exhaustive", 5, 4, 12, "exhaustive", 0),
-        ("w4_m6_int5_exhaustive", 4, 6, 5, "exhaustive", 0),
-        ("w3_m4_int5_exhaustive", 3, 4, 5, "exhaustive", 0),
-        ("w2_m9_int2_exhaustive", 2, 9, 2, "exhaustive", 0),
-        ("w6_m18_int24_random", 6, 18, 24, "random", 768),
-        ("w11_m53_int64_random", 11, 53, 64, "random", 384),
-    ]:
+    # zkf_rint: every operand across all four rounding modes, both results checked.
+    for cfg, w, m, wint, k, c in RINT:
         out.append(_rint(sim, "pr", cfg, w, m, wint, k, c))
     every = {"si": 1, "ss": 1, "sr": 1, "so": 1}
     for knobs in (*({k: 1} for k in every), every, {"si": 2}, {"ss": 2, "sr": 2}):
@@ -803,9 +772,7 @@ def _per_pr(sim, out: list) -> None:
     out.append(_binary("sqrt", sim, "pr", "w3_m5", 3, 5, "exhaustive", 0, si=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
     out.append(_fma(sim, "pr", "w4_m6", 4, 6, "random", 256, si=2))
-    out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8", 3, 4, 8, "exhaustive", 0, 2))
-    out.append(_cast("to_int", sim, "pr", "w3_m4_int8", 3, 4, 8, "exhaustive", 0, 2))
     out.append(_resize(sim, "pr", "w3m4_to_w4m6", 3, 4, 4, 6, "exhaustive", 0, 2))
     for op in ("exp2", "log2"):
         out.append(_trans(op, sim, "pr", "w2_m16", 2, 16, "exhaustive", 0, si=2))
@@ -816,8 +783,8 @@ def _per_pr(sim, out: list) -> None:
 def _deep_correctness(out: list) -> None:
     # Full Cartesian product of each module's structural knobs across every format in its deep list (correctness;
     # coverage closure lives in _deep_coverage under merged-union). Knob axes: mul = STAGE_INPUT x PRODUCT x OUTPUT;
-    # add/addsub = STAGE_DECODE x ALIGN x OUTPUT; div/from_int/resize = STAGE_INPUT x OUTPUT; to_int = STAGE_INPUT
-    # only; pack = STAGE_OUTPUT x EXP_IS_BIASED.
+    # add/addsub = STAGE_DECODE x ALIGN x OUTPUT; div/from_int/resize = STAGE_INPUT x OUTPUT; pack = STAGE_OUTPUT x
+    # EXP_IS_BIASED.
     s = "icarus"
     for w, m, k, c in BIN_EXT:
         base = f"w{w}m{m}_{k}"
@@ -953,7 +920,6 @@ def _deep_correctness(out: list) -> None:
     ]:
         base = f"w{w}m{m}i{i}_{k}"
         for si in (0, 1):
-            out.append(_cast("to_int", s, "deep", base, w, m, i, k, c, si))
             for so in (0, 1):
                 out.append(_cast("from_int", s, "deep", base, w, m, i, k, c, si, so=so))
     # from_int at the widest WMAN and sn=2: its WX/WEU sizing, carry-to-inf wiring, and the sn=2 normalize-shift
@@ -978,18 +944,6 @@ def _deep_correctness(out: list) -> None:
     # untested.
     out.append(_resize(s, "deep", "w8m48_to_w8m24", 8, 48, 8, 24, "random", 384, 0))
     out.append(_resize(s, "deep", "w8m24_to_w8m48", 8, 24, 8, 48, "random", 384, 0))
-    # round: each unary deep format once, the full si x pa x so knob cartesian on a small exhaustive format, and the
-    # WEXP=8/WMAN=36 wide format.
-    for w, m, k, c in UNARY_EXT:
-        out.append(_round(s, "deep", f"w{w}m{m}_{k}", w, m, k, c))
-    for si in (0, 1):
-        for sd in (0, 1):
-            for pa in (0, 1):
-                for so in (0, 1):
-                    out.append(_round(s, "deep", "w3m6_knobs", 3, 6, "exhaustive", 0, si=si, sd=sd, pa=pa, so=so))
-    out.append(_round(s, "deep", "w8m36", 8, 36, "random", 768))
-    out.append(_round(s, "deep", "w8m36_maxpipe", 8, 36, "random", 768, si=1, sd=1, pa=1, so=1))
-    out.append(_round(s, "deep", "w8m48", 8, 48, "random", 384))
     # rint: the full knob cartesian on a small exhaustive format, further exhaustive shapes, and wide formats.
     for mask in range(16):
         si, ss, sr, so = ((mask >> bit) & 1 for bit in range(4))
@@ -1143,18 +1097,10 @@ def _deep_coverage(out: list) -> None:
         out.append(_pack(s, "deep", f"w{w}m{m}u{u}", w, m, u, "exhaustive", 0))
     for w, m, i in [(4, 5, 7), (4, 6, 5), (3, 6, 4), (5, 4, 8)]:
         for si in (0, 1):
-            out.append(_cast("to_int", s, "deep", f"w{w}m{m}i{i}", w, m, i, "exhaustive", 0, si))
             out.append(_cast("from_int", s, "deep", f"w{w}m{m}i{i}", w, m, i, "exhaustive", 0, si))
     for wi, mi, wo, mo in [(3, 4, 5, 6), (5, 6, 3, 4), (4, 5, 4, 4), (4, 4, 4, 5), (5, 4, 3, 6), (3, 6, 5, 4)]:
         for si in (0, 1):
             out.append(_resize(s, "deep", f"w{wi}m{mi}_to_w{wo}m{mo}", wi, mi, wo, mo, "exhaustive", 0, si))
-    # round coverage: cheap exhaustive formats toggle the rounder + specials path (w2_m4 reaches round-up overflow);
-    # all-on toggles the input/pack/output registers; wide w8_m36 toggles the boundary-mask decoder and
-    # exponent-difference bits the tiny formats cannot reach.
-    for w, m in [(2, 4), (4, 5), (3, 6)]:
-        out.append(_round(s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
-    out.append(_round(s, "deep", "w4m5_maxpipe", 4, 5, "exhaustive", 0, si=1, pa=1, so=1))
-    out.append(_round(s, "deep", "w8m36", 8, 36, "random", 1024))
     for w, m, i in [(2, 4, 2), (4, 5, 7), (3, 6, 4), (4, 6, 5)]:
         out.append(_rint(s, "deep", f"w{w}m{m}i{i}", w, m, i, "exhaustive", 0))
     out.append(_rint(s, "deep", "w4m5i7_maxpipe", 4, 5, 7, "exhaustive", 0, si=1, ss=1, sr=1, so=1))
@@ -1239,8 +1185,6 @@ _FAST = [
     ("sqrt_m5_si1", "sqrt", [("WEXP", 2), ("WMAN", 5), ("STAGE_INPUT", 1)]),
     ("from_int_si0", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 0)]),
     ("from_int_si1", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 1)]),
-    ("to_int_si0", "to_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 0)]),
-    ("to_int_si1", "to_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 1)]),
     ("rint", "rint", [("WEXP", 2), ("WMAN", 4), ("WINT", 4)]),
     ("rint_ss1", "rint", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_SHIFT", 1)]),
     ("resize_si0", "resize", [("WEXP_IN", 3), ("WMAN_IN", 4), ("WEXP_OUT", 3), ("WMAN_OUT", 4), ("STAGE_INPUT", 0)]),

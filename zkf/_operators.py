@@ -508,28 +508,6 @@ class FromIntModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class ToIntModel(OperatorModel):
-    module = "zkf_to_int"
-    wint: int = 32
-    stage_input: int = 0
-
-    def __post_init__(self) -> None:
-        _check_format(self, "WEXP", self.fmt.wexp, 2, 30)  # _zkf_to_fixpoint's guard
-        _check_format(self, "WINT", self.wint, 2)
-        _check_int_range(self.stage_input, 0, None)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman, "WINT": self.wint, "STAGE_INPUT": self.stage_input}
-        )
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(4 + self.stage_input, 1)
-
-
-@dataclass(frozen=True)
 class ResizeModel(OperatorModel):
     module = "zkf_resize"
     wexp_in: int | None = None
@@ -578,38 +556,6 @@ class ResizeModel(OperatorModel):
     @property
     def timing(self) -> Timing:
         return Timing(self.stage_input + self.stage_output, 1)
-
-
-@dataclass(frozen=True)
-class RoundModel(OperatorModel):
-    module = "zkf_round"
-    stage_input: int = 0
-    stage_decode: int = 0
-    stage_pack: int = 0
-    stage_output: int = 0
-
-    def __post_init__(self) -> None:
-        _check_format(self, "WEXP", self.fmt.wexp, 2, 31)  # zkf_round.v's guard
-        _check_int_range(self.stage_input, 0, None)
-        for value in (self.stage_decode, self.stage_pack, self.stage_output):
-            _check_int_range(value, 0, 1)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {
-                "WEXP": self.fmt.wexp,
-                "WMAN": self.fmt.wman,
-                "STAGE_INPUT": self.stage_input,
-                "STAGE_DECODE": self.stage_decode,
-                "STAGE_PACK": self.stage_pack,
-                "STAGE_OUTPUT": self.stage_output,
-            }
-        )
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(self.stage_input + self.stage_decode + self.stage_pack + self.stage_output, 1)
 
 
 @dataclass(frozen=True)

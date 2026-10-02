@@ -54,8 +54,8 @@ module zkf_exp2 #(
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // BIAS / OOR_THRESHOLD constants below use unsized integer shifts on WEXP; WEXP >= 31 would overflow
-        // Verilog's 32-bit integer constant arithmetic.
+        // The reduction's constants use unsized integer shifts on WEXP; WEXP >= 31 would overflow Verilog's 32-bit
+        // integer constant arithmetic.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_exp2_wexp_too_wide_unportable u_invalid();
         end
@@ -73,40 +73,19 @@ module zkf_exp2 #(
     localparam WEU  = WEXP;                // signed unbiased exponent fed to _zkf_pack
     localparam SBW  = WEU + 4;             // evaluator sideband: {i, force_inf, force_zero, is_zero, lost_sticky}
 
-    localparam integer BIAS    = (1 << (WEXP - 1)) - 1;
-    // |x| >= 2^(WEXP-1) is always out of range. exp >= OOR_THRESHOLD <=> e >= WEXP-1 (also true for +/-inf).
-    localparam integer OOR_THRESHOLD = BIAS + WEXP - 1;
-
-    // -- Float -> signed fixed-point reduction. _zkf_to_fixpoint owns the decode, the folded-constant shift
-    // predicates (left/right shift selection, left/right overflow clamps), the radix-4 right shifter, the raw left
-    // shifter, and the two internal register stages (S1 decode+clamps; S2 post-shift magnitude+sticky+specials).
-    // WI=WEU and FF=WMAN+12 give the (i, f) layout we need; OOR_EXP_THRESHOLD=OOR_THRESHOLD makes the helper
-    // saturate the magnitude before the integer part of x can exceed WEXP signed bits (the result exponent range).
-    wire             rb_valid;
-    // The mag bus's high (integer) bits feed i_full below and stay covered through r0_i; the low (fraction) bits
+    wire              rb_valid;
     wire [WEU+FF-1:0] rb_mag;
-    // Lost-sticky reduction path: rb_lost_sticky asserts only when the float->fixed reduction drops nonzero low bits,
-    // which needs a wide exponent (e well below -WMAN).
-    wire             rb_lost_sticky;
-    wire             rb_sign;
-    wire             rb_is_zero;
-    wire             rb_oor;
-    _zkf_to_fixpoint #(
-        .WEXP(WEXP), .WMAN(WMAN),
-        .WI(WEU), .FF(FF), .WSB(1),
-        .STAGE_INPUT(STAGE_INPUT),
-        .LATENCY(STAGE_INPUT + 2),
-        .OOR_EXP_THRESHOLD(OOR_THRESHOLD)
-    ) u_to_fixpoint (
+    wire              rb_lost_sticky;
+    wire              rb_sign;
+    wire              rb_is_zero;
+    wire              rb_oor;
+    _zkf_exp2_reduce #(.WEXP(WEXP), .WMAN(WMAN), .FF(FF), .STAGE_INPUT(STAGE_INPUT)) u_reduce (
         .clk(clk), .rst(rst),
-        .in_valid(in_valid), .a(x), .sb_in(1'b0),
+        .in_valid(in_valid), .x(x),
         .out_valid(rb_valid),
-        .sb_out(),
         .mag(rb_mag),
-        .guard(),
         .lost_sticky(rb_lost_sticky),
         .sign(rb_sign),
-        .is_inf(),
         .is_zero(rb_is_zero),
         .oor(rb_oor)
     );
@@ -291,6 +270,140 @@ module zkf_exp2 #(
         .out_valid(out_valid),
         .y(y)
     );
+endmodule
+
+// The magnitude of x as a fixed-point number with FF fraction bits, two register stages after STAGE_INPUT.
+// The caller forms the signed value from {sign, mag}. lost_sticky is the OR of the bits dropped below mag's LSB, which
+// needs an exponent below -13. oor: |x| >= 2^(WEXP-1), inf included; the result exponent cannot represent it.
+// mag and lost_sticky are don't-care when oor or is_zero.
+module _zkf_exp2_reduce #(
+    parameter WEXP        = 6,
+    parameter WMAN        = 18,
+    parameter FF          = WMAN + 12,
+    parameter STAGE_INPUT = 0
+) (
+    input  wire clk,
+    input  wire rst,
+
+    input  wire                 in_valid,
+    input  wire [WEXP+WMAN-1:0] x,
+
+    output wire                 out_valid,
+    output wire   [WEXP+FF-1:0] mag,
+    output wire                 lost_sticky,
+    output wire                 sign,
+    output wire                 is_zero,
+    output wire                 oor
+);
+    localparam WFRAC   = WMAN - 1;
+    localparam WFULL   = WEXP + WMAN;
+    localparam WMAG    = WEXP + FF;
+    // One padding bit below the significand: _zkf_rshift_sticky's output bit 0 OR's the data bit at position 0
+    // together with the dropped sticky, and those must stay separate.
+    localparam RSH_MAX = WMAN + 1;                      // beyond this everything is sticky
+    localparam WRSH    = $clog2(RSH_MAX + 1);
+    localparam LSH_MAX = WMAG - WMAN;                   // beyond this the magnitude leaves the container
+    localparam WLSH    = $clog2(LSH_MAX + 1);
+
+    // LEFT_SHIFT_BASE is the exponent at which the significand already sits at the binary point, the boundary between
+    // right and left shift; it is negative at small WEXP, where every shift is a left one. Below RIGHT_OVER_BASE the
+    // right shift exceeds RSH_MAX. At OOR_THRESHOLD and above, which covers inf, |x| >= 2^(WEXP-1).
+    localparam integer BIAS            = (1 << (WEXP - 1)) - 1;
+    localparam integer LEFT_SHIFT_BASE = BIAS + WFRAC - FF;
+    localparam integer RIGHT_OVER_BASE = LEFT_SHIFT_BASE - RSH_MAX;
+    localparam integer OOR_THRESHOLD   = BIAS + WEXP - 1;
+    // WD sizes the two shift-amount subtractions.
+    localparam integer MAX_EXP_IN      = (1 << WEXP) - 1;
+    localparam integer ABS_LSB         = (LEFT_SHIFT_BASE >= 0) ? LEFT_SHIFT_BASE : -LEFT_SHIFT_BASE;
+    localparam integer MAX_POS_DELTA   = MAX_EXP_IN - LEFT_SHIFT_BASE;
+    localparam integer WD              = $clog2(((ABS_LSB > MAX_POS_DELTA) ? ABS_LSB : MAX_POS_DELTA) + 1) + 1;
+    localparam signed [WD-1:0] LEFT_SHIFT_BASE_EXT = LEFT_SHIFT_BASE[WD-1:0];
+
+    wire             in_valid_q;
+    wire [WFULL-1:0] x_q;
+    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT)) u_input_pipe (
+        .clk(clk), .rst(rst),
+        .in_valid(in_valid), .in(x),
+        .out_valid(in_valid_q), .out(x_q)
+    );
+
+    // -- Stage 1: the shift amounts and the predicates. The barrel shifters sit in the next stage so that neither
+    // carries both a subtraction and a wide variable shift. The two amounts are separate folded-constant subtractions
+    // rather than one negated, which would put both on the same carry chain; the predicates are unsigned comparisons
+    // against constants for the same reason.
+    wire      [WEXP-1:0] exp_in = x_q[WFULL-2:WFRAC];
+    wire signed [WD-1:0] exp_s  = $signed({{(WD-WEXP){1'b0}}, exp_in});
+    wire signed [WD-1:0] left_shift_full  = exp_s - LEFT_SHIFT_BASE_EXT;
+    wire signed [WD-1:0] right_shift_full = LEFT_SHIFT_BASE_EXT - exp_s;
+    wire                 oor_in = exp_in >= OOR_THRESHOLD[WEXP-1:0];
+    wire is_left_shift;
+    wire right_too_big;
+    generate
+        if (LEFT_SHIFT_BASE <= 0) begin : g_lshift_always
+            assign is_left_shift = 1'b1;
+        end else begin : g_lshift_cmp
+            assign is_left_shift = exp_in >= LEFT_SHIFT_BASE[WEXP-1:0];
+        end
+        if (RIGHT_OVER_BASE <= 0) begin : g_rover_never
+            assign right_too_big = 1'b0;
+        end else begin : g_rover_cmp
+            assign right_too_big = exp_in < RIGHT_OVER_BASE[WEXP-1:0];
+        end
+    endgenerate
+
+    reg             s1_valid;
+    reg             s1_sign;
+    reg             s1_is_zero;
+    reg             s1_is_left_shift;
+    reg             s1_oor;
+    reg  [WMAN-1:0] s1_sig;
+    reg  [WRSH-1:0] s1_rshamt;
+    reg  [WLSH-1:0] s1_lshamt;
+
+    // -- Stage 2: the right shift folds its discarded tail into a sticky bit; the left shift is exact.
+    wire [WMAN:0] rsh;
+    _zkf_rshift_sticky #(.W(WMAN + 1), .WSHIFT(WRSH), .STAGE_SPLIT(0)) u_rshift (
+        .clk(clk), .x({s1_sig, 1'b0}), .shamt(s1_rshamt), .y(rsh)
+    );
+    wire [WMAG-1:0] lsh = {{LSH_MAX{1'b0}}, s1_sig} << s1_lshamt;
+
+    reg            s2_valid;
+    reg            s2_sign;
+    reg            s2_is_zero;
+    reg            s2_oor;
+    reg [WMAG-1:0] s2_mag;
+    reg            s2_lost_sticky;
+
+    always @(posedge clk) begin
+        if (rst) begin
+            s1_valid <= 1'b0;
+            s2_valid <= 1'b0;
+        end else begin
+            s1_valid <= in_valid_q;
+            s2_valid <= s1_valid;
+        end
+        s1_sign          <= x_q[WFULL-1];
+        s1_is_zero       <= ~|exp_in;
+        s1_is_left_shift <= is_left_shift;
+        s1_oor           <= oor_in;
+        s1_sig           <= {1'b1, x_q[WFRAC-1:0]};
+        // An out-of-range magnitude is not shifted, which keeps it inside the container.
+        s1_lshamt        <= (is_left_shift && !oor_in) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
+        s1_rshamt        <= right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
+
+        s2_sign        <= s1_sign;
+        s2_is_zero     <= s1_is_zero;
+        s2_oor         <= s1_oor;
+        s2_mag         <= s1_is_left_shift ? lsh : {{LSH_MAX{1'b0}}, rsh[WMAN:1]};
+        s2_lost_sticky <= ~s1_is_left_shift & rsh[0];
+    end
+
+    assign out_valid   = s2_valid;
+    assign mag         = s2_mag;
+    assign lost_sticky = s2_lost_sticky;
+    assign sign        = s2_sign;
+    assign is_zero     = s2_is_zero;
+    assign oor         = s2_oor;
 endmodule
 
 `default_nettype wire

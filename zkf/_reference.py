@@ -190,7 +190,7 @@ def round_fraction_to_int_ties_even(value: Fraction) -> int:
 
 @enum.unique
 class RoundMode(enum.IntEnum):
-    """Round-to-integer modes; the integer values match zkf/rtl/zkf_round.v and its 2-bit round_mode port."""
+    """Round-to-integer modes; the integer values match zkf/rtl/zkf_rint.v and its 2-bit round_mode port."""
 
     NEAREST_EVEN = 0  # round to nearest integer, ties to even (the IEEE default)
     FLOOR = 1  # round toward -inf
@@ -199,7 +199,7 @@ class RoundMode(enum.IntEnum):
 
 
 def round_signed_fraction_to_int(value: Fraction, mode: int) -> int:
-    """Round an exact signed value to an integer according to the selected zkf_round mode."""
+    """Round an exact signed value to an integer according to the selected zkf_rint mode."""
     if mode == RoundMode.NEAREST_EVEN:
         return round_fraction_to_int_ties_even(value)  # floor-based helper is already symmetric for negatives
     if mode == RoundMode.FLOOR:

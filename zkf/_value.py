@@ -350,23 +350,23 @@ class Zkf:
         return Zkf(fmt_out, round_fraction_to_zkf(fmt_out, self.negative, abs(self.to_fraction())))
 
     def round(self) -> Zkf:
-        """Round to the nearest integral value, ties to even (the zkf_round RNTE mode)."""
+        """Round to the nearest integral value, ties to even (the zkf_rint RNTE mode)."""
         return self._round_to_integral(RoundMode.NEAREST_EVEN)
 
     def floor(self) -> Zkf:
-        """Round toward -inf to an integral value (the zkf_round floor mode)."""
+        """Round toward -inf to an integral value (the zkf_rint floor mode)."""
         return self._round_to_integral(RoundMode.FLOOR)
 
     def ceil(self) -> Zkf:
-        """Round toward +inf to an integral value (the zkf_round ceil mode)."""
+        """Round toward +inf to an integral value (the zkf_rint ceil mode)."""
         return self._round_to_integral(RoundMode.CEIL)
 
     def trunc(self) -> Zkf:
-        """Round toward zero to an integral value (the zkf_round trunc mode)."""
+        """Round toward zero to an integral value (the zkf_rint trunc mode)."""
         return self._round_to_integral(RoundMode.TRUNC)
 
     def _round_to_integral(self, mode: RoundMode) -> Zkf:
-        """Round to an integral value in the same format per mode (the zkf_round operator)."""
+        """Round to an integral value in the same format per mode (zkf_rint's y_float)."""
         fmt = self.fmt
         if self.is_inf:
             return Zkf(fmt, canonical_inf(fmt, self.negative))
