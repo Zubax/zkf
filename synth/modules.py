@@ -44,6 +44,8 @@ class ModuleSpec:
     stage_normalize: int = 0  # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
     stage_normalize_output: int = 0  # zkf_log2: 0/1 _zkf_normshift.STAGE_OUTPUT register.
     stage_pack: int = 0  # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
+    stage_shift: int = 0  # zkf_rint
+    stage_round: int = 0  # zkf_rint
     stage_output: int = 0  # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
     unroll100: int = 100  # zkf_sincos: CORDIC iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
     wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/sincos: _zkf_pmul DSP tile-width hint (0 = symmetric;
@@ -587,6 +589,29 @@ MODULES = [
         stage_pack=1,
         stage_output=1,
     ),
+    # zkf_rint: one stage ahead of the rounding decision closes 100 MHz for both results.
+    ModuleSpec(
+        name="zkf_rint",
+        label="zkf_rint (WEXP=6, WMAN=18, WINT=32, STAGE_SHIFT=1)",
+        top="zkf_rint_synth_top",
+        kind="rint",
+        wexp=6,
+        wman=18,
+        wexp_unbiased=0,
+        wint=32,
+        stage_shift=1,
+    ),
+    ModuleSpec(
+        name="zkf_rint_w8m36_i44",
+        label="zkf_rint (WEXP=8, WMAN=36, WINT=44, STAGE_SHIFT=1)",
+        top="zkf_rint_w8m36_i44_synth_top",
+        kind="rint",
+        wexp=8,
+        wman=36,
+        wexp_unbiased=0,
+        wint=44,
+        stage_shift=1,
+    ),
     # zkf_exp2 / zkf_log2 (table + polynomial). Both close 100 MHz with margin on the LFE5U-12F at the 6/18
     # reference, but along opposite axes, so their headline entries differ (cf. how zkf_fma's plain entry carries
     # the knobs it needs to close while zkf_div's does not):
@@ -891,6 +916,8 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "zkf_pipe.v",
             hdl / "zkf_round.v",
         ]
+    if spec.kind == "rint":
+        return [hdl / "zkf_pipe.v", hdl / "zkf_rint.v"]
     if spec.kind in {"exp2", "log2"}:
         # The generate-if selects the table whose name matches WMAN (the degree is a closed-form localparam inside the
         # table); the other WMAN branches reference undefined modules but are untaken, so synthesis prunes them (like
@@ -951,6 +978,8 @@ def model_for(spec: ModuleSpec) -> OperatorModel:
         "stage_normalize": spec.stage_normalize,
         "stage_normalize_output": spec.stage_normalize_output,
         "stage_pack": spec.stage_pack,
+        "stage_shift": spec.stage_shift,
+        "stage_round": spec.stage_round,
         "stage_output": spec.stage_output,
         "wmultiplier": spec.wmultiplier,
     }

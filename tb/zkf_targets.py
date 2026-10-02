@@ -86,6 +86,7 @@ FILESETS: dict[str, list[str]] = {
     ],
     "rtl_resize": ["zkf/rtl/_zkf_pack.v", "zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_resize.v"],
     "rtl_round": ["zkf/rtl/_zkf_pack.v", "zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_round.v"],
+    "rtl_rint": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_rint.v"],
     "rtl_exp2": [
         "zkf/rtl/_zkf_pack.v",
         "zkf/rtl/zkf_pipe.v",
@@ -159,6 +160,7 @@ TARGETS: dict[str, Target] = {
     "sim_to_int": _t("zkf_to_int", "test_to_int", "rtl_to_int"),
     "sim_resize": _t("zkf_resize", "test_resize", "rtl_resize"),
     "sim_round": _t("zkf_round", "test_round", "rtl_round"),
+    "sim_rint": _t("zkf_rint", "test_rint", "rtl_rint"),
     "sim_exp2": _t("zkf_exp2", "test_exp2", "rtl_exp2"),
     "sim_log2": _t("zkf_log2", "test_log2", "rtl_log2"),
     "sim_sincos": _t("zkf_sincos", "test_sincos", "rtl_sincos"),

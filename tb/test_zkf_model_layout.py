@@ -140,6 +140,9 @@ class ZkfModelLayoutTest(unittest.TestCase):
                 with self.subTest(model=cls.__name__):
                     self.assertEqual(isinstance(cls(fmt).timing, Timing), cls not in moded)
         self.assertEqual(zkf.MulModel(fmt, stage_product=1, stage_output=1).timing, Timing(3, 1))
+        self.assertEqual(zkf.RintModel(fmt, stage_input=2, stage_shift=1, stage_round=2).timing, Timing(5, 1))
+        for knob in ("stage_input", "stage_shift", "stage_round", "stage_output"):
+            self.assert_knob_error(lambda: zkf.RintModel(fmt, **{knob: -1}))
         for config in ({}, {"unroll100": 50, "stage_product": 2, "stage_pack": 1}):
             with self.subTest(config=config):
                 cordic = zkf.CordicModel(fmt, **config)

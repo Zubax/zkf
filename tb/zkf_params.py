@@ -39,6 +39,8 @@ class TestContext:
     stage_normalize: int = 0  # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int
     stage_normalize_output: int = 0  # zkf_log2: register _zkf_normshift outputs before GRS/exponent combine
     stage_pack: int = 0  # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
+    stage_shift: int = 0  # zkf_rint
+    stage_round: int = 0  # zkf_rint
     stage_output: int = 0  # pack-based ops: 0 = combinational (default), 1 = registered (+1 cycle)
     unroll100: int = 100  # zkf_sincos: CORDIC iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
     parallel: int = 0  # zkf_sincos: run the z-path ahead of x/y (mirrors the PARALLEL vlogparam)
@@ -70,6 +72,10 @@ class TestContext:
             knob_suffix += f" SNO={self.stage_normalize_output}"
         if self.stage_pack:
             knob_suffix += f" PA={self.stage_pack}"
+        if self.stage_shift:
+            knob_suffix += f" SSH={self.stage_shift}"
+        if self.stage_round:
+            knob_suffix += f" SRD={self.stage_round}"
         if self.stage_output == 0:
             knob_suffix += " SO=0"
         if self.parallel:
@@ -206,6 +212,20 @@ def _stage_pack() -> int:
     return value
 
 
+def _stage_shift() -> int:
+    value = plusarg_int("ZKF_STAGE_SHIFT", 0)
+    if value < 0:
+        raise ValueError(f"ZKF_STAGE_SHIFT must be non-negative, got {value}")
+    return value
+
+
+def _stage_round() -> int:
+    value = plusarg_int("ZKF_STAGE_ROUND", 0)
+    if value < 0:
+        raise ValueError(f"ZKF_STAGE_ROUND must be non-negative, got {value}")
+    return value
+
+
 def _stage_output() -> int:
     value = plusarg_int("ZKF_STAGE_OUTPUT", 0)
     if value not in (0, 1):
@@ -316,6 +336,8 @@ def cast_context(suite: str) -> TestContext:
         stage_decode=_stage_decode(),
         stage_normalize=_stage_normalize(),
         stage_pack=_stage_pack(),
+        stage_shift=_stage_shift(),
+        stage_round=_stage_round(),
         stage_output=_stage_output(),
     )
 

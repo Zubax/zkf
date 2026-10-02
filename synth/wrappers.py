@@ -1294,6 +1294,77 @@ endmodule
 """)
 
 
+def write_rint_wrapper(spec: ModuleSpec, path: Path) -> None:
+    wfull = spec.wexp + spec.wman
+    params = _verilog_params(spec)
+    path.write_text(f"""`default_nettype none
+
+module {spec.top} (
+    input  wire                        clk,
+    input  wire                        rst,
+    input  wire                        in_valid,
+    input  wire [{wfull - 1}:0]        a,
+    input  wire                  [1:0] round_mode,
+    output wire                        out_valid,
+    output wire [{wfull - 1}:0]        y_float,
+    output wire signed [{spec.wint - 1}:0] y_int
+);
+    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
+    {SYNTH_REG_ATTR}
+    reg                 r_in_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_a;
+    {SYNTH_REG_ATTR}
+    reg           [1:0] r_round_mode;
+
+    wire                        dut_out_valid;
+    wire [{wfull - 1}:0]        dut_y_float;
+    wire signed [{spec.wint - 1}:0] dut_y_int;
+
+    {SYNTH_REG_ATTR}
+    reg                        r_out_valid;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0]        r_y_float;
+    {SYNTH_REG_ATTR}
+    reg signed [{spec.wint - 1}:0] r_y_int;
+
+    assign out_valid = r_out_valid;
+    assign y_float   = r_y_float;
+    assign y_int     = r_y_int;
+
+    zkf_rint #(
+        {params}
+    ) dut (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(r_in_valid),
+        .a(r_a),
+        .round_mode(r_round_mode),
+        .out_valid(dut_out_valid),
+        .y_float(dut_y_float),
+        .y_int(dut_y_int)
+    );
+
+    always @(posedge clk) begin
+        if (rst) begin
+            r_in_valid  <= 1'b0;
+            r_out_valid <= 1'b0;
+        end else begin
+            r_in_valid  <= in_valid;
+            r_out_valid <= dut_out_valid;
+        end
+
+        r_a          <= a;
+        r_round_mode <= round_mode;
+        r_y_float    <= dut_y_float;
+        r_y_int      <= dut_y_int;
+    end
+endmodule
+
+`default_nettype wire
+""")
+
+
 def write_exp2_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     params = _verilog_params(spec)
@@ -1505,6 +1576,8 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_resize_wrapper(spec, path)
     elif spec.kind == "round":
         write_round_wrapper(spec, path)
+    elif spec.kind == "rint":
+        write_rint_wrapper(spec, path)
     elif spec.kind == "exp2":
         write_exp2_wrapper(spec, path)
     elif spec.kind == "log2":

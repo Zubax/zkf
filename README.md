@@ -107,7 +107,8 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_from_int`        | ⇻ | 1       | Cast signed two's-complement integer to float.                 |                             |
 | `zkf_to_int`          | ⇻ | 1       | Cast float to signed two's-complement integer with saturation. | RNTE/floor/ceil/trunc       |
 | `zkf_resize`          |   | 1       | Cast between different float formats.                          |                             |
-| `zkf_round`           |   | 1       | Round to integer in same format: RNTE/floor/ceil/trunc.        | Outputs float; also see `zkf_to_int`|
+| `zkf_round`           |   | 1       | Round to integer in same format: RNTE/floor/ceil/trunc.        | Outputs float; also see `zkf_rint`|
+| `zkf_rint`            |   | 1       | Round to integer, outputs both a float and a saturated integer.| RNTE/floor/ceil/trunc       |
 | `zkf_sqrt`            | ⇻ | 1       | `√x`; `−inf`&`domain_error` iff `x<0`.                         | Correct rounding, 0.5 ULP   |
 | `zkf_exp2`            | ⇻ | 1       | `2^x`                                                          | Faithful rounding, see below|
 | `zkf_log2`            | ⇻ | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|

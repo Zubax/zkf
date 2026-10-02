@@ -176,6 +176,24 @@ def test_ilog2_elaboration(tmp_path, overrides, valid) -> None:
     _elaborate(tmp_path, "zkf_ilog2", overrides, ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_ilog2.v"], valid=valid)
 
 
+_RINT_PIPELINED = {"STAGE_INPUT": 2, "STAGE_SHIFT": 1, "STAGE_ROUND": 1, "STAGE_OUTPUT": 1}
+
+
+@pytest.mark.parametrize(
+    "overrides,valid",
+    [
+        ({}, True),
+        ({"STAGE_SHIFT": 1, "LATENCY": 1}, True),
+        ({"STAGE_SHIFT": 1, "LATENCY": 2}, False),
+        ({**_RINT_PIPELINED, "LATENCY": 5}, True),
+        ({**_RINT_PIPELINED, "LATENCY": 4}, False),
+    ],
+)
+def test_rint_elaboration(tmp_path, overrides, valid) -> None:
+    sources = ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_rint.v"]
+    _elaborate(tmp_path, "zkf_rint", overrides, sources, valid=valid, marker="_zkf_invalid_latency_mismatch")
+
+
 _TRIG_LATENCY_KNOBS = [
     ((6, 18), {}),
     ((5, 16), {"unroll100": 50, "stage_input": 1, "stage_product": 1}),
@@ -326,6 +344,9 @@ def _format_bounds() -> list:
         ("FromIntModel", 8, 16, {"wint": 1}, wexp_or_wman),
         ("RoundModel", 31, 16, {}, None),
         ("RoundModel", 32, 16, {}, "_zkf_invalid_round_wexp_too_wide_unportable"),
+        ("RintModel", 31, 16, {"wint": 2}, None),
+        ("RintModel", 32, 16, {}, "_zkf_invalid_rint_wexp_too_wide_unportable"),
+        ("RintModel", 8, 16, {"wint": 1}, wexp_or_wman),
         ("Ilog2Model", 8, 16, {"wint": 9}, None),
         ("Ilog2Model", 8, 16, {"wint": 8}, "_zkf_invalid_ilog2_wint"),
         ("MulIlog2Model", 8, 16, {"wk": 1}, None),

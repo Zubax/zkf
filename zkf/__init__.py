@@ -20,6 +20,7 @@ from ._operators import (
     NegModel as NegModel,
     PipeModel as PipeModel,
     ResizeModel as ResizeModel,
+    RintModel as RintModel,
     RoundModel as RoundModel,
     SaturateModel as SaturateModel,
     SincosModel as SincosModel,

@@ -424,6 +424,21 @@ def _round(sim, tier, base, w, m, kind, count, *, si=None, sd=None, pa=None, so=
     return _run("round", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
 
 
+def _rint(sim, tier, base, w, m, wint, kind, count, *, si=None, ss=None, sr=None, so=None) -> Run:
+    vlog = [("WEXP", w), ("WMAN", m), ("WINT", wint)]
+    suffix = ""
+    for name, tag, value in (
+        ("STAGE_INPUT", "si", si),
+        ("STAGE_SHIFT", "ss", ss),
+        ("STAGE_ROUND", "sr", sr),
+        ("STAGE_OUTPUT", "so", so),
+    ):
+        if value is not None:
+            vlog.append((name, value))
+            suffix += f"_{tag}{value}"
+    return _run("rint", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
+
+
 def _pipe(sim, tier, config, w, n, count) -> Run:
     return _run(
         "pipe",
@@ -761,6 +776,23 @@ def _per_pr(sim, out: list) -> None:
     out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
     out.append(_round(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, so=1))
     out.append(_round(sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, sd=1, pa=1, so=1))
+    # zkf_rint: every operand across all four rounding modes, both results checked. The exhaustive extras reach what
+    # TO_INT's cannot: w2_m4_int8 a float round-up to inf whose integer is in range, w5_m4_int12 the wide shifts and
+    # the exponent rail, w4_m6_int5 the round-up into the positive rail with WINT < WMAN, w3_m4_int5 the integer
+    # taking the whole significand, w2_m9_int2 a fraction count that outgrows both the exponent and the integer.
+    for cfg, w, m, wint, k, c in TO_INT + [
+        ("w2_m4_int8_exhaustive", 2, 4, 8, "exhaustive", 0),
+        ("w5_m4_int12_exhaustive", 5, 4, 12, "exhaustive", 0),
+        ("w4_m6_int5_exhaustive", 4, 6, 5, "exhaustive", 0),
+        ("w3_m4_int5_exhaustive", 3, 4, 5, "exhaustive", 0),
+        ("w2_m9_int2_exhaustive", 2, 9, 2, "exhaustive", 0),
+        ("w6_m18_int24_random", 6, 18, 24, "random", 768),
+        ("w11_m53_int64_random", 11, 53, 64, "random", 384),
+    ]:
+        out.append(_rint(sim, "pr", cfg, w, m, wint, k, c))
+    every = {"si": 1, "ss": 1, "sr": 1, "so": 1}
+    for knobs in (*({k: 1} for k in every), every, {"si": 2}, {"ss": 2, "sr": 2}):
+        out.append(_rint(sim, "pr", "w3_m4_int8", 3, 4, 8, "exhaustive", 0, **knobs))
     out.append(_binary("add", sim, "pr", "w6_m100_directed", 6, 100, "directed", 0))
     for cfg, w, n, c in PIPE:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
@@ -958,6 +990,15 @@ def _deep_correctness(out: list) -> None:
     out.append(_round(s, "deep", "w8m36", 8, 36, "random", 768))
     out.append(_round(s, "deep", "w8m36_maxpipe", 8, 36, "random", 768, si=1, sd=1, pa=1, so=1))
     out.append(_round(s, "deep", "w8m48", 8, 48, "random", 384))
+    # rint: the full knob cartesian on a small exhaustive format, further exhaustive shapes, and wide formats.
+    for mask in range(16):
+        si, ss, sr, so = ((mask >> bit) & 1 for bit in range(4))
+        out.append(_rint(s, "deep", "w3m6i5_knobs", 3, 6, 5, "exhaustive", 0, si=si, ss=ss, sr=sr, so=so))
+    for w, m, i in [(2, 5, 3), (4, 5, 7), (3, 5, 5), (5, 4, 8)]:
+        out.append(_rint(s, "deep", f"w{w}m{m}i{i}", w, m, i, "exhaustive", 0))
+    for w, m, i, c in [(5, 11, 9, 512), (6, 17, 33, 512), (8, 24, 17, 512), (8, 36, 32, 768), (8, 48, 64, 384)]:
+        out.append(_rint(s, "deep", f"w{w}m{m}i{i}", w, m, i, "random", c))
+    out.append(_rint(s, "deep", "w8m36i44_maxpipe", 8, 36, 44, "random", 768, si=1, ss=1, sr=1, so=1))
 
 
 def _deep_coverage(out: list) -> None:
@@ -1114,6 +1155,10 @@ def _deep_coverage(out: list) -> None:
         out.append(_round(s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
     out.append(_round(s, "deep", "w4m5_maxpipe", 4, 5, "exhaustive", 0, si=1, pa=1, so=1))
     out.append(_round(s, "deep", "w8m36", 8, 36, "random", 1024))
+    for w, m, i in [(2, 4, 2), (4, 5, 7), (3, 6, 4), (4, 6, 5)]:
+        out.append(_rint(s, "deep", f"w{w}m{m}i{i}", w, m, i, "exhaustive", 0))
+    out.append(_rint(s, "deep", "w4m5i7_maxpipe", 4, 5, 7, "exhaustive", 0, si=1, ss=1, sr=1, so=1))
+    out.append(_rint(s, "deep", "w8m36i44", 8, 36, 44, "random", 1024))
     # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches dark under the defaults: _zkf_pack g_out_reg, zkf_pipe
     # g_registered (div, via _zkf_pack_delay), zkf_resize g_owr (widen path), and the standalone packer's
     # registered-output / biased-exponent cones. One config per branch suffices under merged-union.
@@ -1196,6 +1241,8 @@ _FAST = [
     ("from_int_si1", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 1)]),
     ("to_int_si0", "to_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 0)]),
     ("to_int_si1", "to_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 1)]),
+    ("rint", "rint", [("WEXP", 2), ("WMAN", 4), ("WINT", 4)]),
+    ("rint_ss1", "rint", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_SHIFT", 1)]),
     ("resize_si0", "resize", [("WEXP_IN", 3), ("WMAN_IN", 4), ("WEXP_OUT", 3), ("WMAN_OUT", 4), ("STAGE_INPUT", 0)]),
     ("resize_si1", "resize", [("WEXP_IN", 3), ("WMAN_IN", 4), ("WEXP_OUT", 3), ("WMAN_OUT", 4), ("STAGE_INPUT", 1)]),
     ("exp2", "exp2", [("WEXP", 2), ("WMAN", 16), ("STAGE_OUTPUT", 0)]),
