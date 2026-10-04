@@ -469,6 +469,43 @@ class SqrtModel(OperatorModel):
 
 
 @dataclass(frozen=True)
+class DivsqrtModel(OperatorModel):
+    """`mode` is the RTL's MODE."""
+
+    module = "zkf_divsqrt"
+    stage_input: int = 0
+    stage_decode: int = 0
+    stage_pack: int = 0
+    stage_output: int = 0
+    mode: int = 2
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        for value in (self.stage_decode, self.stage_pack, self.stage_output):
+            _check_int_range(value, 0, 1)
+        _check_int_range(self.mode, 0, 2)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_DECODE": self.stage_decode,
+                "STAGE_PACK": self.stage_pack,
+                "STAGE_OUTPUT": self.stage_output,
+                "MODE": self.mode,
+            }
+        )
+
+    @property
+    def timing(self) -> Timing:
+        digits = (self.fmt.wman + 1) // 2 - 1 + (self.stage_decode if self.fmt.wman % 2 == 0 else 0)
+        return Timing(digits + self.stage_input + self.stage_pack + self.stage_output, 1)
+
+
+@dataclass(frozen=True)
 class FromIntModel(OperatorModel):
     module = "zkf_from_int"
     wint: int = 32

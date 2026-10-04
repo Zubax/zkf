@@ -41,6 +41,7 @@ LATENCY_KIND_BY_HARNESS = {
     "zkf_add_eq": "add",
     "zkf_div_eq": "div",
     "zkf_sqrt_eq": "sqrt",
+    "zkf_divsqrt_eq": "divsqrt",
 }
 
 

@@ -47,6 +47,19 @@ BINARY = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 384),
 ]
+# divsqrt at MODE=2: the joint-exhaustive formats (both WMAN parities, the smallest folding no digit stage), then the
+# shipped widths. (config, wexp, wman, kind, count)
+DIVSQRT = [
+    ("w2_m4_exhaustive", 2, 4, "exhaustive", 0),
+    ("w3_m4_exhaustive", 3, 4, "exhaustive", 0),
+    ("w3_m5_exhaustive", 3, 5, "exhaustive", 0),
+    ("w4_m6_random", 4, 6, "random", 1024),
+    ("w5_m11_random", 5, 11, "random", 768),
+    ("w6_m18_random", 6, 18, "random", 768),
+    ("w8_m27_random", 8, 27, "random", 768),
+    ("w8_m36_random", 8, 36, "random", 768),
+    ("w11_m53_random", 11, 53, "random", 384),
+]
 # fma (ternary a*b+c): exhaustive only at the smallest format; wider formats random (ternary-exhaustive explodes).
 # (config, wexp, wman, kind, count)
 FMA = [
@@ -324,6 +337,21 @@ def _binary(
     return _run(module, sim, tier, base + suffix, vlog, kind=kind, count=count, target=target, root_module=root_module)
 
 
+def _divsqrt(sim, tier, base, w, m, kind, count, *, mode, si=None, sd=None, pa=None, so=None) -> Run:
+    vlog = [("WEXP", w), ("WMAN", m), ("MODE", mode)]
+    suffix = f"_mode{mode}"
+    for name, tag, value in (
+        ("STAGE_INPUT", "si", si),
+        ("STAGE_DECODE", "sd", sd),
+        ("STAGE_PACK", "pa", pa),
+        ("STAGE_OUTPUT", "so", so),
+    ):
+        if value is not None:
+            vlog.append((name, value))
+            suffix += f"_{tag}{value}"
+    return _run("divsqrt", sim, tier, f"{base}{suffix}", vlog, kind=kind, count=count)
+
+
 def _ilog2(sim, tier, base, w, m, kind, count, *, wk=None, si=None, sd=None) -> Run:
     # zkf_mul_ilog2: k is a runtime port of width WK (default WEXP+1). WK is always passed so the RTL parameter and
     # the bench (ZKF_WK) agree; the default width already reaches shifts that saturate to inf / flush to zero.
@@ -579,6 +607,21 @@ def _per_pr(sim, out: list) -> None:
     out.append(_binary("sqrt", sim, "pr", "w6_m18", 6, 18, "random", 768))
     out.append(_binary("sqrt", sim, "pr", "w6_m18", 6, 18, "random", 768, si=1))
     out.append(_binary("sqrt", sim, "pr", "w8_m36", 8, 36, "random", 768))
+    # zkf_divsqrt: zkf_div's formats at MODE=0, zkf_sqrt's (root-exhaustive to 4/7) at MODE=1, DIVSQRT at MODE=2;
+    # STAGE_DECODE=1 unfolds the divider's first digit, at even WMAN only.
+    roots = UNARY + [(f"w{w}_m{m}_exhaustive", w, m, "exhaustive", 0) for w, m in ((3, 5), (4, 6), (4, 7))]
+    for mode, formats in ((0, BINARY), (1, roots), (2, DIVSQRT)):
+        for cfg, w, m, k, c in formats:
+            for sd in (0, 1) if m % 2 == 0 else (0,):
+                out.append(_divsqrt(sim, "pr", cfg, w, m, k, c, mode=mode, sd=sd))
+        # Each knob at MODE=2, all of them in every mode, on both parities.
+        each = ({"si": 1}, {"pa": 1}, {"so": 1}) if mode == 2 else ()
+        for cfg, w, m in (("w3_m4", 3, 4), ("w3_m5", 3, 5)):
+            for knobs in (*each, {"si": 2, "sd": 1, "pa": 1, "so": 1}):
+                out.append(_divsqrt(sim, "pr", cfg, w, m, "exhaustive", 0, mode=mode, **knobs))
+    # The synthesized configurations not covered above (kept in sync with synth/modules.py).
+    for mode, w, m, sd in ((1, 6, 18, 0), (0, 8, 36, 1), (1, 8, 36, 0)):
+        out.append(_divsqrt(sim, "pr", f"w{w}_m{m}", w, m, "random", 768, mode=mode, sd=sd))
     for cfg, w, m, k, c in FMA:
         out.append(_fma(sim, "pr", cfg, w, m, k, c))
     # Each pipeline knob once (plus all-on) on a fast format; results are staging-independent, so this checks the
@@ -845,6 +888,21 @@ def _deep_correctness(out: list) -> None:
     # sqrt at wide even/odd WMAN otherwise untested in deep (w8m48 mirrors div's wide row).
     out.append(_binary("sqrt", s, "deep", "w8m48_random", 8, 48, "random", 384, si=0, so=0))
     out.append(_binary("sqrt", s, "deep", "w7m53_random", 7, 53, "random", 384, si=0, so=0))
+    # divsqrt: joint-exhaustive division to 4/7 (sharded, see _shard_long_cases), every significand pair at WMAN
+    # 8-10 (the generic stage three times over), the knob cartesian, and the deep formats of zkf_div and zkf_sqrt.
+    for mode in (0, 1, 2):
+        for w, m in ((4, 6), (4, 7)):
+            out.append(_divsqrt(s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, mode=mode))
+        for m in (8, 9, 10):
+            for sd in (0, 1) if m % 2 == 0 else (0,):
+                out.append(_divsqrt(s, "deep", f"w5m{m}", 5, m, "significands", 0, mode=mode, sd=sd))
+        for mask in range(16):
+            si, sd, pa, so = ((mask >> bit) & 1 for bit in range(4))
+            out.append(_divsqrt(s, "deep", "w3m4_knobs", 3, 4, "exhaustive", 0, mode=mode, si=si, sd=sd, pa=pa, so=so))
+        for w, m, k, c in {0: DIV_EXT, 1: UNARY_EXT, 2: list(dict.fromkeys(DIV_EXT + UNARY_EXT))}[mode]:
+            out.append(_divsqrt(s, "deep", f"w{w}m{m}_{k}", w, m, k, c, mode=mode))
+        out.append(_divsqrt(s, "deep", "w8m48_random", 8, 48, "random", 384, mode=mode))
+        out.append(_divsqrt(s, "deep", "w7m53_random", 7, 53, "random", 384, mode=mode))
     for w, m, k, c in UNARY_EXT:
         base = f"w{w}m{m}_{k}"
         for op in ("abs", "neg", "is_finite", "saturate"):
@@ -984,6 +1042,13 @@ def _deep_coverage(out: list) -> None:
         for si in (0, 1):
             out.append(_binary("div", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))
             out.append(_binary("sqrt", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))
+    # divsqrt: each MODE at both WMAN parities, folded and not, the 2/4 build with no digit stage, and a wide format.
+    for mode in (0, 1, 2):
+        for w, m in ((2, 4), (3, 5), (3, 6), (4, 5)):
+            for sd in (0, 1) if m % 2 == 0 else (0,):
+                out.append(_divsqrt(s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, mode=mode, sd=sd))
+        out.append(_divsqrt(s, "deep", "w3m5_maxpipe", 3, 5, "exhaustive", 0, mode=mode, si=2, pa=1, so=1))
+        out.append(_divsqrt(s, "deep", "w8m36", 8, 36, "random", 1024, mode=mode))
     for w, m in [(4, 5), (3, 6), (2, 6)]:
         base = f"w{w}m{m}"
         for op in ("abs", "neg", "is_finite", "saturate"):
@@ -1185,6 +1250,8 @@ _FAST = [
     ("div_si1", "div", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 1)]),
     ("sqrt_m4_si0", "sqrt", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 0)]),
     ("sqrt_m5_si1", "sqrt", [("WEXP", 2), ("WMAN", 5), ("STAGE_INPUT", 1)]),
+    ("divsqrt_m4", "divsqrt", [("WEXP", 2), ("WMAN", 4), ("MODE", 2)]),
+    ("divsqrt_m5_si1", "divsqrt", [("WEXP", 2), ("WMAN", 5), ("MODE", 2), ("STAGE_INPUT", 1)]),
     ("from_int_si0", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 0)]),
     ("from_int_si1", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 1)]),
     ("rint", "rint", [("WEXP", 2), ("WMAN", 4), ("WINT", 4)]),
@@ -1210,14 +1277,28 @@ def _fast(out: list) -> None:
 ROTATION_SHARDS = 8
 
 
+# zkf_divsqrt's joint-exhaustive division at 4/6 and 4/7 (2^20 and 2^22 pairs) and its significand sweeps, likewise.
+DIVSQRT_SHARDS = 8
+
+
+def _shards(r: Run) -> int:
+    vlog, kind = dict(r.vlog), dict(r.plus).get("ZKF_KIND")
+    if r.module == "cordic" and vlog.get("MODE") == 0 and kind == "exhaustive":
+        return ROTATION_SHARDS
+    if r.module == "divsqrt" and r.tier == "deep" and vlog["MODE"] != 1:
+        if kind == "significands" or (kind == "exhaustive" and vlog["WEXP"] + vlog["WMAN"] >= 10):
+            return DIVSQRT_SHARDS
+    return 1
+
+
 def _shard_long_cases(runs: list) -> list:
     out = []
     for r in runs:
-        rotation = r.module == "cordic" and dict(r.vlog).get("MODE") == 0
-        if rotation and dict(r.plus).get("ZKF_KIND") == "exhaustive" and ROTATION_SHARDS > 1:
-            for k in range(ROTATION_SHARDS):
-                suffix = f"_sh{k}of{ROTATION_SHARDS}"
-                plus = r.plus + [("ZKF_SHARD_INDEX", k), ("ZKF_SHARD_COUNT", ROTATION_SHARDS)]
+        shards = _shards(r)
+        if shards > 1:
+            for k in range(shards):
+                suffix = f"_sh{k}of{shards}"
+                plus = r.plus + [("ZKF_SHARD_INDEX", k), ("ZKF_SHARD_COUNT", shards)]
                 out.append(
                     Run(r.module, r.sim, r.tier, r.config + suffix, r.target, r.root + suffix, r.vlog, plus, r.defines)
                 )

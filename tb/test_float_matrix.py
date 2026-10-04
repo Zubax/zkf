@@ -294,6 +294,69 @@ def test_cordic_nets_driven(tmp_path, mode) -> None:
     assert not undriven, "\n".join(undriven)
 
 
+_DIVSQRT_SOURCES = TARGETS["sim_divsqrt"].sources()
+_DIVSQRT_KNOBS = [
+    ((6, 18), {}),
+    ((6, 18), {"stage_decode": 1}),
+    ((8, 27), {"stage_input": 2, "stage_decode": 1}),
+    ((2, 4), {"stage_pack": 1, "stage_output": 1}),
+]
+
+
+@pytest.mark.parametrize("mode", [0, 1, 2])
+@pytest.mark.parametrize("knobs", range(len(_DIVSQRT_KNOBS)))
+@pytest.mark.parametrize("delta", [0, -1, 1])
+def test_divsqrt_latency_guard(tmp_path, mode, knobs, delta) -> None:
+    import zkf
+
+    fmt, config = _DIVSQRT_KNOBS[knobs]
+    m = zkf.DivsqrtModel(zkf.ZkfFormat(*fmt), **config, mode=mode)
+    params = {**m.params, "LATENCY": m.params["LATENCY"] + delta}
+    _elaborate(tmp_path, m.module, params, _DIVSQRT_SOURCES, valid=delta == 0, marker="_zkf_invalid_latency_mismatch")
+
+
+@pytest.mark.parametrize(
+    "params,marker",
+    [
+        ({"MODE": 3}, "_zkf_invalid_divsqrt_mode"),
+        ({"MODE": -1}, "_zkf_invalid_divsqrt_mode"),
+        ({"STAGE_DECODE": 2}, "_zkf_invalid_stage_decode"),
+        ({"STAGE_OUTPUT": 2}, "_zkf_invalid_stage_output"),
+        ({"MODE": 0, "STAGE_INPUT": 3, "STAGE_DECODE": 1}, None),
+        ({"MODE": 1, "WMAN": 5, "STAGE_DECODE": 1}, None),
+    ],
+)
+def test_divsqrt_parameter_range(tmp_path, params, marker) -> None:
+    _elaborate(tmp_path, "zkf_divsqrt", params, _DIVSQRT_SOURCES, valid=marker is None, marker=marker)
+
+
+@pytest.mark.parametrize("mode", [0, 1, 2])
+@pytest.mark.parametrize("wman,stage_decode", [(4, 0), (4, 1), (5, 0), (18, 0), (18, 1), (27, 0), (53, 0)])
+def test_divsqrt_lints_clean(tmp_path, mode, wman, stage_decode) -> None:
+    """Every elaboration: no undriven net, no out-of-range select (a simulator or synthesis lets either pass)."""
+    result = subprocess.run(
+        [
+            "verilator",
+            "--lint-only",
+            "-Wall",
+            "-Wno-fatal",
+            "-Wno-DECLFILENAME",
+            "--top-module",
+            "zkf_divsqrt",
+            f"-GWMAN={wman}",
+            f"-GMODE={mode}",
+            f"-GSTAGE_DECODE={stage_decode}",
+            *[str(REPO_ROOT / src) for src in _DIVSQRT_SOURCES],
+        ],
+        capture_output=True,
+        text=True,
+        cwd=tmp_path,
+    )
+    assert result.returncode == 0, result.stderr
+    warnings = re.findall(r"^%Warning-(?!UNUSED)\w+: .*zkf_divsqrt\.v:\d+:\d+: .*$", result.stderr, re.MULTILINE)
+    assert not warnings, "\n".join(warnings)
+
+
 def test_cordic_modes_rows_cover_every_sigma_arm() -> None:
     # A dropped row would pass every coverage gate (see _cordic_modes).
     rows = {
@@ -363,6 +426,10 @@ def _format_bounds() -> list:
         ]
     rows += [("CordicModel", w, trig, {"mode": 0}, None if w <= 30 else wexp_or_wman) for w in (2, 4, 30, 31)]
     rows += [("CordicModel", 8, trig_absent, {"mode": mode}, f"_zkf_cordic_m{trig_absent}") for mode in (0, 1, 2)]
+    for mode in (0, 1, 2):  # the smallest format folds into no digit stage at all
+        rows += [
+            ("DivsqrtModel", 2, wman, {"mode": mode, "stage_decode": sd}, None) for wman in (4, 5) for sd in (0, 1)
+        ]
     return rows
 
 

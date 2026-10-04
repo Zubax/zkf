@@ -40,7 +40,7 @@ class ModuleSpec:
     stage_product: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul pipeline depth / split 0..4.
     stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
     stage_align: int = 0  # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
-    stage_decode: int = 0  # zkf_add, zkf_addsub, zkf_mul_ilog2, zkf_fma, zkf_log2: 0 or 1.
+    stage_decode: int = 0  # zkf_add, zkf_addsub, zkf_mul_ilog2, zkf_fma, zkf_log2, zkf_divsqrt: 0 or 1.
     stage_normalize: int = 0  # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
     stage_normalize_output: int = 0  # zkf_log2: 0/1 _zkf_normshift.STAGE_OUTPUT register.
     stage_pack: int = 0  # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
@@ -48,7 +48,7 @@ class ModuleSpec:
     stage_round: int = 0  # zkf_rint
     stage_output: int = 0  # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
     unroll100: int = 100  # zkf_cordic: iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
-    mode: int = 2  # zkf_cordic: 0 = rotation, 1 = vectoring, 2 = per transaction.
+    mode: int = 2  # zkf_cordic: 0 = rotation, 1 = vectoring; zkf_divsqrt: 0 = a/b, 1 = sqrt(a); 2 = per transaction.
     wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul DSP tile-width hint (0 = symmetric;
     #   >=8 -> slice grid).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
@@ -328,6 +328,31 @@ MODULES = [
         wexp_unbiased=0,
         emit_schematic=False,
     ),
+    # zkf_divsqrt: one digit pipeline for a/b and sqrt(a). At WMAN=36 the divider's first digit takes a stage of its
+    # own (STAGE_DECODE=1): folded into stage 0 it misses 100 MHz.
+    *[
+        ModuleSpec(
+            name=name,
+            label=f"zkf_divsqrt (MODE={mode}, WEXP={wexp}, WMAN={wman}" + (", STAGE_DECODE=1)" if sd else ")"),
+            top=f"{name}_synth_top",
+            kind="divsqrt",
+            mode=mode,
+            wexp=wexp,
+            wman=wman,
+            wexp_unbiased=0,
+            stage_decode=sd,
+            emit_schematic=wman < 36,
+        )
+        for name, mode, wexp, wman, sd in (
+            ("zkf_divsqrt", 2, 6, 18, 0),
+            ("zkf_divsqrt_div", 0, 6, 18, 0),
+            ("zkf_divsqrt_sqrt", 1, 6, 18, 0),
+            ("zkf_divsqrt_w8m27", 2, 8, 27, 0),
+            ("zkf_divsqrt_w8m36", 2, 8, 36, 1),
+            ("zkf_divsqrt_div_w8m36", 0, 8, 36, 1),
+            ("zkf_divsqrt_sqrt_w8m36", 1, 8, 36, 0),
+        )
+    ],
     ModuleSpec(
         name="zkf_cmp",
         label="zkf_cmp",
@@ -805,6 +830,8 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_div_core.v",
             hdl / "zkf_div.v",
         ]
+    if spec.kind == "divsqrt":
+        return [hdl / "zkf_pipe.v", hdl / "_zkf_pack.v", hdl / "zkf_divsqrt.v"]
     if spec.kind == "sqrt_core":
         return [hdl / "zkf_sqrt.v"]
     if spec.kind == "sqrt":

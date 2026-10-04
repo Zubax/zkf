@@ -101,16 +101,17 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_addsub`          | ⇻ | 1       | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
 | `zkf_mul`             | ⇻ | 1       | `a⋅b`.                                                         |                             |
 | `zkf_mul_ilog2`       | ⇻ | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                   |                             |
-| `zkf_ilog2`           | ⇻ | 1       | Raw exponent minus bias; sign-invariant signed integer.       | Flags zero, infinity, negative |
+| `zkf_ilog2`           | ⇻ | 1       | Raw exponent minus bias; sign-invariant signed integer.        | Flags zero, infinity, negative |
 | `zkf_div`             | ⇻ | 1       | `a ÷ b`; flags divide-by-zero.                                 |                             |
 | `zkf_fma`             | ⇻ | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
 | `zkf_from_int`        | ⇻ | 1       | Cast signed two's-complement integer to float.                 |                             |
 | `zkf_resize`          |   | 1       | Cast between different float formats.                          |                             |
 | `zkf_rint`            |   | 1       | Round to integer, outputs both a float and a saturated integer.| RNTE/floor/ceil/trunc       |
 | `zkf_sqrt`            | ⇻ | 1       | `√x`; `−inf`&`domain_error` iff `x<0`.                         | Correct rounding, 0.5 ULP   |
+| `zkf_divsqrt`         | ⇻ | 1       | `a ÷ b` or `√a`; `error` iff /0 or domain error.               | Correct rounding, 0.5 ULP   |
 | `zkf_exp2`            | ⇻ | 1       | `2^x`                                                          | Faithful rounding, see below|
 | `zkf_log2`            | ⇻ | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
-| `zkf_cordic`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (−0.5,0.5], `hypot(y,x)`. | Faithful rounding, see below; function per transaction or fixed by `MODE`|
+| `zkf_cordic`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (−0.5,0.5], `hypot(y,x)`.   | Faithful rounding, see below|
 | `zkf_pipe`            |   | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
 
 #### Notably absent functions
@@ -148,6 +149,7 @@ representation.
     pow(a,b)            = exp2(b⋅log2(a))       ; real-valued identity for a>0
     recip(x)            = 1 / x
     rsqrt(x)            = exp2(log2(x)⋅-2^-1)   ; x>0; avoids division
+    rsqrt(x)            = sqrt(1 / x)           ; 1/x normal; two zkf_divsqrt issues; faithful, 0.85 ULP max at WMAN=18
     cbrt(x)             = sign(x)⋅exp2(log2(abs(x)) / 3)
 
     tan(x)              = sin(x) / cos(x)

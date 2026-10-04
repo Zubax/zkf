@@ -8,6 +8,7 @@ from ._operators import (
     AddModel as AddModel,
     AddSubModel as AddSubModel,
     DivModel as DivModel,
+    DivsqrtModel as DivsqrtModel,
     Exp2Model as Exp2Model,
     FmaModel as FmaModel,
     FromIntModel as FromIntModel,

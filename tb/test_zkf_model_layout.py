@@ -164,6 +164,21 @@ class ZkfModelLayoutTest(unittest.TestCase):
                     self.assertEqual((fixed.params["MODE"], fixed.params[name]), (mode, modes[mode].latency))
                     self.assertNotIn(absent, fixed.params)
         self.assertEqual(zkf.CordicModel(ZkfFormat(2, 24), mode=0).timing, Timing(25, 26))
+        for wman, stage_decode, latency in ((24, 0, 11), (24, 1, 12), (27, 0, 13), (27, 1, 13)):
+            for mode in (0, 1, 2):
+                model = zkf.DivsqrtModel(ZkfFormat(8, wman), stage_decode=stage_decode, mode=mode)
+                self.assertEqual(model.timing, Timing(latency, 1))
+                self.assertEqual((model.params["LATENCY"], model.params["MODE"]), (latency, mode))
+        divsqrt = zkf.DivsqrtModel(fmt, stage_input=2, stage_pack=1, stage_output=1)
+        self.assertEqual(divsqrt.timing, Timing(15, 1))
+        for knob, value in (
+            ("stage_input", -1),
+            ("stage_decode", 2),
+            ("stage_pack", 2),
+            ("stage_output", 2),
+            ("mode", 3),
+        ):
+            self.assert_knob_error(lambda: zkf.DivsqrtModel(fmt, **{knob: value}))
         for mode in (-1, 3):
             self.assert_knob_error(lambda: zkf.CordicModel(ZkfFormat(4, 24), mode=mode))
 

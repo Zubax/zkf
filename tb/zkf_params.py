@@ -9,7 +9,7 @@ from typing import Iterable
 
 import cocotb
 
-VALID_KINDS = {"directed", "exhaustive", "random"}
+VALID_KINDS = {"directed", "exhaustive", "random", "significands"}  # significands: zkf_divsqrt
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,7 @@ class TestContext:
     stage_product: int = 0  # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_cordic
     stage_product_final: int = 0  # zkf_log2 final f*C(f) multiply; defaults to stage_product in float_context()
     stage_align: int = 0  # zkf_add / zkf_addsub / zkf_fma
-    stage_decode: int = 0  # zkf_mul_ilog2 / zkf_fma / zkf_log2
+    stage_decode: int = 0  # zkf_mul_ilog2 / zkf_fma / zkf_log2 / zkf_divsqrt
     stage_normalize: int = 0  # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int
     stage_normalize_output: int = 0  # zkf_log2: register _zkf_normshift outputs before GRS/exponent combine
     stage_pack: int = 0  # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
@@ -44,7 +44,7 @@ class TestContext:
     stage_output: int = 0  # pack-based ops: 0 = combinational (default), 1 = registered (+1 cycle)
     unroll100: int = 100  # zkf_cordic: iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
     parallel: int = 0  # zkf_cordic: run rotation's z-path ahead of x/y (mirrors the PARALLEL vlogparam)
-    mode: int = 2  # zkf_cordic: mirrors the MODE vlogparam
+    mode: int = 2  # zkf_cordic / zkf_divsqrt: mirrors the MODE vlogparam
     exp_is_biased: int = 0  # _zkf_pack: 1 = exponent input already biased (packer skips its bias add)
     assume_no_overflow: int = 0  # _zkf_pack: 1 = overflow detector pruned (caller guarantees in-range exponent)
     saturate_round_carry: int = 0  # _zkf_pack: 1 = a round-carry out of range saturates to max-finite, not inf

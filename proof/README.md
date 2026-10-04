@@ -69,6 +69,11 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 | `zkf_sqrt`              | WEXP=4, WMAN=6  | yices     | even WMAN (guard from the recurrence); reference uses radix-2 isqrt + midpoint-square rounding |
 | `zkf_sqrt` (odd)        | WEXP=4, WMAN=7  | yices     | odd WMAN: the strict rem>raw guard path (rem==raw is reachable and must give guard 0) |
 | `_zkf_sqrt_radix4_step` | WQ=1,3,5,17,51  | yices     | one composite harness; greedy digit + rem'<=2Q' + M'=3Q'+1 at the end-to-end proof widths (incl. the WQ=1 decode-stage fold) plus the w6m18 (WQ=17) and WMAN=53-class (WQ=51) late-stage widths |
+| `zkf_divsqrt`           | WEXP=4, WMAN=6,7,10 | yices | free-running stimulus instead of a single pulse: any interleaving of both operations, bubbles, reset at any cycle; MODE=0/1/2, STAGE_DECODE=1 and the other knobs |
+| `_zkf_divsqrt_step`     | WMAN=18,27,36,53 | yices    | every digit stage of every MODE: maximal digit, remainder, D/D3 updates, reachable-state invariant preserved |
+| `_zkf_divsqrt_div0`     | WMAN=18,36,53   | yices     | the divider's stage 0, folded (18, 36) and plain (18, 53) |
+| `_zkf_divsqrt_root0`    | WMAN=4,5,18,27,36,53 | yices | the root's stage 0 from any radicand, establishing the invariant |
+| `_zkf_divsqrt_last`     | WMAN=18,27,36,53 | yices    | the last decision with its rounding select, from the invariant, in every MODE, folded and not |
 
 Combinational/sequential and trivial-wrapper consolidation rule applied:
 
@@ -100,16 +105,26 @@ on failure it embeds links to the SBY counter-example VCDs.
 
 ## Known limitations and design decisions
 
-- Heavy arithmetic (`zkf_mul`, `zkf_add`, `zkf_div`, `zkf_sqrt`) is proved at reduced widths because SBY's QF_BV
-  instance at default `(WEXP=6, WMAN=18)` is currently intractable on yices in any reasonable wall-clock.
+- Heavy arithmetic (`zkf_mul`, `zkf_add`, `zkf_div`, `zkf_sqrt`, `zkf_divsqrt`) is proved at reduced widths because
+  SBY's QF_BV instance at default `(WEXP=6, WMAN=18)` is currently intractable on yices in any reasonable wall-clock.
   The parameter-genericity gap is mitigated by:
   1. The full-width `_zkf_pack` proof (rounding logic shared by every arithmetic module).
   2. The full-width `_zkf_div_radix4_step` and late-stage-width `_zkf_sqrt_radix4_step` proofs (the digit
-     primitives shared by every divider/rooter width).
+     primitives shared by every divider/rooter width), and `zkf_divsqrt`'s production-width proofs of its digit
+     stages, both stages 0 and the last decision.
   3. The simulation matrix in `../tb/`, which spans default widths up to binary64.
   4. The `zkf_mul` proof at near-binary16 widths `(WEXP=5, WMAN=10)`, exercising the full
      hidden-bit-product-high vs. product-low normalisation split that the reduced widths exercise
      only narrowly.
+
+- `zkf_divsqrt`'s production-width proofs are local: each part is proved from the reachable-state invariant it
+  assumes, and only the end-to-end proofs (to WMAN=10) check that the parts compose, along with the wiring between
+  them (the digit prefix, prefix + 1, the registered injection bits, 5 and 7 times the divisor). Its last decision also relies on
+  two facts of arithmetic rather than of the circuit. No quotient or root of WMAN-bit significands lies exactly halfway
+  between two WMAN-bit values: for a/b that would need a * 2^k = b * (an odd number) with more factors of 2 on the
+  left than b has; for sqrt the square of the midpoint has an odd numerator below the radicand's last bit. And the
+  prenormalized quotient (at most 2 - 2^(1-WMAN)) and the root (below 2 - 2^-WMAN) round below 2, so rounding never
+  carries out.
 
 - The combinational references under `refs/` use `always @(*)` blocks with blocking assignments.
   This style is what makes the references easy to audit against the Python golden model.

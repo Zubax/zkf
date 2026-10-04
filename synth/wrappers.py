@@ -1412,6 +1412,42 @@ def write_cordic_wrapper(spec: ModuleSpec, path: Path) -> None:
     path.write_text("\n".join(lines + ["    end", "endmodule", "", "`default_nettype wire", ""]))
 
 
+def write_divsqrt_wrapper(spec: ModuleSpec, path: Path) -> None:
+    # A fixed mode gets only the ports it uses, as an instance in a design would leave the others tied off or open.
+    wfull = spec.wexp + spec.wman
+    inputs = {0: ("a", "b"), 1: ("a",), 2: ("op_sqrt", "a", "b")}[spec.mode]
+    outputs = ("y", "error")
+    width = {name: f"[{wfull - 1}:0] " for name in ("a", "b", "y")}
+    unused = {"op_sqrt": "1'b0", "b": f"{{{wfull}{{1'b0}}}}"}
+    lines = ["`default_nettype none", "", f"module {spec.top} (", "    input  wire clk,", "    input  wire rst,"]
+    lines += ["    input  wire in_valid,"] + [f"    input  wire {width.get(n, '')}{n}," for n in inputs]
+    lines += ["    output wire out_valid,"] + [f"    output wire {width.get(n, '')}{n}," for n in outputs]
+    lines[-1] = lines[-1].rstrip(",")
+    lines += [
+        ");",
+        "    // Measurement harness: register every DUT I/O so the timing report includes register-to-register",
+    ]
+    lines += ["    // paths only."]
+    for name in ("in_valid", *inputs, "out_valid", *outputs):
+        lines += [f"    {SYNTH_REG_ATTR}", f"    reg {width.get(name, '')}r_{name};"]
+    lines += [f"    wire {width.get(name, '')}dut_{name};" for name in ("out_valid", *outputs)]
+    lines += [f"    assign {name} = r_{name};" for name in ("out_valid", *outputs)]
+    lines += ["    zkf_divsqrt #(", f"        {_verilog_params(spec)}", "    ) dut (", "        .clk(clk),"]
+    lines += ["        .rst(rst),", "        .in_valid(r_in_valid),"]
+    for name in ("op_sqrt", "a", "b"):
+        lines.append(f"        .{name}({f'r_{name}' if name in inputs else unused[name]}),")
+    lines.append("        .out_valid(dut_out_valid),")
+    lines += [f"        .{name}(dut_{name})," for name in outputs]
+    lines[-1] = lines[-1].rstrip(",")
+    lines += ["    );", "    always @(posedge clk) begin", "        if (rst) begin"]
+    lines += ["            r_in_valid  <= 1'b0;", "            r_out_valid <= 1'b0;", "        end else begin"]
+    lines += ["            r_in_valid  <= in_valid;", "            r_out_valid <= dut_out_valid;", "        end"]
+    lines += [f"        r_{name} <= {name};" for name in inputs] + [
+        f"        r_{name} <= dut_{name};" for name in outputs
+    ]
+    path.write_text("\n".join(lines + ["    end", "endmodule", "", "`default_nettype wire", ""]))
+
+
 def write_wrapper(spec: ModuleSpec, path: Path) -> None:
     if spec.kind == "pack":
         write_pack_wrapper(spec, path)
@@ -1431,6 +1467,8 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_sqrt_core_wrapper(spec, path)
     elif spec.kind == "sqrt":
         write_sqrt_wrapper(spec, path)
+    elif spec.kind == "divsqrt":
+        write_divsqrt_wrapper(spec, path)
     elif spec.kind == "cmp":
         write_cmp_wrapper(spec, path)
     elif spec.kind == "sort":
