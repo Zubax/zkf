@@ -82,6 +82,8 @@ Compute it like `zkf.MulModel(zkf.ZkfFormat(WEXP, WMAN), stage_product=1).timing
 Generated lookup table ROMs are plain initialized Verilog arrays. If the macro `ZKF_ATTRIBUTE_ROM` is defined, it is
 placed before each ROM declaration to carry tool-specific attributes,
 e.g., `` `define ZKF_ATTRIBUTE_ROM (* rom_style = "block" *) ``.
+Likewise, `ZKF_ATTRIBUTE_KEEP` is placed before nets that synthesis must not restructure;
+Lattice LSE may need `` `define ZKF_ATTRIBUTE_KEEP (* syn_keep = 1 *) `` for best results.
 
 ### Catalogue
 

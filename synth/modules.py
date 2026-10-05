@@ -52,7 +52,6 @@ class ModuleSpec:
     wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul DSP tile-width hint (0 = symmetric;
     #   >=8 -> slice grid).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
-    diamond_device: str = ""  # Diamond part when the default does not fit; empty -> DIAMOND_DEVICE.
 
 
 MODULES = [
@@ -536,10 +535,10 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2_so1",
-        label="zkf_log2 (STAGE_NORMALIZE=2 + STAGE_PRODUCT_FINAL=1 final-multiply operand capture + STAGE_PACK=1 "
-        "rounder-input register + STAGE_OUTPUT=1 registered-output boundary. The registered output adds back-end "
-        "FFs, so this variant keeps STAGE_NORMALIZE=2 -- with STAGE_NORMALIZE=1 the added congestion drops it below "
-        "100 MHz; closes on Yosys ECP5 and Diamond)",
+        label="zkf_log2 (STAGE_NORMALIZE=2 + STAGE_PRODUCT_FINAL=1 final-multiply operand capture + STAGE_OUTPUT=1 "
+        "registered-output boundary. The registered output adds back-end FFs, so this variant keeps "
+        "STAGE_NORMALIZE=2 -- with STAGE_NORMALIZE=1 the added congestion drops it below 100 MHz; closes on "
+        "Yosys ECP5 and Diamond)",
         top="zkf_log2_so1_synth_top",
         kind="log2",
         wexp=6,
@@ -547,7 +546,6 @@ MODULES = [
         wexp_unbiased=0,
         stage_normalize=2,
         stage_product_final=1,
-        stage_pack=1,
         stage_output=1,
     ),
     # WEXP=8, WMAN=36 (degree-3 evaluator: three wide Horner multiplies). The shallow product modes are deep DSP
@@ -566,7 +564,7 @@ MODULES = [
     # same DSP hop (Yosys ~85-126 MHz across seeds); STAGE_OUTPUT=1 is a placement pick, not a split.
     ModuleSpec(
         name="zkf_exp2_w8m36",
-        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_REDUCE=1)",
+        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid)",
         top="zkf_exp2_w8m36_synth_top",
         kind="exp2",
         wexp=8,
@@ -574,14 +572,12 @@ MODULES = [
         wexp_unbiased=0,
         stage_product=3,
         wmultiplier=18,
-        stage_reduce=1,
         emit_schematic=False,
     ),
     ModuleSpec(
         name="zkf_log2_w8m36",
         label="zkf_log2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + STAGE_PRODUCT_FINAL=3 + WMULTIPLIER=18 18-bit DSP-tile "
-        "grid + STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT=1; Diamond: LFE5U-25F, as its LUT-built tables "
-        "overflow the 12F)",
+        "grid + STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT=1)",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
@@ -594,7 +590,6 @@ MODULES = [
         stage_pack=1,
         stage_output=1,
         emit_schematic=False,
-        diamond_device="LFE5U-25F-6BG381C",
     ),
     # zkf_cordic fixed to rotation: a turns-reduction front end, the folded engine, the tiny-input bypass multiply, and
     # one shared _zkf_fixed_to_float back end. The rotation array is pure logic; the only DSPs are the shared 2*pi

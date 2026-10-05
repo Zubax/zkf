@@ -61,15 +61,21 @@ module _zkf_divsqrt_step #(
             assign r3 = t3[WT-1:0];
         end
         if (MODE == 1) begin : g_by_digit
-            // Selected by the digit, which lets Vivado fold the d3 candidates into one adder.
+            // Selected by the digit, which lets Vivado fold the d3 candidates into one adder; LSE's fold puts that
+            // adder behind the select, which ZKF_ATTRIBUTE_KEEP prevents.
             reg [WW-1:0] w_sel;
             reg [WH-1:0] hi_sel;
+`ifdef ZKF_ATTRIBUTE_KEEP
+            `ZKF_ATTRIBUTE_KEEP
+`endif
+            wire [WH-1:0] hi_m3 = hi - {{(WH-2){1'b0}}, 2'd3}, hi_p3 = hi + {{(WH-2){1'b0}}, 2'd3},
+                          hi_p6 = hi + {{(WH-3){1'b0}}, 3'd6};
             always @* begin
                 case (digit)
-                    2'd0:    begin w_sel = m[WW-1:0];  hi_sel = hi - {{(WH-2){1'b0}}, 2'd3}; end
-                    2'd1:    begin w_sel = r1[WW-1:0]; hi_sel = hi;                           end
-                    2'd2:    begin w_sel = r2[WW-1:0]; hi_sel = hi + {{(WH-2){1'b0}}, 2'd3}; end
-                    default: begin w_sel = r3[WW-1:0]; hi_sel = hi + {{(WH-3){1'b0}}, 3'd6}; end
+                    2'd0:    begin w_sel = m[WW-1:0];  hi_sel = hi_m3; end
+                    2'd1:    begin w_sel = r1[WW-1:0]; hi_sel = hi;    end
+                    2'd2:    begin w_sel = r2[WW-1:0]; hi_sel = hi_p3; end
+                    default: begin w_sel = r3[WW-1:0]; hi_sel = hi_p6; end
                 endcase
             end
             assign w_next  = w_sel;

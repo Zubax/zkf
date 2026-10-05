@@ -121,7 +121,7 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_LST_RAMStyle": "Auto",
         "PROP_LST_ROMStyle": "EBR",
         "PROP_LST_RemoveDupRegs": "True",
-        "PROP_LST_ResourceShare": "False",
+        "PROP_LST_ResourceShare": "True",
         "PROP_LST_UseIOReg": "Auto",
         "PROP_LST_UseLPF": "True",
         "PROP_MAPSTA_AnalysisOption": "Standard Setup and Hold Analysis",
@@ -183,20 +183,25 @@ def write_diamond_strategy(path: Path) -> None:
     path.write_text("\n".join(lines) + "\n")
 
 
+def write_diamond_defines(path: Path) -> None:
+    path.write_text("`define ZKF_ATTRIBUTE_KEEP (* syn_keep = 1 *)\n")
+
+
 def write_diamond_ldf(
     spec: ModuleSpec,
+    defines: Path,
     wrapper: Path,
     lpf: Path,
     sty: Path,
     ldf: Path,
 ) -> None:
     project_dir = ldf.parent
-    sources = [wrapper] + rtl_sources(spec)
+    sources = [defines, wrapper] + rtl_sources(spec)
     lines = [
         '<?xml version="1.0" encoding="UTF-8"?>',
         (
             f'<BaliProject version="3.2" title="{xml_attr(project_name(spec))}" '
-            f'device="{xml_attr(spec.diamond_device or DIAMOND_DEVICE)}" default_implementation="impl1">'
+            f'device="{xml_attr(DIAMOND_DEVICE)}" default_implementation="impl1">'
         ),
         "    <Options/>",
         '    <Implementation title="impl1" dir="impl1" description="impl1" synthesis="lse" default_strategy="Strategy1">',
@@ -348,6 +353,7 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
     module_dir = DIAMOND_BUILD / spec.name
     clean_module_dir(module_dir)
 
+    defines = module_dir / "zkf_diamond_defines.v"  # Diamond accepts only .v; LSE keeps defines for the files after it
     wrapper = module_dir / f"{spec.name}_wrapper.v"
     lpf = module_dir / f"{project_name(spec)}.lpf"
     sty = module_dir / f"{project_name(spec)}.sty"
@@ -355,10 +361,11 @@ def synthesize_diamond(spec: ModuleSpec, tools: DiamondTools) -> dict[str, str]:
     tcl = module_dir / "run_diamond.tcl"
     diamond_log = module_dir / "diamond.log"
 
+    write_diamond_defines(defines)
     write_wrapper(spec, wrapper)
     write_diamond_lpf(lpf)
     write_diamond_strategy(sty)
-    write_diamond_ldf(spec, wrapper, lpf, sty, ldf)
+    write_diamond_ldf(spec, defines, wrapper, lpf, sty, ldf)
     write_diamond_tcl(ldf, tcl)
     run_diamond_console(tools, tcl, diamond_log)
 
@@ -491,8 +498,8 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 <h1>Kulibin Float Diamond Synthesis Report</h1>
 """
         + f"<p>Generated: {escape(generated_at)}</p>"
-        + f"<p>Flow: Lattice Diamond LSE ({escape(DIAMOND_DEVICE)} unless a row names another part) at "
-        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. Synthesis optimization goal is Timing without resource sharing, "
+        + f"<p>Flow: Lattice Diamond LSE ({escape(DIAMOND_DEVICE)}) at "
+        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. Synthesis optimization goal is Timing, "
         + f"MAP register retiming is disabled, PAR placement effort is {DIAMOND_PAR_EFFORT} with 5 placement seeds, "
         + f"router is {escape(DIAMOND_ROUTER)}, and routing passes are {DIAMOND_ROUTE_PASSES}.</p>"
         + """

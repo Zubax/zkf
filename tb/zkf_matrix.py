@@ -698,7 +698,7 @@ def _per_pr(sim, out: list) -> None:
     # Shipped small log2 synth preset (6/18: sn=1 + STAGE_PRODUCT_FINAL=1): pins the latency and pole/domain-error
     # sideband alignment under the exact shipped knobs.
     out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=1, spf=1))
-    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, spf=1, pa=1, so=1))
+    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, spf=1, so=1))
     # Vectoring (two inputs): directed pair table + random, then the shared knob sweeps. Each row
     # checks bit-exactness + latency; directed alone hits every special/axis/diagonal/bypass-boundary pair.
     for cfg, w, m, k, c in TRANS_ATAN2:
@@ -905,7 +905,7 @@ def _deep_correctness(out: list) -> None:
     # flow needs). WMULTIPLIER is bit-transparent, but pinning the shipped grid exercises the full datapath at the
     # operating point synthesis actually builds, not just the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
-    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, wm=18, sr=1))
+    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, wm=18))
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, spf=3, wm=18, sn=2, pa=1, so=1))
     # Vectoring deep: baseline per format, UNROLL100 sweep + full staging on 5/16, and the synthesized 6/18 + 8/36
     # operating points. Each asserts latency.
