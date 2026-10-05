@@ -9,15 +9,6 @@
 
 `default_nettype none
 
-`ifndef ZKF_ATTRIBUTE_ROM_PRE
-`define ZKF_ATTRIBUTE_ROM_PRE
-`define ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`endif
-`ifndef ZKF_ATTRIBUTE_ROM_POST
-`define ZKF_ATTRIBUTE_ROM_POST
-`define ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`endif
-
 module _zkf_log2_m48 #(
     parameter D                   = 5,
     parameter WSB                 = 1,
@@ -55,7 +46,10 @@ module _zkf_log2_m48 #(
     wire [K-1:0]    idx_ofs = idx_raw - SEG_BASE[K-1:0];
     wire [WIDX-1:0] idx     = idx_ofs[WIDX-1:0];
     wire [RW-1:0]   w       = v[RW-1:0];
-    `ZKF_ATTRIBUTE_ROM_PRE reg [(D+1)*CW-1:0] rom [0:NSEG-1] `ZKF_ATTRIBUTE_ROM_POST;
+`ifdef ZKF_ATTRIBUTE_ROM
+    `ZKF_ATTRIBUTE_ROM
+`endif
+    reg [(D+1)*CW-1:0] rom [0:NSEG-1];
     initial begin
         rom[  0] = {63'h7fffffffffe98efc, 63'h000000001375cb6a, 63'h7fffffee9bcfa735, 63'h000010acc13f1b4a, 63'h7fedcc11fcbff242, 63'h1b50a94c5c294c2b};
         rom[  1] = {63'h7fffffffffea2e28, 63'h0000000013059875, 63'h7fffffeee8c6c78d, 63'h0000107908906b86, 63'h7feded37a01418e3, 63'h1b3e85f9c9575b50};
@@ -292,15 +286,6 @@ module _zkf_log2_m48 #(
     assign l_mag = umag_p[F2:0];
     assign l_neg = fsb[WSB];
 endmodule
-
-`ifdef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`undef ZKF_ATTRIBUTE_ROM_PRE
-`undef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`endif
-`ifdef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`undef ZKF_ATTRIBUTE_ROM_POST
-`undef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`endif
 
 // verilog_lint: waive-stop line-length
 `default_nettype wire

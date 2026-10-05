@@ -79,9 +79,9 @@ The `LATENCY` value is a sum of some constant baseline number of stages,
 plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).
 Compute it like `zkf.MulModel(zkf.ZkfFormat(WEXP, WMAN), stage_product=1).timing.latency`.
 
-Generated lookup table ROMs are plain initialized Verilog arrays. They expose `ZKF_ATTRIBUTE_ROM_PRE` and
-`ZKF_ATTRIBUTE_ROM_POST` as optional hooks around the ROM declaration for tool-specific attributes.
-They may require overriding to enable correct ROM inference depending on the target chip/flow.
+Generated lookup table ROMs are plain initialized Verilog arrays. If the macro `ZKF_ATTRIBUTE_ROM` is defined, it is
+placed before each ROM declaration to carry tool-specific attributes,
+e.g., `` `define ZKF_ATTRIBUTE_ROM (* rom_style = "block" *) ``.
 
 ### Catalogue
 
@@ -274,10 +274,9 @@ truncating arithmetic; widening it further has no accuracy benefit and just pays
 
 <img src="docs/zkf_transcendental_accuracy.svg">
 
-**ATTENTION:** To achieve good results, it is essential to ensure that the look-up tables used by the
-transcendental/trigonometric operators are correctly mapped to ROM. If you see unreasonable fabric usage and bad
-timings, check your synthesis settings first, and if necessary override `ZKF_ATTRIBUTE_ROM_PRE` and
-`ZKF_ATTRIBUTE_ROM_POST`.
+**ATTENTION:** To achieve good results, it is essential to ensure that the look-up tables used by `zkf_exp2` and
+`zkf_log2` are correctly mapped to ROM. If you see unreasonable fabric usage and bad
+timings, check your synthesis settings first, and if necessary define `ZKF_ATTRIBUTE_ROM`.
 
 ## Sizing the exponent and the significand (WEXP/WMAN)
 

@@ -7,15 +7,6 @@
 
 `default_nettype none
 
-`ifndef ZKF_ATTRIBUTE_ROM_PRE
-`define ZKF_ATTRIBUTE_ROM_PRE
-`define ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`endif
-`ifndef ZKF_ATTRIBUTE_ROM_POST
-`define ZKF_ATTRIBUTE_ROM_POST
-`define ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`endif
-
 module _zkf_exp2_m27 #(
     parameter D             = 3,
     parameter WSB           = 1,
@@ -47,7 +38,10 @@ module _zkf_exp2_m27 #(
 
     wire [WIDX-1:0] idx = f[FF-1 -: WIDX];
     wire [RW-1:0]   w   = f[RW-1:0];
-    `ZKF_ATTRIBUTE_ROM_PRE reg [(D+1)*CW-1:0] rom [0:NSEG-1] `ZKF_ATTRIBUTE_ROM_POST;
+`ifdef ZKF_ATTRIBUTE_ROM
+    `ZKF_ATTRIBUTE_ROM
+`endif
+    reg [(D+1)*CW-1:0] rom [0:NSEG-1];
     initial begin
         rom[ 0] = {42'h0000001c929, 42'h00001ebfa54, 42'h00162e4303f, 42'h07ffffffffe};
         rom[ 1] = {42'h0000001ce23, 42'h00001f155cc, 42'h00166c18101, 42'h08164d1f3ba};
@@ -146,15 +140,6 @@ module _zkf_exp2_m27 #(
     assign sticky      = |acc[CF-WMAN-2:0];
     assign out_valid   = ev;
 endmodule
-
-`ifdef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`undef ZKF_ATTRIBUTE_ROM_PRE
-`undef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`endif
-`ifdef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`undef ZKF_ATTRIBUTE_ROM_POST
-`undef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`endif
 
 // verilog_lint: waive-stop line-length
 `default_nettype wire

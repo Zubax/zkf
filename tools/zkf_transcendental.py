@@ -284,7 +284,10 @@ def generate_all() -> dict[tuple[str, int], Spec]:
 # Verilog emission
 # --------------------------------------------------------------------------------------------------
 class _Writer:
-    """Accumulates 4-space-indented lines; ``w(...)`` accepts single lines or dedented multiline blocks."""
+    """
+    Accumulates 4-space-indented lines, except conditional-compilation directives, which stay at column 0 as in the
+    hand-written RTL; ``w(...)`` accepts single lines or dedented multiline blocks.
+    """
 
     def __init__(self) -> None:
         self._lines: list[str] = []
@@ -300,7 +303,8 @@ class _Writer:
                 self._append(text)
 
     def _append(self, text: str) -> None:
-        self._lines.append(("    " * self._depth + text) if text else "")
+        flush = not text or text.startswith(("`ifdef", "`ifndef", "`else", "`elsif", "`endif"))
+        self._lines.append(text if flush else "    " * self._depth + text)
 
     def push(self) -> None:
         self._depth += 1
@@ -343,7 +347,10 @@ def _rom_read_pipeline(
     # multiply maps to the cheaper fully-unsigned DSP grid; log2 keeps the signed accumulator (sign-alternating coeffs).
     acc_signed = 0 if s.func == "exp2" else 1
 
-    w("`ZKF_ATTRIBUTE_ROM_PRE reg [(D+1)*CW-1:0] rom [0:NSEG-1] `ZKF_ATTRIBUTE_ROM_POST;")
+    w("`ifdef ZKF_ATTRIBUTE_ROM")
+    w("`ZKF_ATTRIBUTE_ROM")
+    w("`endif")
+    w("reg [(D+1)*CW-1:0] rom [0:NSEG-1];")
     w("initial begin")
     w.push()
     for row, coeffs in enumerate(s.coeffs):
@@ -412,15 +419,6 @@ def _emit_table(s: Spec) -> str:
     w("// verilog_lint: waive-start line-length  (the ROM rows are wide one-liners)")
     w("")
     w("`default_nettype none")
-    w("")
-    w("`ifndef ZKF_ATTRIBUTE_ROM_PRE")
-    w("`define ZKF_ATTRIBUTE_ROM_PRE")
-    w("`define ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED")
-    w("`endif")
-    w("`ifndef ZKF_ATTRIBUTE_ROM_POST")
-    w("`define ZKF_ATTRIBUTE_ROM_POST")
-    w("`define ZKF_ATTRIBUTE_ROM_POST_DEFAULTED")
-    w("`endif")
     w("")
     if s.func == "exp2":
         w(f"module {mod} #(")
@@ -566,15 +564,6 @@ def _emit_table(s: Spec) -> str:
         """)
     w.pop()
     w("endmodule")
-    w("")
-    w("`ifdef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED")
-    w("`undef ZKF_ATTRIBUTE_ROM_PRE")
-    w("`undef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED")
-    w("`endif")
-    w("`ifdef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED")
-    w("`undef ZKF_ATTRIBUTE_ROM_POST")
-    w("`undef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED")
-    w("`endif")
     w("")
     w("// verilog_lint: waive-stop line-length")
     w("`default_nettype wire")
