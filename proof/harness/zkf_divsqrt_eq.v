@@ -37,10 +37,26 @@ module zkf_divsqrt_eq #(
     wire [WFULL-1:0] q, root;
     wire             div0, de;
     zkf_div_ref #(.WEXP(WEXP), .WMAN(WMAN)) u_div (.a(a), .b(b), .q(q), .div0(div0));
+    wire [2*WMAN-1:0]      rad;
+    wire [WMAN-1:0]        lo;
+    wire signed [WEXP+1:0] root_exp;
     zkf_sqrt_ref #(.WEXP(WEXP), .WMAN(WMAN)) u_sqrt (
-        .x(a), .y(root), .domain_error(de), .dbg_y(), .dbg_lo(), .dbg_exp()
+        .x(a), .y(root), .domain_error(de), .dbg_y(rad), .dbg_lo(lo), .dbg_exp(root_exp)
     );
     wire [WR-1:0] want = op ? {root, de} : {q, div0};
+
+    // The root reference's own sanity: lo^2 <= radicand < (lo+1)^2, and a normal radicand's root exponent is finite
+    // normal, which makes its WEXP-bit pack (and the DUT's ASSUME_NO_OVERFLOW) safe.
+    wire     [WMAN:0] lo1    = {1'b0, lo} + {{WMAN{1'b0}}, 1'b1};
+    wire [2*WMAN+1:0] rad_x  = {2'b00, rad};
+    wire              normal = (|a[WFULL-2:WMAN-1]) && !(&a[WFULL-2:WMAN-1]);
+    always @(*) begin
+        if (MODE != 0) begin
+            assert({{(WMAN+2){1'b0}}, lo} * {{(WMAN+2){1'b0}}, lo} <= rad_x);
+            assert(rad_x < lo1 * lo1);
+            if (normal) assert((root_exp >= 1) && (root_exp <= $signed({2'b00, {(WEXP-1){1'b1}}, 1'b0})));
+        end
+    end
 
     // The expected stream, delayed like the DUT: validity is cleared by reset at every stage, as in the pipeline.
     reg          v_line [0:LATENCY-1];

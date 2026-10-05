@@ -7,11 +7,11 @@ expect pass
 smtbmc yices
 
 [script]
-read -formal zkf_divsqrt.v
+read -formal _zkf_divsqrt_step.v
 read -formal zkf_divsqrt_step_eq.v
 chparam -set MODE 2 zkf_divsqrt_step_eq
 prep -top zkf_divsqrt_step_eq
 
 [files]
-zkf/rtl/zkf_divsqrt.v
+zkf/rtl/_zkf_divsqrt_step.v
 proof/harness/zkf_divsqrt_step_eq.v

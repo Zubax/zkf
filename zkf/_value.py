@@ -256,7 +256,7 @@ class Zkf:
         return DivResult(Zkf(fmt, round_fraction_to_zkf(fmt, result_sign, value)), div0)
 
     def sqrt(self) -> SqrtResult:
-        """sqrt(self) plus the domain-error (self<0) flag; sqrt(x<0) = -inf (the zkf_sqrt operator)."""
+        """sqrt(self) plus the domain-error (self<0) flag; sqrt(x<0) = -inf (zkf_divsqrt's square root)."""
         fmt = self.fmt
         if self.is_zero:
             return SqrtResult(Zkf(fmt, zero(fmt)), False)  # sign of zero ignored

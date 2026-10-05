@@ -7,7 +7,6 @@ from ._operators import (
     CmpModel as CmpModel,
     AddModel as AddModel,
     AddSubModel as AddSubModel,
-    DivModel as DivModel,
     DivsqrtModel as DivsqrtModel,
     Exp2Model as Exp2Model,
     FmaModel as FmaModel,
@@ -23,7 +22,6 @@ from ._operators import (
     RintModel as RintModel,
     SaturateModel as SaturateModel,
     SortModel as SortModel,
-    SqrtModel as SqrtModel,
 )
 from ._value import (
     Atan2Result as Atan2Result,

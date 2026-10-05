@@ -35,7 +35,7 @@ class ModuleSpec:
     wman_in: int = 0
     wexp_out: int = 0
     wman_out: int = 0
-    stage_input: int = 0  # zkf_div, zkf_from_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
+    stage_input: int = 0  # zkf_from_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
     stage_reduce: int = 0  # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input.
     stage_product: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul pipeline depth / split 0..4.
     stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
@@ -52,6 +52,7 @@ class ModuleSpec:
     wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul DSP tile-width hint (0 = symmetric;
     #   >=8 -> slice grid).
     emit_schematic: bool = True  # wide flattened generic schematics can dominate runtime; timing does not need them.
+    diamond_device: str = ""  # Diamond part when the default does not fit; empty -> DIAMOND_DEVICE.
 
 
 MODULES = [
@@ -248,85 +249,6 @@ MODULES = [
         stage_align=1,
         stage_normalize=2,
         stage_pack=1,
-    ),
-    ModuleSpec(
-        name="_zkf_div_core",
-        label="_zkf_div_core",
-        top="_zkf_div_core_synth_top",
-        kind="div_core",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-    ),
-    ModuleSpec(
-        name="zkf_div",
-        label="zkf_div",
-        top="zkf_div_synth_top",
-        kind="div",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-    ),
-    ModuleSpec(
-        name="zkf_div_si1",
-        label="zkf_div (STAGE_INPUT=1)",
-        top="zkf_div_si1_synth_top",
-        kind="div",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        stage_input=1,
-    ),
-    ModuleSpec(
-        name="zkf_div_w8m36",
-        label="zkf_div (WEXP=8, WMAN=36, FPGA-optimal: quad 18x18; STAGE_INPUT=1 shields the wide input decode cone, "
-        "STAGE_OUTPUT=1 registers the wide quotient round so Diamond closes timing)",
-        top="zkf_div_w8m36_synth_top",
-        kind="div",
-        wexp=8,
-        wman=36,
-        wexp_unbiased=0,
-        stage_input=1,
-        stage_output=1,
-        emit_schematic=False,
-    ),
-    ModuleSpec(
-        name="_zkf_sqrt_core",
-        label="_zkf_sqrt_core",
-        top="_zkf_sqrt_core_synth_top",
-        kind="sqrt_core",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-    ),
-    ModuleSpec(
-        name="zkf_sqrt",
-        label="zkf_sqrt",
-        top="zkf_sqrt_synth_top",
-        kind="sqrt",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-    ),
-    ModuleSpec(
-        name="zkf_sqrt_si1",
-        label="zkf_sqrt (STAGE_INPUT=1)",
-        top="zkf_sqrt_si1_synth_top",
-        kind="sqrt",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-        stage_input=1,
-    ),
-    ModuleSpec(
-        name="zkf_sqrt_w8m36",
-        label="zkf_sqrt (WEXP=8, WMAN=36)",
-        top="zkf_sqrt_w8m36_synth_top",
-        kind="sqrt",
-        wexp=8,
-        wman=36,
-        wexp_unbiased=0,
-        emit_schematic=False,
     ),
     # zkf_divsqrt: one digit pipeline for a/b and sqrt(a). At WMAN=36 the divider's first digit takes a stage of its
     # own (STAGE_DECODE=1): folded into stage 0 it misses 100 MHz.
@@ -571,7 +493,7 @@ MODULES = [
     ),
     # zkf_exp2 / zkf_log2 (table + polynomial). Both close 100 MHz with margin on the LFE5U-12F at the 6/18
     # reference, but along opposite axes, so their headline entries differ (cf. how zkf_fma's plain entry carries
-    # the knobs it needs to close while zkf_div's does not):
+    # the knobs it needs to close while zkf_divsqrt's 6/18 entries do not):
     #   - exp2's Horner argument is the full reduced fraction, so acc*w is a wide x wide product (35x10 at WMAN=18).
     #     The unsplit/native forms (STAGE_PRODUCT 0/1) leave the multi-DSP cascade's output sum unregistered and top
     #     out ~85 MHz on Yosys, so the headline carries STAGE_PRODUCT=2: each Horner multiply maps to a registered
@@ -614,10 +536,10 @@ MODULES = [
     ),
     ModuleSpec(
         name="zkf_log2_so1",
-        label="zkf_log2 (STAGE_NORMALIZE=2 + STAGE_PRODUCT_FINAL=1 final-multiply operand capture + STAGE_OUTPUT=1 "
-        "registered-output boundary. The registered output adds back-end FFs, so this variant keeps "
-        "STAGE_NORMALIZE=2 -- with STAGE_NORMALIZE=1 the added congestion drops it below 100 MHz; closes on "
-        "Yosys ECP5 and Diamond)",
+        label="zkf_log2 (STAGE_NORMALIZE=2 + STAGE_PRODUCT_FINAL=1 final-multiply operand capture + STAGE_PACK=1 "
+        "rounder-input register + STAGE_OUTPUT=1 registered-output boundary. The registered output adds back-end "
+        "FFs, so this variant keeps STAGE_NORMALIZE=2 -- with STAGE_NORMALIZE=1 the added congestion drops it below "
+        "100 MHz; closes on Yosys ECP5 and Diamond)",
         top="zkf_log2_so1_synth_top",
         kind="log2",
         wexp=6,
@@ -625,6 +547,7 @@ MODULES = [
         wexp_unbiased=0,
         stage_normalize=2,
         stage_product_final=1,
+        stage_pack=1,
         stage_output=1,
     ),
     # WEXP=8, WMAN=36 (degree-3 evaluator: three wide Horner multiplies). The shallow product modes are deep DSP
@@ -643,7 +566,7 @@ MODULES = [
     # same DSP hop (Yosys ~85-126 MHz across seeds); STAGE_OUTPUT=1 is a placement pick, not a split.
     ModuleSpec(
         name="zkf_exp2_w8m36",
-        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid)",
+        label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid + STAGE_REDUCE=1)",
         top="zkf_exp2_w8m36_synth_top",
         kind="exp2",
         wexp=8,
@@ -651,12 +574,14 @@ MODULES = [
         wexp_unbiased=0,
         stage_product=3,
         wmultiplier=18,
+        stage_reduce=1,
         emit_schematic=False,
     ),
     ModuleSpec(
         name="zkf_log2_w8m36",
         label="zkf_log2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + STAGE_PRODUCT_FINAL=3 + WMULTIPLIER=18 18-bit DSP-tile "
-        "grid + STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT=1)",
+        "grid + STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT=1; Diamond: LFE5U-25F, as its LUT-built tables "
+        "overflow the 12F)",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
@@ -669,6 +594,7 @@ MODULES = [
         stage_pack=1,
         stage_output=1,
         emit_schematic=False,
+        diamond_device="LFE5U-25F-6BG381C",
     ),
     # zkf_cordic fixed to rotation: a turns-reduction front end, the folded engine, the tiny-input bypass multiply, and
     # one shared _zkf_fixed_to_float back end. The rotation array is pure logic; the only DSPs are the shared 2*pi
@@ -714,7 +640,7 @@ MODULES = [
         stage_pack=1,
         emit_schematic=False,
     ),
-    # zkf_cordic fixed to vectoring: the folded engine + a folded radix-4 divider (the _zkf_div_core primitives) + the
+    # zkf_cordic fixed to vectoring: the folded engine + a folded radix-4 divider (zkf_divsqrt's digit step) + the
     # shared _zkf_pmul + one shared _zkf_fixed_to_float back-end (time-multiplexed over the magnitude then theta).
     ModuleSpec(
         name="zkf_cordic_vec",
@@ -821,25 +747,8 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_fma.v",
         ]
-    if spec.kind == "div_core":
-        return [hdl / "_zkf_div_core.v"]
-    if spec.kind == "div":
-        return [
-            hdl / "_zkf_pack.v",
-            hdl / "zkf_pipe.v",
-            hdl / "_zkf_div_core.v",
-            hdl / "zkf_div.v",
-        ]
     if spec.kind == "divsqrt":
-        return [hdl / "zkf_pipe.v", hdl / "_zkf_pack.v", hdl / "zkf_divsqrt.v"]
-    if spec.kind == "sqrt_core":
-        return [hdl / "zkf_sqrt.v"]
-    if spec.kind == "sqrt":
-        return [
-            hdl / "zkf_pipe.v",
-            hdl / "_zkf_pack.v",
-            hdl / "zkf_sqrt.v",
-        ]
+        return [hdl / "zkf_pipe.v", hdl / "_zkf_pack.v", hdl / "_zkf_divsqrt_step.v", hdl / "zkf_divsqrt.v"]
     if spec.kind == "cmp":
         return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
     if spec.kind == "sort":
@@ -893,7 +802,7 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_fixed_to_float.v",
             hdl / "_zkf_pmul.v",
-            hdl / "_zkf_div_core.v",
+            hdl / "_zkf_divsqrt_step.v",
             hdl / "_zkf_cordic_core.v",
             *tables,
             hdl / "_zkf_txn.v",

@@ -11,13 +11,10 @@ module zkf_divsqrt_step_check #(parameter WMAN = 18, parameter MODE = 2, paramet
     (* anyseq *) wire [63:0] d_in;
     (* anyseq *) wire [63:0] d3_in;
     localparam WFRAC    = WMAN - 1;
-    localparam EVEN     = (WMAN % 2) == 0;
-    localparam HAS_ROOT = MODE != 0;
-    localparam FW       = (HAS_ROOT && EVEN) ? WMAN : WFRAC;
-    localparam WI       = HAS_ROOT ? 2 : 1;
-    localparam WW       = WI + FW;
+    localparam FW       = (WMAN % 2 == 0) ? WMAN : WFRAC;
+    localparam WW       = 2 + FW;
     localparam SH       = FW - WFRAC;
-    localparam IQ       = HAS_ROOT ? (FW - 2 * S - 2) : 0;   // as zkf_divsqrt's stage S
+    localparam IQ       = FW - 2 * S - 2;   // as zkf_divsqrt's stage S
     localparam WX       = WW + 6;   // headroom for 4w and the subtrahends
 
     wire          sqrt = (MODE == 2) ? sqrt_in : (MODE == 1);
@@ -74,7 +71,7 @@ module zkf_divsqrt_step_check #(parameter WMAN = 18, parameter MODE = 2, paramet
     end
 endmodule
 
-// Every digit stage of one WMAN / MODE build.
+// Every digit stage of one WMAN build at MODE=1 or 2.
 module zkf_divsqrt_step_stages #(parameter WMAN = 18, parameter MODE = 2) ();
     genvar s;
     generate
@@ -84,12 +81,47 @@ module zkf_divsqrt_step_stages #(parameter WMAN = 18, parameter MODE = 2) ();
     endgenerate
 endmodule
 
-// The production widths of both WMAN parities, for one MODE.
+// The division step at any divisor, normalized or not, with 0 <= w < d.
+module zkf_divsqrt_step_any_den #(parameter WW = 32) ();
+    (* anyseq *) wire [WW-1:0] w;
+    (* anyseq *) wire [WW-1:0] d;
+    wire    [1:0] digit;
+    wire [WW-1:0] w_next, d_next;
+    wire [WW+1:0] d3 = {2'b00, d} + {1'b0, d, 1'b0};
+    wire [WW+1:0] d3_next;
+    _zkf_divsqrt_step #(.WW(WW), .MODE(0)) u_dut (
+        .sqrt(1'b0), .w(w), .d(d), .d3(d3), .inj(3'b000),
+        .digit(digit), .w_next(w_next), .d_next(d_next), .d3_next(d3_next)
+    );
+    wire [WW+3:0] m    = {2'b00, w, 2'b00};
+    wire [WW+3:0] dx   = {4'b0000, d};
+    wire    [1:0] want = (m >= 3 * dx) ? 2'd3 : (m >= 2 * dx) ? 2'd2 : (m >= dx) ? 2'd1 : 2'd0;
+    always @(*) begin
+        assume(w < d);
+        assert(digit == want);
+        assert({4'b0000, w_next} == m - want * dx);
+        assert(w_next < d);
+        assert((d_next == d) && (d3_next == d3));
+    end
+endmodule
+
+// The production widths of both WMAN parities, for one MODE. At MODE=0 a stage is the same circuit at every position,
+// checked at any divisor at zkf_divsqrt's widths (WW = WMAN) and zkf_cordic's.
 module zkf_divsqrt_step_eq #(parameter MODE = 2) ();
-    zkf_divsqrt_step_stages #(.WMAN(18), .MODE(MODE)) u_m18 ();
-    zkf_divsqrt_step_stages #(.WMAN(27), .MODE(MODE)) u_m27 ();
-    zkf_divsqrt_step_stages #(.WMAN(36), .MODE(MODE)) u_m36 ();
-    zkf_divsqrt_step_stages #(.WMAN(53), .MODE(MODE)) u_m53 ();
+    localparam [95:0] WW_DIV = {8'd88, 8'd80, 8'd62, 8'd56, 8'd49, 8'd44, 8'd35, 8'd32, 8'd53, 8'd36, 8'd27, 8'd18};
+    genvar i;
+    generate
+        if (MODE == 0) begin : g_div
+            for (i = 0; i < 12; i = i + 1) begin : g_w
+                zkf_divsqrt_step_any_den #(.WW(WW_DIV[8*i +: 8])) u_any ();
+            end
+        end else begin : g_root
+            zkf_divsqrt_step_stages #(.WMAN(18), .MODE(MODE)) u_m18 ();
+            zkf_divsqrt_step_stages #(.WMAN(27), .MODE(MODE)) u_m27 ();
+            zkf_divsqrt_step_stages #(.WMAN(36), .MODE(MODE)) u_m36 ();
+            zkf_divsqrt_step_stages #(.WMAN(53), .MODE(MODE)) u_m53 ();
+        end
+    endgenerate
 endmodule
 
 `default_nettype wire

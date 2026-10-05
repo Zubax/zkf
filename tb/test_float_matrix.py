@@ -353,7 +353,7 @@ def test_divsqrt_lints_clean(tmp_path, mode, wman, stage_decode) -> None:
         cwd=tmp_path,
     )
     assert result.returncode == 0, result.stderr
-    warnings = re.findall(r"^%Warning-(?!UNUSED)\w+: .*zkf_divsqrt\.v:\d+:\d+: .*$", result.stderr, re.MULTILINE)
+    warnings = re.findall(r"^%Warning-(?!UNUSED)\w+: .*zkf_divsqrt\w*\.v:\d+:\d+: .*$", result.stderr, re.MULTILINE)
     assert not warnings, "\n".join(warnings)
 
 

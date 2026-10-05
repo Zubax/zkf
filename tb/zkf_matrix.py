@@ -589,25 +589,7 @@ def _per_pr(sim, out: list) -> None:
     # STAGE_PRODUCT 2/3 forward to _zkf_pmul's 2x2 / 3x3 split grids (bit-exact; checks latency bookkeeping).
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sp=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sp=3))
-    for si in (0, 1):
-        for cfg, w, m, k, c in BINARY:
-            out.append(_binary("div", sim, "pr", cfg, w, m, k, c, si=si))
-    out.append(_binary("div", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
-    out.append(_binary("div", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, pa=1, so=1))
-    # zkf_sqrt: UNARY plus a w3_m5 exhaustive row so both WMAN/QFRAC parities (the odd-WMAN rows take the strict
-    # rem>raw guard path) and both exponent parities are swept; knob rows mirror div's, on both parities.
-    for si in (0, 1):
-        for cfg, w, m, k, c in UNARY:
-            out.append(_binary("sqrt", sim, "pr", cfg, w, m, k, c, si=si))
-        out.append(_binary("sqrt", sim, "pr", "w3_m5_exhaustive", 3, 5, "exhaustive", 0, si=si))
-    out.append(_binary("sqrt", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
-    out.append(_binary("sqrt", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, so=1))
-    out.append(_binary("sqrt", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, si=1, pa=1, so=1))
-    # Exact synthesized configurations (kept in sync with synth/modules.py): w6m18 baseline + si1, w8m36.
-    out.append(_binary("sqrt", sim, "pr", "w6_m18", 6, 18, "random", 768))
-    out.append(_binary("sqrt", sim, "pr", "w6_m18", 6, 18, "random", 768, si=1))
-    out.append(_binary("sqrt", sim, "pr", "w8_m36", 8, 36, "random", 768))
-    # zkf_divsqrt: zkf_div's formats at MODE=0, zkf_sqrt's (root-exhaustive to 4/7) at MODE=1, DIVSQRT at MODE=2;
+    # zkf_divsqrt: BINARY at MODE=0, UNARY plus root-exhaustive formats to 4/7 at MODE=1, DIVSQRT at MODE=2;
     # STAGE_DECODE=1 unfolds the divider's first digit, at even WMAN only.
     roots = UNARY + [(f"w{w}_m{m}_exhaustive", w, m, "exhaustive", 0) for w, m in ((3, 5), (4, 6), (4, 7))]
     for mode, formats in ((0, BINARY), (1, roots), (2, DIVSQRT)):
@@ -716,7 +698,7 @@ def _per_pr(sim, out: list) -> None:
     # Shipped small log2 synth preset (6/18: sn=1 + STAGE_PRODUCT_FINAL=1): pins the latency and pole/domain-error
     # sideband alignment under the exact shipped knobs.
     out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=1, spf=1))
-    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, spf=1, so=1))
+    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, spf=1, pa=1, so=1))
     # Vectoring (two inputs): directed pair table + random, then the shared knob sweeps. Each row
     # checks bit-exactness + latency; directed alone hits every special/axis/diagonal/bypass-boundary pair.
     for cfg, w, m, k, c in TRANS_ATAN2:
@@ -808,9 +790,8 @@ def _per_pr(sim, out: list) -> None:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
     # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks widened input
     # pipes in the latency model.
-    for op in ("mul", "div", "sqrt", "cmp", "sort"):
+    for op in ("mul", "cmp", "sort"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
-    out.append(_binary("sqrt", sim, "pr", "w3_m5", 3, 5, "exhaustive", 0, si=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
     out.append(_fma(sim, "pr", "w4_m6", 4, 6, "random", 256, si=2))
     out.append(_cast("from_int", sim, "pr", "w3_m4_int8", 3, 4, 8, "exhaustive", 0, 2))
@@ -824,7 +805,7 @@ def _per_pr(sim, out: list) -> None:
 def _deep_correctness(out: list) -> None:
     # Full Cartesian product of each module's structural knobs across every format in its deep list (correctness;
     # coverage closure lives in _deep_coverage under merged-union). Knob axes: mul = STAGE_INPUT x PRODUCT x OUTPUT;
-    # add/addsub = STAGE_DECODE x ALIGN x OUTPUT; div/from_int/resize = STAGE_INPUT x OUTPUT; pack = STAGE_OUTPUT x
+    # add/addsub = STAGE_DECODE x ALIGN x OUTPUT; from_int/resize = STAGE_INPUT x OUTPUT; pack = STAGE_OUTPUT x
     # EXP_IS_BIASED.
     s = "icarus"
     for w, m, k, c in BIN_EXT:
@@ -875,21 +856,8 @@ def _deep_correctness(out: list) -> None:
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=3, wm=18, sd=1, sa=1, sn=2))
     for si, sp, sd, sa, sn, so in ((0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1)):
         out.append(_fma(s, "deep", "w2m4_exhaustive", 2, 4, "exhaustive", 0, sp=sp, si=si, sd=sd, sa=sa, sn=sn, so=so))
-    for w, m, k, c in DIV_EXT:
-        for si in (0, 1):
-            for so in (0, 1):
-                out.append(_binary("div", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, si=si, so=so))
-    # div at WMAN=48: no transcendental tables, so a wide format is cheap and otherwise untested.
-    out.append(_binary("div", s, "deep", "w8m48_random", 8, 48, "random", 384, si=0, so=0))
-    for w, m, k, c in UNARY_EXT:
-        for si in (0, 1):
-            for so in (0, 1):
-                out.append(_binary("sqrt", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, si=si, so=so))
-    # sqrt at wide even/odd WMAN otherwise untested in deep (w8m48 mirrors div's wide row).
-    out.append(_binary("sqrt", s, "deep", "w8m48_random", 8, 48, "random", 384, si=0, so=0))
-    out.append(_binary("sqrt", s, "deep", "w7m53_random", 7, 53, "random", 384, si=0, so=0))
     # divsqrt: joint-exhaustive division to 4/7 (sharded, see _shard_long_cases), every significand pair at WMAN
-    # 8-10 (the generic stage three times over), the knob cartesian, and the deep formats of zkf_div and zkf_sqrt.
+    # 8-10 (the generic stage three times over), the knob cartesian, DIV_EXT for division and UNARY_EXT for the root.
     for mode in (0, 1, 2):
         for w, m in ((4, 6), (4, 7)):
             out.append(_divsqrt(s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, mode=mode))
@@ -937,7 +905,7 @@ def _deep_correctness(out: list) -> None:
     # flow needs). WMULTIPLIER is bit-transparent, but pinning the shipped grid exercises the full datapath at the
     # operating point synthesis actually builds, not just the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
-    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, wm=18))
+    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, wm=18, sr=1))
     out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, spf=3, wm=18, sn=2, pa=1, so=1))
     # Vectoring deep: baseline per format, UNROLL100 sweep + full staging on 5/16, and the synthesized 6/18 + 8/36
     # operating points. Each asserts latency.
@@ -1038,10 +1006,6 @@ def _deep_coverage(out: list) -> None:
     out.append(_fma(s, "deep", "w6m18", 6, 18, "random", 1024, sp=1, sd=1, sa=1, sn=1, so=0))
     out.append(_fma(s, "deep", "w6m18_sn2", 6, 18, "random", 1024, sp=1, sd=1, sa=1, sn=2, so=0))
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 1024, sp=1, sd=1, sa=1, sn=2, so=0))
-    for w, m in [(4, 5), (3, 6), (3, 5), (2, 6)]:
-        for si in (0, 1):
-            out.append(_binary("div", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))
-            out.append(_binary("sqrt", s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0, si=si))
     # divsqrt: each MODE at both WMAN parities, folded and not, the 2/4 build with no digit stage, and a wide format.
     for mode in (0, 1, 2):
         for w, m in ((2, 4), (3, 5), (3, 6), (4, 5)):
@@ -1172,15 +1136,12 @@ def _deep_coverage(out: list) -> None:
         out.append(_rint(s, "deep", f"w{w}m{m}i{i}", w, m, i, "exhaustive", 0))
     out.append(_rint(s, "deep", "w4m5i7_maxpipe", 4, 5, 7, "exhaustive", 0, si=1, ss=1, sr=1, so=1))
     out.append(_rint(s, "deep", "w8m36i44", 8, 36, 44, "random", 1024))
-    # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches dark under the defaults: _zkf_pack g_out_reg, zkf_pipe
-    # g_registered (div, via _zkf_pack_delay), zkf_resize g_owr (widen path), and the standalone packer's
-    # registered-output / biased-exponent cones. One config per branch suffices under merged-union.
+    # STAGE_OUTPUT=1 / EXP_IS_BIASED=1 elaborate branches dark under the defaults: _zkf_pack g_out_reg, zkf_resize
+    # g_owr (widen path), and the standalone packer's registered-output / biased-exponent cones (zkf_pipe g_registered
+    # via _zkf_pack_delay comes from divsqrt's maxpipe rows above). One config per branch suffices under merged-union.
     out.append(_binary("mul", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sp=0, so=1))
     out.append(_binary("add", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=0, sa=0, so=1))
     out.append(_binary("addsub", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=1, sa=1, so=1))
-    out.append(_binary("div", s, "deep", "w3m5", 3, 5, "exhaustive", 0, si=0, so=1))
-    out.append(_binary("sqrt", s, "deep", "w3m5", 3, 5, "exhaustive", 0, si=0, so=1))
-    out.append(_binary("sqrt", s, "deep", "w3m4", 3, 4, "exhaustive", 0, si=0, pa=1))
     out.append(_cast("from_int", s, "deep", "w4m5i7", 4, 5, 7, "exhaustive", 0, 0, so=1))
     # Identity widen (FRAC_PAD=0, BIAS_OFFSET=0): registered s_y has no structurally-zero padding, so every bit
     # toggles; a padding-bearing widen would leave low s_y bits permanently 0.
@@ -1246,10 +1207,6 @@ _FAST = [
     ("mul_sp1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_PRODUCT", 1)]),
     ("mul_so1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_OUTPUT", 1)]),
     ("mul_si1", "mul", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 1)]),
-    ("div_si0", "div", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 0)]),
-    ("div_si1", "div", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 1)]),
-    ("sqrt_m4_si0", "sqrt", [("WEXP", 2), ("WMAN", 4), ("STAGE_INPUT", 0)]),
-    ("sqrt_m5_si1", "sqrt", [("WEXP", 2), ("WMAN", 5), ("STAGE_INPUT", 1)]),
     ("divsqrt_m4", "divsqrt", [("WEXP", 2), ("WMAN", 4), ("MODE", 2)]),
     ("divsqrt_m5_si1", "divsqrt", [("WEXP", 2), ("WMAN", 5), ("MODE", 2), ("STAGE_INPUT", 1)]),
     ("from_int_si0", "from_int", [("WEXP", 2), ("WMAN", 4), ("WINT", 4), ("STAGE_INPUT", 0)]),

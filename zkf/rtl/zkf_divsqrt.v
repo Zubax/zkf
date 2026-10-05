@@ -1,13 +1,12 @@
 // Streamed division and square root on one radix-4 digit pipeline, throughput 1:
 //
 //   op_sqrt = 0:  y = a / b
-//   op_sqrt = 1:  y = sqrt(a)    b is ignored
+//   op_sqrt = 1:  y = sqrt(a)
 //
-// Results are bit-identical to zkf_div's and zkf_sqrt's (RNTE). Both take the same latency, ceil(WMAN/2) - 1 cycles
-// plus the knobs below, so one result port serves them.
+// Both are correctly rounded (RNTE) and take the same latency, ceil(WMAN/2) - 1 cycles plus the knobs below, so one
+// result port serves them.
 //
-// MODE=2: the operation is chosen per transaction by op_sqrt. MODE=0 (division) and MODE=1 (square root) fix it,
-// which drops the other operation's logic; op_sqrt is then ignored.
+// A fixed MODE drops the other operation's logic and ignores op_sqrt.
 //
 // Both recurrences run as w' = 4w - F_d in one fixed-point frame, one digit per register stage. Division: the
 // quotient is prenormalized into [1, 2) (the dividend doubled if it is below the divisor), D = den and D3 = 3*den are
@@ -24,7 +23,7 @@
 //     it in stage 0, in every MODE (the root then decides its last digit in the added stage); no effect at odd WMAN.
 // STAGE_PACK={0,1}: register the last digit decision ahead of the packer.
 // STAGE_OUTPUT={0,1}: register the results.
-// Each knob costs as many cycles as its value (STAGE_DECODE at even WMAN only).
+// Each knob that takes effect costs as many cycles as its value.
 
 `default_nettype none
 
@@ -42,7 +41,7 @@ module zkf_divsqrt #(
     input wire rst,
 
     input wire                 in_valid,
-    input wire                 op_sqrt,     // ignored unless MODE=2
+    input wire                 op_sqrt,
     input wire [WEXP+WMAN-1:0] a,
     input wire [WEXP+WMAN-1:0] b,           // ignored during sqrt operation.
 
@@ -107,7 +106,7 @@ module zkf_divsqrt #(
     wire             b_inf  = b_exp == EXP_INF;
     wire             neg    = a_sign && !a_zero && op;
 
-    // Classification. Division as zkf_div; the root as zkf_sqrt (zero beats sign, negative beats infinity).
+    // Special operands, per the README's semantics.
     wire s0_force_zero = op ? a_zero : (a_zero || b_inf);
     wire s0_force_inf  = op ? (a_inf || neg) : (!a_zero && !b_inf && (b_zero || a_inf));
     wire s0_sign       = op ? neg : (a_sign ^ (b_sign && !b_zero));
@@ -167,8 +166,8 @@ module zkf_divsqrt #(
     reg                   r_err   [0:G];
     reg          [WP-1:0] r_pp1;          // prefix + 1, formed beside the last digit so that rounding only selects
     wire [NREG*(NREG+2)-1:0] prefix_tri;   // the digit prefix of stage s (3 + 2s bits) at offset s(s+2)
-    // The subtrahend bits the root injects into the consumer of stage s (the next stage, or the folded last decision),
-    // at 3s. At MODE=2 they are registered, off the compares' paths; elsewhere they are constants or D's own bits.
+    // At MODE=2, the subtrahend bits the root injects into the consumer of stage s (the next stage, or the folded last
+    // decision), at 3s: registered, off the compares' paths. The other builds derive them.
     wire [3*NREG-1:0] inj_pipe;
 
     // The integer bit and digit 1 (when unfolded, the divider has no digit yet: two leading zeros keep it aligned).
@@ -204,7 +203,7 @@ module zkf_divsqrt #(
         if (G == 0) begin : g_pp1_0
             always @(posedge clk) r_pp1 <= prefix0 + 3'd1;
         end
-        if ((MODE == 2) && (WFRAME >= 4)) begin : g_inj0
+        if (MODE == 2) begin : g_inj0
             reg [2:0] r_inj;
             always @(posedge clk) r_inj <= {3{op}} | {dv_d3[WFRAME-4], dv_d[WFRAME-3], dv_d[WFRAME-4]};
             assign inj_pipe[2:0] = r_inj;
@@ -215,16 +214,13 @@ module zkf_divsqrt #(
         for (i_stage = 1; i_stage <= G; i_stage = i_stage + 1) begin : g_stage
             localparam S  = i_stage;
             localparam IQ = HAS_ROOT ? (WFRAME - 2 * S - 2) : 0;   // the root's u/4 after S digits
-            wire           sq  = (MODE == 2) ? r_op[S-1] : (MODE == 1);
-            wire     [2:0] inj = (MODE == 2) ? inj_pipe[3*(S-1) +: 3] :
-                                 ({3{sq}} | {r_d3[S-1][IQ], r_d[S-1][IQ+1], r_d[S-1][IQ]});
             wire     [1:0] digit;
             wire  [WW-1:0] w_next;
             wire  [WW-1:0] d_next;
             wire [WD3-1:0] d3_next;
             _zkf_divsqrt_step #(.WW(WW), .IQ(IQ), .MODE(MODE)) u_step (
-                .sqrt(sq),
-                .w(r_w[S-1]), .d(r_d[S-1]), .d3(r_d3[S-1]), .inj(inj),
+                .sqrt(r_op[S-1]),
+                .w(r_w[S-1]), .d(r_d[S-1]), .d3(r_d3[S-1]), .inj(inj_pipe[3*(S-1) +: 3]),
                 .digit(digit), .w_next(w_next), .d_next(d_next), .d3_next(d3_next)
             );
             always @(posedge clk) begin
@@ -256,7 +252,7 @@ module zkf_divsqrt #(
             // D and D3 hold where the next consumer injects; the root's injections make the stage's own state moot.
             if ((MODE == 2) && (IQ >= 2)) begin : g_inj
                 reg [2:0] r_inj;
-                always @(posedge clk) r_inj <= {3{sq}} | {r_d3[S-1][IQ-2], r_d[S-1][IQ-1], r_d[S-1][IQ-2]};
+                always @(posedge clk) r_inj <= {3{r_op[S-1]}} | {r_d3[S-1][IQ-2], r_d[S-1][IQ-1], r_d[S-1][IQ-2]};
                 assign inj_pipe[3*S +: 3] = r_inj;
             end else begin : g_no_inj
                 assign inj_pipe[3*S +: 3] = 3'b000;
@@ -288,7 +284,7 @@ module zkf_divsqrt #(
     wire [WMAN-1:0] significand;
     _zkf_divsqrt_last #(.WMAN(WMAN), .MODE(MODE), .FOLD(FOLD), .WW(WW), .WP(WP)) u_last (
         .sqrt(r_op[G]), .w(r_w[G]), .d(r_d[G]), .d3(r_d3[G]), .d5(f_d5), .d7(f_d7),
-        .inj((MODE == 2) ? {inj_pipe[3*G+2], inj_pipe[3*G]} : ({2{MODE == 1}} | {r_d3[G][0], r_d[G][0]})),
+        .inj({inj_pipe[3*G+2], inj_pipe[3*G]}),
         .prefix(prefix_tri[G*(G+2) +: WP]), .prefix1(r_pp1), .significand(significand)
     );
     wire signed [WEU-1:0] f_exp = (G == 0) ? (r_exp[0] - $signed({{(WEU-1){1'b0}}, r_h})) : r_exp[G];
@@ -347,7 +343,7 @@ module _zkf_divsqrt_div0 #(parameter WMAN = 18, parameter FOLD = 1) (
                 wire [WMAN-1:0] lo = ge1 ? ~n1[WMAN-1:0] : {r[WMAN-3:0], 2'b00};
                 wire [WMAN-1:0] hi = ge3 ? c3[WMAN-1:0] : ~n2[WMAN-1:0];
                 assign rems[i_h*WMAN +: WMAN] = ge2 ? hi : lo;
-                assign digits[2*i_h +: 2]     = {ge2, ge2 ? ge3 : ge1};
+                assign digits[2*i_h +: 2]     = {ge2, ge3 || (ge1 && !ge2)};
             end
             assign digit = h ? digits[3:2] : digits[1:0];
             assign rem   = h ? rems[2*WMAN-1:WMAN] : rems[WMAN-1:0];
@@ -377,7 +373,7 @@ module _zkf_divsqrt_root0 #(parameter WMAN = 18, parameter WFRAME = 18) (
     wire             ge1    = r || (t[4] && (t[3:1] != 3'd0));
     wire             ge2    = r && (t[4:2] != 3'd0);
     wire             ge3    = r && t[4] && (t[3:0] != 4'd0);
-    assign digit = {ge2, ge2 ? ge3 : ge1};
+    assign digit = {ge2, ge3 || (ge1 && !ge2)};
 
     wire     [WMAN:0] mprime = {2'b01, frac} << r;
     wire     [WMAN:0] m1     = mprime - {2'b01, {WFRAC{1'b0}}};
@@ -410,94 +406,6 @@ module _zkf_divsqrt_root0 #(parameter WMAN = 18, parameter WFRAME = 18) (
 endmodule
 
 
-// One radix-4 digit of zkf_divsqrt's recurrence w' = 4w - F_d. Division: d = den and d3 = 3*den, held. Root (sqrt):
-// d = 2Q and d3 = 2(3Q + u); the subtrahends get bit IQ (u/4) or IQ+2 (u) set, which is zero there; d takes the digit
-// at IQ+1 and d3 adds (3*digit - 3) << (IQ+1). inj gives those three subtrahend bits (F3 at IQ, F2 at IQ+2, F1 at IQ),
-// so that a caller can register them. MODE as zkf_divsqrt's; at 2 the operation is chosen by sqrt.
-module _zkf_divsqrt_step #(
-    parameter WW   = 20,   // width of w and d; d3 is two bits wider
-    parameter IQ   = 0,
-    parameter MODE = 2
-) (
-    input  wire          sqrt,
-    input  wire [WW-1:0] w,
-    input  wire [WW-1:0] d,
-    input  wire [WW+1:0] d3,
-    input  wire    [2:0] inj,
-    output wire    [1:0] digit,
-    output wire [WW-1:0] w_next,
-    output wire [WW-1:0] d_next,
-    output wire [WW+1:0] d3_next
-);
-    localparam WT = WW + 2;
-    localparam LO = (MODE == 1) ? IQ : 0;   // a root-only build's subtrahends are zero below IQ
-    localparam WH = WT - IQ - 1;            // the bits of d3 from u/2 up, the only ones the root changes
-    wire          root = (MODE == 1) || ((MODE == 2) && sqrt);
-    wire [WT-1:0] at   = {{(WT-1){1'b0}}, 1'b1} << IQ;
-    wire [WT-1:0] m    = {w, 2'b00};
-    wire [WT-1:0] f1   = ({2'b00, d} & ~at) | (inj[0] ? at : {WT{1'b0}});
-    wire [WT-1:0] f2   = ({1'b0, d, 1'b0} & ~(at << 2)) | (inj[1] ? (at << 2) : {WT{1'b0}});
-    wire [WT-1:0] f3   = (d3 & ~at) | (inj[2] ? at : {WT{1'b0}});
-
-    wire [WT-LO:0] t1 = {1'b0, m[WT-1:LO]} - {1'b0, f1[WT-1:LO]};
-    wire [WT-LO:0] t2 = {1'b0, m[WT-1:LO]} - {1'b0, f2[WT-1:LO]};
-    wire [WT-LO:0] t3 = {1'b0, m[WT-1:LO]} - {1'b0, f3[WT-1:LO]};
-    wire ge1 = !t1[WT-LO];
-    wire ge2 = !t2[WT-LO];
-    wire ge3 = !t3[WT-LO];
-    assign digit = {ge2, ge2 ? ge3 : ge1};
-
-    wire [WT-1:0] r1, r2, r3;
-    wire [WH-1:0] hi = d3[WT-1:IQ+1];
-    generate
-        if (LO > 0) begin : g_tail
-            assign r1 = {t1[WT-LO-1:0], m[LO-1:0]};
-            assign r2 = {t2[WT-LO-1:0], m[LO-1:0]};
-            assign r3 = {t3[WT-LO-1:0], m[LO-1:0]};
-        end else begin : g_full
-            assign r1 = t1[WT-1:0];
-            assign r2 = t2[WT-1:0];
-            assign r3 = t3[WT-1:0];
-        end
-        if (MODE == 1) begin : g_by_digit
-            // Selected by the digit, as in zkf_sqrt, which lets Vivado fold the d3 candidates into one adder.
-            reg [WW-1:0] w_sel;
-            reg [WH-1:0] hi_sel;
-            always @* begin
-                case (digit)
-                    2'd0:    begin w_sel = m[WW-1:0];  hi_sel = hi - {{(WH-2){1'b0}}, 2'd3}; end
-                    2'd1:    begin w_sel = r1[WW-1:0]; hi_sel = hi;                           end
-                    2'd2:    begin w_sel = r2[WW-1:0]; hi_sel = hi + {{(WH-2){1'b0}}, 2'd3}; end
-                    default: begin w_sel = r3[WW-1:0]; hi_sel = hi + {{(WH-3){1'b0}}, 3'd6}; end
-                endcase
-            end
-            assign w_next  = w_sel;
-            assign d3_next = {hi_sel, d3[IQ:0]};
-            assign d_next  = d | ({{(WW-2){1'b0}}, digit} << (IQ + 1));
-        end else begin : g_by_compares
-            // Selected by the compares, which are monotonic (ge3 implies ge2 implies ge1): a level shallower than by
-            // the digit where the divider shares the path.
-            wire [WW-1:0] w_lo = ge1 ? r1[WW-1:0] : m[WW-1:0];
-            wire [WW-1:0] w_hi = ge3 ? r3[WW-1:0] : r2[WW-1:0];
-            assign w_next = ge2 ? w_hi : w_lo;
-            if (MODE == 2) begin : g_root
-                // The candidates fall back to hi for the divider, so the select stays 4:1.
-                wire [WH-1:0] hi_m3 = root ? hi - {{(WH-2){1'b0}}, 2'd3} : hi;
-                wire [WH-1:0] hi_p3 = root ? hi + {{(WH-2){1'b0}}, 2'd3} : hi;
-                wire [WH-1:0] hi_p6 = root ? hi + {{(WH-3){1'b0}}, 3'd6} : hi;
-                wire [WH-1:0] hi_lo = ge1 ? hi : hi_m3;
-                wire [WH-1:0] hi_hi = ge3 ? hi_p6 : hi_p3;
-                assign d3_next = {ge2 ? hi_hi : hi_lo, d3[IQ:0]};
-                assign d_next  = d | ({{(WW-2){1'b0}}, digit & {2{root}}} << (IQ + 1));
-            end else begin : g_hold
-                assign d3_next = d3;
-                assign d_next  = d;
-            end
-        end
-    endgenerate
-endmodule
-
-
 // The last digit decision of zkf_divsqrt, by compares alone, and the rounding it implies as a select between the
 // prefix and prefix + 1 (prefix1). A root-only build takes the prefix from d = 2Q.
 //   Even WMAN, folded: digit K of either operation, from 4w >= F1 and 4w >= F3 (the root's u/4 at frame bit 0).
@@ -517,7 +425,7 @@ module _zkf_divsqrt_last #(
     input  wire   [WW+1:0] d3,
     input  wire   [WW+2:0] d5,
     input  wire   [WW+2:0] d7,
-    input  wire      [1:0] inj,   // bit 0 of the folded root's F3 and F1
+    input  wire      [1:0] inj,   // at MODE=2, bit 0 of the folded root's F3 and F1
     input  wire   [WP-1:0] prefix,
     input  wire   [WP-1:0] prefix1,
     output wire [WMAN-1:0] significand
@@ -547,7 +455,8 @@ module _zkf_divsqrt_last #(
             assign p = d[WFRAME+1 -: WP];   // D = 2Q
         end
         if (EVEN) begin : g_even
-            wire  [1:0] b0  = FOLD ? inj : {d3[0], d[0]};
+            wire  [1:0] rb  = (MODE == 1) ? 2'b11 : inj;
+            wire  [1:0] b0  = (FOLD && HAS_ROOT) ? rb : {d3[0], d[0]};
             wire        ge1 = ge(m4, {3'b000, d[WW-1:1], b0[0]});
             wire        ge3 = ge(m4, {1'b0, d3[WW+1:1], b0[1]});
             wire [WMAN-1:0] sig_step = ge3 ? {prefix1[WMAN-2:0], 1'b0} : {p[WMAN-2:0], ge1};

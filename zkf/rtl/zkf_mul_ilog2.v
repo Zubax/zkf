@@ -1,5 +1,5 @@
 // Power-of-two multiplier: y = a * 2^k, where k is a signed integer (ldexp/scalbn).
-// This is far cheaper than full multiplication (zkf_mul) or division (zkf_div) because the significand is preserved
+// This is far cheaper than full multiplication (zkf_mul) or division (zkf_divsqrt) because the significand is preserved
 // bit-for-bit and only the biased exponent is shifted by k, and no rounding is required -- the operation is exact
 // in the format's normal range.
 //

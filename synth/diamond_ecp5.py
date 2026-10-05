@@ -121,7 +121,7 @@ def write_diamond_strategy(path: Path) -> None:
         "PROP_LST_RAMStyle": "Auto",
         "PROP_LST_ROMStyle": "EBR",
         "PROP_LST_RemoveDupRegs": "True",
-        "PROP_LST_ResourceShare": "True",
+        "PROP_LST_ResourceShare": "False",
         "PROP_LST_UseIOReg": "Auto",
         "PROP_LST_UseLPF": "True",
         "PROP_MAPSTA_AnalysisOption": "Standard Setup and Hold Analysis",
@@ -196,7 +196,7 @@ def write_diamond_ldf(
         '<?xml version="1.0" encoding="UTF-8"?>',
         (
             f'<BaliProject version="3.2" title="{xml_attr(project_name(spec))}" '
-            f'device="{xml_attr(DIAMOND_DEVICE)}" default_implementation="impl1">'
+            f'device="{xml_attr(spec.diamond_device or DIAMOND_DEVICE)}" default_implementation="impl1">'
         ),
         "    <Options/>",
         '    <Implementation title="impl1" dir="impl1" description="impl1" synthesis="lse" default_strategy="Strategy1">',
@@ -491,8 +491,8 @@ pre { background: #f6f6f6; border: 1px solid #ddd; padding: 0.8rem; overflow-x: 
 <h1>Kulibin Float Diamond Synthesis Report</h1>
 """
         + f"<p>Generated: {escape(generated_at)}</p>"
-        + f"<p>Flow: Lattice Diamond LSE ({escape(DIAMOND_DEVICE)}) at "
-        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. Synthesis optimization goal is Timing, "
+        + f"<p>Flow: Lattice Diamond LSE ({escape(DIAMOND_DEVICE)} unless a row names another part) at "
+        + f"{format_mhz(DIAMOND_TARGET_FREQ_MHZ)}. Synthesis optimization goal is Timing without resource sharing, "
         + f"MAP register retiming is disabled, PAR placement effort is {DIAMOND_PAR_EFFORT} with 5 placement seeds, "
         + f"router is {escape(DIAMOND_ROUTER)}, and routing passes are {DIAMOND_ROUTE_PASSES}.</p>"
         + """

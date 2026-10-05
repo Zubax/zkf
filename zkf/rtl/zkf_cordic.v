@@ -60,7 +60,7 @@
 //     1/gain (== the per-WMAN KINV) and carries the den binade. The shared back-end renormalizes + rounds both
 //     results (magnitude then theta of the single in-flight transaction, time-multiplexed).
 //
-// Vectoring's arithmetic reuse: ONE folded radix-4 divider (the _zkf_div_core primitive _zkf_div_radix4_step,
+// Vectoring's arithmetic reuse: ONE folded radix-4 divider (zkf_divsqrt's digit step _zkf_divsqrt_step,
 // STEPS = ceil(XF/2) cycles, 2 quotient bits each) computes Q = floor(num*2**F/den) + sticky for BOTH the residual
 // (num=|y_K|, den=x_K) and the bypass (num=sig_y, den=sig_x); they are mutually exclusive per transaction. The
 // multiplier it shares with rotation computes the magnitude product x_K*KINV (issued DURING the divide, so it costs
@@ -593,9 +593,9 @@ module zkf_cordic #(
             wire [WX-1:0] den_arm = d_bypass ? {{(WX-WMAN){1'b0}}, d_den_sig} : ce_xn;
             wire [WX-1:0] step_rem_next;
             wire [1:0]      step_digit;
-            _zkf_div_radix4_step #(.WMAN(WX)) u_step (
-                .den(dv_den), .den3(dv_den3), .rem(dv_rem),
-                .rem_next(step_rem_next), .digit(step_digit)
+            _zkf_divsqrt_step #(.WW(WX), .MODE(0)) u_step (
+                .sqrt(1'b0), .w(dv_rem), .d(dv_den), .d3(dv_den3), .inj(3'b000),
+                .digit(step_digit), .w_next(step_rem_next), .d_next(), .d3_next()
             );
             always @(posedge clk) begin
                 if (rst) begin
