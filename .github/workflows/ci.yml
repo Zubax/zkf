@@ -22,6 +22,10 @@ concurrency:
 jobs:
   tests:
     name: tests
+    # Skipped by `#yolo` in the head commit message, and for a same-repo PR, which its head commit's push run covers.
+    if: &run_ci >-
+      !contains(github.event.head_commit.message, '#yolo') &&
+      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: [self-hosted, ci-runner]
     container: &mega_toolchain_container
       image: containers.zubax.com/zubax-fpga-toolchain-mega:latest
@@ -49,6 +53,7 @@ jobs:
 
   accuracy:
     name: accuracy
+    if: *run_ci
     runs-on: [self-hosted, ci-runner]
     container: *mega_toolchain_container
     steps:
@@ -58,6 +63,7 @@ jobs:
 
   formal:
     name: formal
+    if: *run_ci
     runs-on: ubuntu-latest
     container: &fpga_toolchain_container
       image: ghcr.io/zubax/zubax-fpga-toolchain:latest
@@ -72,6 +78,7 @@ jobs:
 
   synth:
     name: synth
+    if: *run_ci
     runs-on: ubuntu-latest
     container: *fpga_toolchain_container
     steps:
