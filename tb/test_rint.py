@@ -12,7 +12,7 @@ from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask, pow2_fraction, signed_to_bits
 from zkf_operands import directed_numbers, random_inf, random_normal, random_normal_near, random_operand, random_zero
 from zkf_params import cast_context, check_width
-from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
+from zkf_stream import RegisterStageScoreboard, check_combinational, drive_unsigned, run_stream_cases, start_clock
 
 # round_mode port codes -> the Zkf methods modeling the float and the integer result of each.
 _METHODS_BY_MODE = (("round", "round_int"), ("floor", "floor_int"), ("ceil", "ceil_int"), ("trunc", "trunc_int"))
@@ -147,7 +147,6 @@ async def rint_runtime_cases(dut) -> None:
     check_width("y_int", dut.y_int, wint, context)
     cases = cases_for(fmt, wint, context.kind, context.seed, context.count)
 
-    start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
     drive_unsigned(dut.a, 0)
@@ -185,6 +184,11 @@ async def rint_runtime_cases(dut) -> None:
         dut.in_valid.value = 1
         return drive_case(cases[0])
 
+    if register_stages == 0:
+        await check_combinational(
+            dut, context.prefix(), {"y_float": dut.y_float, "y_int": dut.y_int}, cases[:256], drive_case
+        )
+    start_clock(dut)
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
     assert scoreboard.checked == len(
