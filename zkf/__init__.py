@@ -9,10 +9,10 @@ from ._operators import (
     AddSubModel as AddSubModel,
     DivsqrtModel as DivsqrtModel,
     Exp2Model as Exp2Model,
+    FiniteModel as FiniteModel,
     FmaModel as FmaModel,
     FromIntModel as FromIntModel,
     Ilog2Model as Ilog2Model,
-    IsFiniteModel as IsFiniteModel,
     Log2Model as Log2Model,
     MulIlog2Model as MulIlog2Model,
     MulModel as MulModel,
@@ -20,7 +20,6 @@ from ._operators import (
     PipeModel as PipeModel,
     ResizeModel as ResizeModel,
     RintModel as RintModel,
-    SaturateModel as SaturateModel,
     SortModel as SortModel,
 )
 from ._value import (

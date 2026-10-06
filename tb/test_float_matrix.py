@@ -194,6 +194,23 @@ def test_rint_elaboration(tmp_path, overrides, valid) -> None:
     _elaborate(tmp_path, "zkf_rint", overrides, sources, valid=valid, marker="_zkf_invalid_latency_mismatch")
 
 
+@pytest.mark.parametrize("module", ["zkf_cmp", "zkf_finite"])
+@pytest.mark.parametrize(
+    "overrides,marker",
+    [
+        ({}, None),
+        ({"STAGE_INPUT": 2, "STAGE_OUTPUT": 1}, None),  # LATENCY=0 disables the check
+        ({"STAGE_INPUT": 2, "STAGE_OUTPUT": 1, "LATENCY": 3}, None),
+        ({"STAGE_INPUT": 2, "STAGE_OUTPUT": 1, "LATENCY": 2}, "_zkf_invalid_latency_mismatch"),
+        ({"STAGE_OUTPUT": 2}, "_zkf_invalid_stage_output"),
+        ({"WMAN": 3}, "_zkf_invalid_wexp_or_wman"),
+    ],
+)
+def test_in_out_staged_elaboration(tmp_path, module, overrides, marker) -> None:
+    sources = ["zkf/rtl/zkf_pipe.v", f"zkf/rtl/{module}.v"]
+    _elaborate(tmp_path, module, overrides, sources, valid=marker is None, marker=marker)
+
+
 _CORDIC_LATENCY_KNOBS = [
     ((6, 18), {}),
     ((5, 16), {"unroll100": 50, "stage_input": 1, "stage_product": 1}),

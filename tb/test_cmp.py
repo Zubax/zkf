@@ -11,7 +11,7 @@ from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
 from zkf_operands import directed_numbers, random_bits, random_operand
 from zkf_params import check_width, float_context
-from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
+from zkf_stream import RegisterStageScoreboard, check_combinational, drive_unsigned, run_stream_cases, start_clock
 
 
 @dataclass(frozen=True)
@@ -39,7 +39,7 @@ def raw_directed_values(fmt: ZkfFormat) -> list[int]:
 
 def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:
     """
-    Zero and infinity bit patterns at representative fractions, targeting the override_eq logic in zkf_cmp_comb:
+    Zero and infinity bit patterns at representative fractions, targeting the class overrides of zkf_cmp:
     every zero pattern compares equal to every other, same-sign infinities compare equal regardless of fraction, and
     crossing a class boundary produces strict ordering.
     """
@@ -55,7 +55,7 @@ def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:
 
 
 def corner_pairs(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
-    """Hand-picked pairings that exercise every transition in the cmp_comb decision tree."""
+    """Hand-picked pairings that exercise every transition in the comparator's decision tree."""
     pairs: list[tuple[str, int, int]] = []
     specials = special_class_representatives(fmt)
     # Cross-product of all zero/infinity representations (equal zeros, equal same-sign infinities, ordered
@@ -150,23 +150,9 @@ async def cmp_runtime_cases(dut) -> None:
     check_width("a_lt_b", dut.a_lt_b, 1, context)
     cases = cases_for(fmt, context.kind, context.seed, context.count)
 
-    start_clock(dut)
-    dut.rst.value = 1
-    dut.in_valid.value = 0
-    dut.a.value = 0
-    dut.b.value = 0
-
-    register_stages = fmt.model_of("cmp")(stage_input=context.stage_input).timing.latency
-    scoreboard = RegisterStageScoreboard(
-        dut,
-        register_stages,
-        context,
-        {
-            "a_gt_b": (dut.a_gt_b, 1),
-            "a_eq_b": (dut.a_eq_b, 1),
-            "a_lt_b": (dut.a_lt_b, 1),
-        },
-    )
+    register_stages = fmt.model_of("cmp")(
+        stage_input=context.stage_input, stage_output=context.stage_output
+    ).timing.latency
 
     def drive_case(case: CompareCase) -> dict[str, int]:
         drive_unsigned(dut.a, case.a)
@@ -174,6 +160,22 @@ async def cmp_runtime_cases(dut) -> None:
         c = fmt.wrap(case.a).cmp(fmt.wrap(case.b))
         a_gt_b, a_eq_b, a_lt_b = int(c.gt), int(c.eq), int(c.lt)
         return {"a_gt_b": a_gt_b, "a_eq_b": a_eq_b, "a_lt_b": a_lt_b}
+
+    flags = {"a_gt_b": dut.a_gt_b, "a_eq_b": dut.a_eq_b, "a_lt_b": dut.a_lt_b}
+    if register_stages == 0:
+        await check_combinational(dut, context.prefix(), flags, cases[:256], drive_case)
+    start_clock(dut)
+    dut.rst.value = 1
+    dut.in_valid.value = 0
+    dut.a.value = 0
+    dut.b.value = 0
+    scoreboard = RegisterStageScoreboard(
+        dut,
+        register_stages,
+        context,
+        {name: (handle, 1) for name, handle in flags.items()},
+        reset_passthrough=register_stages == 0,
+    )
 
     def invalid_drive() -> None:
         dut.in_valid.value = 0
@@ -183,11 +185,11 @@ async def cmp_runtime_cases(dut) -> None:
     def describe(index: int, case: CompareCase) -> str:
         return f"case={index} {case.describe(fmt)}"
 
-    def drive_reset_sample() -> None:
+    def drive_reset_sample() -> dict[str, int]:
         dut.in_valid.value = 1
-        drive_case(cases[0])
+        return drive_case(cases[0])
 
-    await scoreboard.reset(3, drive_during_reset=drive_reset_sample)
+    await scoreboard.reset(register_stages + 2, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
     assert scoreboard.checked == len(
         cases

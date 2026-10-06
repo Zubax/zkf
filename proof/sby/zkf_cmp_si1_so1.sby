@@ -1,6 +1,6 @@
 [options]
 mode bmc
-depth 4
+depth 5
 expect pass
 
 [engines]
@@ -11,7 +11,7 @@ read -formal zkf_pipe.v
 read -formal zkf_cmp.v
 read -formal zkf_cmp_ref.v
 read -formal zkf_cmp_eq.v
-chparam -set WEXP 6 -set WMAN 18 zkf_cmp_eq
+chparam -set WEXP 6 -set WMAN 18 -set STAGE_INPUT 1 -set STAGE_OUTPUT 1 zkf_cmp_eq
 prep -top zkf_cmp_eq
 
 [files]

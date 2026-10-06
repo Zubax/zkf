@@ -20,6 +20,8 @@ For each module we write:
   `in_valid=0` from cycle 2 onward. The inputs at cycle 1 are latched into shadow registers.
   At cycle (1 + pipeline_depth) the harness asserts `out_valid` is 1 and the DUT outputs match
   the reference applied to the shadow inputs. Validity latency is asserted on every cycle.
+  A module configured with no register stages is instead checked as combinational logic: under any `rst` and
+  `in_valid`, `out_valid` follows `in_valid` and the outputs match the reference applied to the live inputs.
 
 - A **SymbiYosys flow** under `sby/` — one `.sby` file per proof, naming the parameter set,
   engine, BMC depth, and the file list. `run_proofs.py` injects `LATENCY` for pipelined DUTs.
@@ -53,9 +55,8 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 |-------------------------|-----------------|-----------|-------|
 | `zkf_abs`               | WEXP=6, WMAN=18 | yices     | spec inlined |
 | `zkf_neg`               | WEXP=6, WMAN=18 | yices     | spec inlined; involution checked |
-| `zkf_is_finite`         | WEXP=6, WMAN=18 | yices     | spec inlined |
-| `zkf_saturate`          | WEXP=6, WMAN=18 | yices     | spec inlined; idempotence checked |
-| `zkf_cmp`               | WEXP=6, WMAN=18 | yices     | references explicit case analysis |
+| `zkf_finite`            | WEXP=6, WMAN=18 | yices     | spec inlined; saturation finite and idempotent; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
+| `zkf_cmp`               | WEXP=6, WMAN=18 | yices     | references explicit case analysis; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
 | `zkf_sort`              | WEXP=6, WMAN=18 | yices     | multiset + ordering via cmp_ref |
 | `zkf_pipe`              | W=24, N=4       | yices     | BMC depth 12 covers full propagation |
 | `_zkf_pack`             | WEXP=6, WMAN=18 | yices     | at the production parameter set; also with STAGE_OUTPUT=1 |
@@ -70,9 +71,8 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 | `_zkf_divsqrt_root0`    | WMAN=4,5,18,27,36,53 | yices | the root's stage 0 from any radicand, establishing the invariant |
 | `_zkf_divsqrt_last`     | WMAN=18,27,36,53 | yices    | the last decision with its rounding select, from the invariant, in every MODE, folded and not |
 
-Combinational/sequential and trivial-wrapper consolidation rule applied:
+Trivial-wrapper consolidation rule applied:
 
-- `zkf_cmp_comb` is **not** separately proved; `zkf_cmp` covers it transitively in BMC depth 3.
 - `zkf_addsub` is **not** separately proved; it is a thin XOR-on-`b.sign` wrapper around `zkf_add`
   and contributes no arithmetic of its own, so the `zkf_add` proof at the same widths is
   sufficient. The `zkf_addsub` RTL is still exercised by `test_addsub.py` and by the

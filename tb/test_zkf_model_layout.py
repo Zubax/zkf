@@ -143,6 +143,15 @@ class ZkfModelLayoutTest(unittest.TestCase):
         self.assertEqual(zkf.RintModel(fmt, stage_input=2, stage_shift=1, stage_round=2).timing, Timing(5, 1))
         for knob in ("stage_input", "stage_shift", "stage_round", "stage_output"):
             self.assert_knob_error(lambda: zkf.RintModel(fmt, **{knob: -1}))
+        for model in (zkf.CmpModel, zkf.FiniteModel):
+            with self.subTest(model=model.__name__):
+                self.assertEqual(model(fmt).timing, Timing(0, 1))
+                self.assertEqual(model(fmt, stage_input=2, stage_output=1).params["LATENCY"], 3)
+                for knobs in ({"stage_input": -1}, {"stage_output": -1}, {"stage_output": 2}):
+                    self.assert_knob_error(lambda: model(fmt, **knobs))
+        self.assertEqual(
+            zkf.SortModel(fmt, stage_input=1).params, {"WEXP": 8, "WMAN": 24, "STAGE_INPUT": 1, "LATENCY": 2}
+        )
         for config, latencies in (({}, (25, 43)), ({"unroll100": 50, "stage_product": 2, "stage_pack": 1}, (41, 60))):
             with self.subTest(config=config):
                 cordic = zkf.CordicModel(fmt, **config)

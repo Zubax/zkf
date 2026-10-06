@@ -745,9 +745,9 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
     if spec.kind == "divsqrt":
         return [hdl / "zkf_pipe.v", hdl / "_zkf_pack.v", hdl / "_zkf_divsqrt_step.v", hdl / "zkf_divsqrt.v"]
     if spec.kind == "cmp":
-        return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_cmp.v"]
+        return [hdl / "zkf_pipe.v", hdl / "zkf_cmp.v"]
     if spec.kind == "sort":
-        return [hdl / "zkf_pipe.v", hdl / "zkf_cmp_comb.v", hdl / "zkf_sort.v"]
+        return [hdl / "zkf_pipe.v", hdl / "zkf_cmp.v", hdl / "zkf_sort.v"]
     if spec.kind == "ilog2":
         return [hdl / "zkf_pipe.v", hdl / "zkf_ilog2.v"]
     if spec.kind == "mul_ilog2":

@@ -281,3 +281,29 @@ async def run_stream_cases(
     invalid_drive()
     for flush_index in range(scoreboard.queue_delay + 2):
         await scoreboard.tick(None, f"flush={flush_index}")
+
+
+async def check_combinational(
+    dut,
+    prefix: str,
+    outputs: dict[str, object],
+    cases: list[object],
+    drive_case: Callable[[object], dict[str, int]],
+) -> None:
+    """
+    The contract of a module with all its stages off, run before the clock starts: with clk held, out_valid follows
+    in_valid and every output follows the inputs, whatever rst is.
+    """
+    dut.clk.value = 0
+    for index, case in enumerate(cases):
+        rst, valid = index & 1, (index >> 1) & 1
+        dut.rst.value = rst
+        dut.in_valid.value = valid
+        expected = drive_case(case)
+        await Timer(1, unit="ns")
+        context = f"{prefix} combinational case={index} rst={rst} in_valid={valid}"
+        assert is_resolvable(dut.out_valid) and int(dut.out_valid.value) == valid, f"{context} out_valid"
+        for name, handle in outputs.items():
+            assert (
+                is_resolvable(handle) and int(handle.value) == expected[name]
+            ), f"{context} {name}: expected={expected[name]:#x} observed={handle.value}"

@@ -562,6 +562,10 @@ def _per_pr(sim, out: list) -> None:
         for cfg, w, m, k, c in BINARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+    # The registered output alone, behind the input registers, and behind dummy input stages (si=0 and si=1/2 alone are
+    # covered by the rows above and the STAGE_INPUT>1 sweep).
+    for knobs in ({"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}):
+        out.append(_binary("cmp", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, **knobs))
     for op in ("add", "addsub"):
         for sd in (0, 1):
             for sa in (0, 1):
@@ -634,9 +638,11 @@ def _per_pr(sim, out: list) -> None:
     # MULT18X18D; sp=1 would split the 18x18 into a 2x2 grid = 4 DSPs for no timing gain). Gated so it is tested
     # directly, not just inferred from the per-knob sweeps.
     out.append(_fma(sim, "pr", "w6m18_si1_sa1_sn2", 6, 18, "random", 384, si=1, sa=1, sn=2))
-    for op in ("abs", "neg", "is_finite", "saturate"):
+    for op in ("abs", "neg", "finite"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
+    for knobs in ({"si": 1}, {"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}):
+        out.append(_binary("finite", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, **knobs))
     for op in ("exp2", "log2"):
         for cfg, w, m, k, c in TRANS_EXPLOG:
             out.append(_trans(op, sim, "pr", cfg, w, m, k, c))
@@ -821,6 +827,8 @@ def _deep_correctness(out: list) -> None:
                         out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
         out.append(_binary("cmp", s, "deep", base, w, m, k, c))
         out.append(_binary("sort", s, "deep", base, w, m, k, c))
+    w, m, k, c = BIN_EXT[0]
+    out.append(_binary("cmp", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, so=1))
     # fma: each deep format once (results are staging-independent), the full pipeline-knob cartesian on one fast
     # format, the WEXP=8/WMAN=36 synth config, and the smallest format at the staging extremes.
     for w, m, k, c in FMA_EXT:
@@ -873,7 +881,7 @@ def _deep_correctness(out: list) -> None:
         out.append(_divsqrt(s, "deep", "w7m53_random", 7, 53, "random", 384, mode=mode))
     for w, m, k, c in UNARY_EXT:
         base = f"w{w}m{m}_{k}"
-        for op in ("abs", "neg", "is_finite", "saturate"):
+        for op in ("abs", "neg", "finite"):
             out.append(_binary(op, s, "deep", base, w, m, k, c))
         for sd in (0, 1):
             out.append(_ilog2(s, "deep", base, w, m, k, c, sd=sd))
@@ -1015,7 +1023,7 @@ def _deep_coverage(out: list) -> None:
         out.append(_divsqrt(s, "deep", "w8m36", 8, 36, "random", 1024, mode=mode))
     for w, m in [(4, 5), (3, 6), (2, 6)]:
         base = f"w{w}m{m}"
-        for op in ("abs", "neg", "is_finite", "saturate"):
+        for op in ("abs", "neg", "finite"):
             out.append(_binary(op, s, "deep", base, w, m, "exhaustive", 0))
         for sd in (0, 1):
             out.append(_ilog2(s, "deep", base, w, m, "exhaustive", 0, sd=sd))
@@ -1193,8 +1201,7 @@ _FAST = [
     ("sort", "sort", [("WEXP", 2), ("WMAN", 4)]),
     ("abs", "abs", [("WEXP", 2), ("WMAN", 4)]),
     ("neg", "neg", [("WEXP", 2), ("WMAN", 4)]),
-    ("is_finite", "is_finite", [("WEXP", 2), ("WMAN", 4)]),
-    ("saturate", "saturate", [("WEXP", 2), ("WMAN", 4)]),
+    ("finite", "finite", [("WEXP", 2), ("WMAN", 4)]),
     ("add_sd0_sa0", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),
     ("add_sd1_sa1", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
     ("addsub_sd0_sa0", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),
