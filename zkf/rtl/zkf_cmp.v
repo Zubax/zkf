@@ -6,7 +6,7 @@
 // an XOR-reduce, and `>` the remaining case.
 //
 // STAGE_INPUT: registers ahead of the compare; values above one add dummy stages for routing-congested designs.
-// STAGE_OUTPUT={0,1}: register the flags.
+// STAGE_OUTPUT: register the flags.
 // Each knob costs as many cycles as its value. With both zero the module is combinational and clk/rst are ignored.
 
 `default_nettype none
@@ -37,9 +37,6 @@ module zkf_cmp #(
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wexp_or_wman
             _zkf_invalid_wexp_or_wman u_invalid();
-        end
-        if ((STAGE_OUTPUT != 0) && (STAGE_OUTPUT != 1)) begin : g_invalid_stage_output
-            _zkf_invalid_stage_output u_invalid();
         end
         if ((LATENCY != 0) && (LATENCY != LATENCY_REF)) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();

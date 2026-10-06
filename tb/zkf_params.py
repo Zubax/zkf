@@ -41,7 +41,7 @@ class TestContext:
     stage_pack: int = 0  # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
     stage_shift: int = 0  # zkf_rint
     stage_round: int = 0  # zkf_rint
-    stage_output: int = 0  # pack-based ops: 0 = combinational (default), 1 = registered (+1 cycle)
+    stage_output: int = 0  # output register stages; 0 = combinational (default)
     unroll100: int = 100  # zkf_cordic: iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
     parallel: int = 0  # zkf_cordic: run rotation's z-path ahead of x/y (mirrors the PARALLEL vlogparam)
     mode: int = 2  # zkf_cordic / zkf_divsqrt: mirrors the MODE vlogparam
@@ -228,8 +228,8 @@ def _stage_round() -> int:
 
 def _stage_output() -> int:
     value = plusarg_int("ZKF_STAGE_OUTPUT", 0)
-    if value not in (0, 1):
-        raise ValueError(f"ZKF_STAGE_OUTPUT must be 0 or 1, got {value}")
+    if value < 0:
+        raise ValueError(f"ZKF_STAGE_OUTPUT must be non-negative, got {value}")
     return value
 
 

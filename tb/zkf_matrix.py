@@ -562,9 +562,9 @@ def _per_pr(sim, out: list) -> None:
         for cfg, w, m, k, c in BINARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
-    # The registered output alone, behind the input registers, and behind dummy input stages (si=0 and si=1/2 alone are
-    # covered by the rows above and the STAGE_INPUT>1 sweep).
-    for knobs in ({"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}):
+    # Output stages alone and behind input stages (si=0 and si=1/2 alone are covered by the rows above and the
+    # STAGE_INPUT>1 sweep).
+    for knobs in ({"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}, {"so": 2}, {"si": 2, "so": 2}):
         out.append(_binary("cmp", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, **knobs))
     for op in ("add", "addsub"):
         for sd in (0, 1):
@@ -641,7 +641,7 @@ def _per_pr(sim, out: list) -> None:
     for op in ("abs", "neg", "finite"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
-    for knobs in ({"si": 1}, {"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}):
+    for knobs in ({"si": 1}, {"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}, {"so": 2}, {"si": 2, "so": 2}):
         out.append(_binary("finite", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, **knobs))
     for op in ("exp2", "log2"):
         for cfg, w, m, k, c in TRANS_EXPLOG:
@@ -789,7 +789,7 @@ def _per_pr(sim, out: list) -> None:
     for cfg, w, m, wint, k, c in RINT:
         out.append(_rint(sim, "pr", cfg, w, m, wint, k, c))
     every = {"si": 1, "ss": 1, "sr": 1, "so": 1}
-    for knobs in (*({k: 1} for k in every), every, {"si": 2}, {"ss": 2, "sr": 2}):
+    for knobs in (*({k: 1} for k in every), every, {"si": 2}, {"ss": 2, "sr": 2}, {"so": 2}):
         out.append(_rint(sim, "pr", "w3_m4_int8", 3, 4, 8, "exhaustive", 0, **knobs))
     out.append(_binary("add", sim, "pr", "w6_m100_directed", 6, 100, "directed", 0))
     for cfg, w, n, c in PIPE:

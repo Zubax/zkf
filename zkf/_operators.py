@@ -118,7 +118,7 @@ class _InOutStagedModel(OperatorModel):
 
     def __post_init__(self) -> None:
         _check_int_range(self.stage_input, 0, None)
-        _check_int_range(self.stage_output, 0, 1)
+        _check_int_range(self.stage_output, 0, None)
 
     @property
     def params(self) -> dict[str, int]:

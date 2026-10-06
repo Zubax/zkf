@@ -147,7 +147,8 @@ class ZkfModelLayoutTest(unittest.TestCase):
             with self.subTest(model=model.__name__):
                 self.assertEqual(model(fmt).timing, Timing(0, 1))
                 self.assertEqual(model(fmt, stage_input=2, stage_output=1).params["LATENCY"], 3)
-                for knobs in ({"stage_input": -1}, {"stage_output": -1}, {"stage_output": 2}):
+                self.assertEqual(model(fmt, stage_output=2).timing, Timing(2, 1))
+                for knobs in ({"stage_input": -1}, {"stage_output": -1}):
                     self.assert_knob_error(lambda: model(fmt, **knobs))
         self.assertEqual(
             zkf.SortModel(fmt, stage_input=1).params, {"WEXP": 8, "WMAN": 24, "STAGE_INPUT": 1, "LATENCY": 2}

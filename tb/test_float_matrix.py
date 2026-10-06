@@ -202,7 +202,7 @@ def test_rint_elaboration(tmp_path, overrides, valid) -> None:
         ({"STAGE_INPUT": 2, "STAGE_OUTPUT": 1}, None),  # LATENCY=0 disables the check
         ({"STAGE_INPUT": 2, "STAGE_OUTPUT": 1, "LATENCY": 3}, None),
         ({"STAGE_INPUT": 2, "STAGE_OUTPUT": 1, "LATENCY": 2}, "_zkf_invalid_latency_mismatch"),
-        ({"STAGE_OUTPUT": 2}, "_zkf_invalid_stage_output"),
+        ({"STAGE_OUTPUT": 2, "LATENCY": 2}, None),
         ({"WMAN": 3}, "_zkf_invalid_wexp_or_wman"),
     ],
 )
