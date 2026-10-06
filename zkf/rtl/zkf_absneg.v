@@ -1,5 +1,5 @@
-// Streamed finiteness: `finite` is set unless x is an infinity; `saturated` is x when finite and otherwise the largest
-// finite magnitude with the sign of x. A finite x passes through bit for bit, without canonicalization.
+// Streamed sign manipulation: `absolute` is x with the sign bit cleared, `negated` is x with it flipped. Both are bit
+// operations, so +0 negates to a -0 pattern, which every operator decodes as +0.
 //
 // STAGE_INPUT: registers ahead of the logic.
 // STAGE_OUTPUT: registers after it.
@@ -8,7 +8,7 @@
 
 `default_nettype none
 
-module zkf_finite #(
+module zkf_absneg #(
     parameter WEXP         = 6,
     parameter WMAN         = 18,
     parameter STAGE_INPUT  = 0,
@@ -22,17 +22,12 @@ module zkf_finite #(
     input wire [WEXP+WMAN-1:0] x,
 
     output wire                 out_valid,
-    output wire                 finite,
-    output wire [WEXP+WMAN-1:0] saturated
+    output wire [WEXP+WMAN-1:0] absolute,
+    output wire [WEXP+WMAN-1:0] negated
 );
-    localparam WFRAC = WMAN - 1;
-    localparam WFULL = WEXP + WMAN;
-
+    localparam WFULL       = WEXP + WMAN;
     localparam LATENCY_REF = STAGE_INPUT + STAGE_OUTPUT;
     generate
-        if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wexp_or_wman
-            _zkf_invalid_wexp_or_wman u_invalid();
-        end
         if ((LATENCY != 0) && (LATENCY != LATENCY_REF)) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
@@ -44,13 +39,11 @@ module zkf_finite #(
         .clk(clk), .rst(rst), .in_valid(in_valid), .in(x),
         .out_valid(valid_q), .out(x_q)
     );
-
-    wire fin = ~&x_q[WFULL-2:WFRAC];
-    zkf_pipe #(.W(WFULL + 1), .N(STAGE_OUTPUT)) u_output_pipe (
-        .clk(clk), .rst(rst), .in_valid(valid_q),
-        .in({fin, fin ? x_q : {x_q[WFULL-1], {(WEXP-1){1'b1}}, 1'b0, {WFRAC{1'b1}}}}),
-        .out_valid(out_valid), .out({finite, saturated})
+    zkf_pipe #(.W(WFULL), .N(STAGE_OUTPUT)) u_output_pipe (
+        .clk(clk), .rst(rst), .in_valid(valid_q), .in({~x_q[WFULL-1], x_q[WFULL-2:0]}),
+        .out_valid(out_valid), .out(negated)
     );
+    assign absolute = {1'b0, negated[WFULL-2:0]};
 endmodule
 
 `default_nettype wire

@@ -2,7 +2,7 @@
 
 from ._format import OperatorModel as OperatorModel, Timing as Timing, ZkfFormat as ZkfFormat
 from ._operators import (
-    AbsModel as AbsModel,
+    AbsNegModel as AbsNegModel,
     CordicModel as CordicModel,
     CmpModel as CmpModel,
     AddModel as AddModel,
@@ -16,7 +16,6 @@ from ._operators import (
     Log2Model as Log2Model,
     MulIlog2Model as MulIlog2Model,
     MulModel as MulModel,
-    NegModel as NegModel,
     PipeModel as PipeModel,
     ResizeModel as ResizeModel,
     RintModel as RintModel,
@@ -32,7 +31,7 @@ from ._value import (
     Zkf as Zkf,
 )
 from ._reference import RoundMode as RoundMode, UnsupportedFormat as UnsupportedFormat
-from ._rtl import get_rtl as get_rtl
+from ._rtl import get_rtl as get_rtl, get_rtl_bundle as get_rtl_bundle
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
 __version__ = "0.8.0"

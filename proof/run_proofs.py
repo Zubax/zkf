@@ -37,6 +37,7 @@ LATENCY_KIND_BY_HARNESS = {
     "zkf_pack_eq": "pack",
     "zkf_cmp_eq": "cmp",
     "zkf_finite_eq": "finite",
+    "zkf_absneg_eq": "absneg",
     "zkf_sort_eq": "sort",
     "zkf_mul_eq": "mul",
     "zkf_add_eq": "add",

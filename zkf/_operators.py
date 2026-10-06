@@ -8,27 +8,6 @@ from ._reference import UnsupportedFormat, check_format_width, trans_spec, trig_
 
 
 @dataclass(frozen=True)
-class _UnaryCombModel(OperatorModel):
-    @property
-    def params(self) -> dict[str, int]:
-        return {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman}
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(0, 1)
-
-
-@dataclass(frozen=True)
-class AbsModel(_UnaryCombModel):
-    module = "zkf_abs"
-
-
-@dataclass(frozen=True)
-class NegModel(_UnaryCombModel):
-    module = "zkf_neg"
-
-
-@dataclass(frozen=True)
 class PipeModel(OperatorModel):
     module = "zkf_pipe"
     w: int | None = None
@@ -144,6 +123,11 @@ class CmpModel(_InOutStagedModel):
 @dataclass(frozen=True)
 class FiniteModel(_InOutStagedModel):
     module = "zkf_finite"
+
+
+@dataclass(frozen=True)
+class AbsNegModel(_InOutStagedModel):
+    module = "zkf_absneg"
 
 
 @dataclass(frozen=True)

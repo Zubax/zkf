@@ -41,7 +41,7 @@ class TestContext:
     stage_pack: int = 0  # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
     stage_shift: int = 0  # zkf_rint
     stage_round: int = 0  # zkf_rint
-    stage_output: int = 0  # output register stages; 0 = combinational (default)
+    stage_output: int = 0
     unroll100: int = 100  # zkf_cordic: iterations/cycle x100 (mirrors the UNROLL100 vlogparam)
     parallel: int = 0  # zkf_cordic: run rotation's z-path ahead of x/y (mirrors the PARALLEL vlogparam)
     mode: int = 2  # zkf_cordic / zkf_divsqrt: mirrors the MODE vlogparam
@@ -76,8 +76,8 @@ class TestContext:
             knob_suffix += f" SSH={self.stage_shift}"
         if self.stage_round:
             knob_suffix += f" SRD={self.stage_round}"
-        if self.stage_output == 0:
-            knob_suffix += " SO=0"
+        if self.stage_output:
+            knob_suffix += f" SO={self.stage_output}"
         if self.parallel:
             knob_suffix += " PAR"
         if self.mode != 2:

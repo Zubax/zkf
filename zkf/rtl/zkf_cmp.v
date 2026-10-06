@@ -5,9 +5,10 @@
 // the one wide compare does not wait on it: `<` is the borrow of a subtraction, which maps onto the carry chain, `==`
 // an XOR-reduce, and `>` the remaining case.
 //
-// STAGE_INPUT: registers ahead of the compare; values above one add dummy stages for routing-congested designs.
-// STAGE_OUTPUT: register the flags.
-// Each knob costs as many cycles as its value. With both zero the module is combinational and clk/rst are ignored.
+// STAGE_INPUT: registers ahead of the compare.
+// STAGE_OUTPUT: registers after it.
+// Each knob is a register count costing as many cycles; values above one add dummy stages for routing-congested
+// designs. With both zero the module is combinational and clk/rst are ignored.
 
 `default_nettype none
 

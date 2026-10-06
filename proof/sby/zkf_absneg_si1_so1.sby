@@ -1,0 +1,19 @@
+[options]
+mode bmc
+depth 5
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal zkf_pipe.v
+read -formal zkf_absneg.v
+read -formal zkf_absneg_eq.v
+chparam -set WEXP 6 -set WMAN 18 -set STAGE_INPUT 1 -set STAGE_OUTPUT 1 zkf_absneg_eq
+prep -top zkf_absneg_eq
+
+[files]
+zkf/rtl/zkf_pipe.v
+zkf/rtl/zkf_absneg.v
+proof/harness/zkf_absneg_eq.v

@@ -143,7 +143,7 @@ class ZkfModelLayoutTest(unittest.TestCase):
         self.assertEqual(zkf.RintModel(fmt, stage_input=2, stage_shift=1, stage_round=2).timing, Timing(5, 1))
         for knob in ("stage_input", "stage_shift", "stage_round", "stage_output"):
             self.assert_knob_error(lambda: zkf.RintModel(fmt, **{knob: -1}))
-        for model in (zkf.CmpModel, zkf.FiniteModel):
+        for model in (zkf.CmpModel, zkf.FiniteModel, zkf.AbsNegModel):
             with self.subTest(model=model.__name__):
                 self.assertEqual(model(fmt).timing, Timing(0, 1))
                 self.assertEqual(model(fmt, stage_input=2, stage_output=1).params["LATENCY"], 3)

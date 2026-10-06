@@ -53,8 +53,7 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 
 | Module                  | Parameters      | Engine    | Notes |
 |-------------------------|-----------------|-----------|-------|
-| `zkf_abs`               | WEXP=6, WMAN=18 | yices     | spec inlined |
-| `zkf_neg`               | WEXP=6, WMAN=18 | yices     | spec inlined; involution checked |
+| `zkf_absneg`            | WEXP=6, WMAN=18 | yices     | spec inlined; negation an involution, absolute value idempotent; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
 | `zkf_finite`            | WEXP=6, WMAN=18 | yices     | spec inlined; saturation finite and idempotent; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
 | `zkf_cmp`               | WEXP=6, WMAN=18 | yices     | references explicit case analysis; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
 | `zkf_sort`              | WEXP=6, WMAN=18 | yices     | multiset + ordering via cmp_ref |

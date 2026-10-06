@@ -35,7 +35,7 @@ class ModuleSpec:
     wman_in: int = 0
     wexp_out: int = 0
     wman_out: int = 0
-    stage_input: int = 0  # zkf_from_int, zkf_resize, zkf_mul, zkf_fma: 0 or 1.
+    stage_input: int = 0
     stage_reduce: int = 0  # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input.
     stage_product: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul pipeline depth / split 0..4.
     stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
@@ -46,7 +46,7 @@ class ModuleSpec:
     stage_pack: int = 0  # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
     stage_shift: int = 0  # zkf_rint
     stage_round: int = 0  # zkf_rint
-    stage_output: int = 0  # pack-based ops: 0 = combinational output (default); 1 = registered output (+1 cycle).
+    stage_output: int = 0
     unroll100: int = 100  # zkf_cordic: iterations per engine cycle x100 (50 = half-rate; 100/200/300/400).
     mode: int = 2  # zkf_cordic: 0 = rotation, 1 = vectoring; zkf_divsqrt: 0 = a/b, 1 = sqrt(a); 2 = per transaction.
     wmultiplier: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul DSP tile-width hint (0 = symmetric;
