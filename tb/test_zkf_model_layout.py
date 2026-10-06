@@ -140,20 +140,31 @@ class ZkfModelLayoutTest(unittest.TestCase):
                 with self.subTest(model=cls.__name__):
                     self.assertEqual(isinstance(cls(fmt).timing, Timing), cls not in moded)
         self.assertEqual(zkf.MulModel(fmt, stage_product=1, stage_output=1).timing, Timing(3, 1))
-        for config in ({}, {"unroll100": 50, "stage_product": 2, "stage_pack": 1}):
+        self.assertEqual(zkf.RintModel(fmt, stage_input=2, stage_shift=1, stage_round=2).timing, Timing(5, 1))
+        for knob in ("stage_input", "stage_shift", "stage_round", "stage_output"):
+            self.assert_knob_error(lambda: zkf.RintModel(fmt, **{knob: -1}))
+        for model in (zkf.CmpModel, zkf.FiniteModel, zkf.AbsNegModel):
+            with self.subTest(model=model.__name__):
+                self.assertEqual(model(fmt).timing, Timing(0, 1))
+                self.assertEqual(model(fmt, stage_input=2, stage_output=1).params["LATENCY"], 3)
+                self.assertEqual(model(fmt, stage_output=2).timing, Timing(2, 1))
+                for knobs in ({"stage_input": -1}, {"stage_output": -1}):
+                    self.assert_knob_error(lambda: model(fmt, **knobs))
+        self.assertEqual(
+            zkf.SortModel(fmt, stage_input=1).params, {"WEXP": 8, "WMAN": 24, "STAGE_INPUT": 1, "LATENCY": 2}
+        )
+        for config, latencies in (({}, (25, 43)), ({"unroll100": 50, "stage_product": 2, "stage_pack": 1}, (41, 60))):
             with self.subTest(config=config):
                 cordic = zkf.CordicModel(fmt, **config)
-                modes = {0: zkf.SincosModel(fmt, **config).timing, 1: zkf.Atan2Model(fmt, **config).timing}
+                modes = {mode: Timing(latency, latency + 1) for mode, latency in enumerate(latencies)}
                 self.assertEqual(dict(cordic.timing), modes)
-                for timing in modes.values():
-                    self.assertEqual(timing.initiation_interval, timing.latency + 1)
                 self.assertEqual(
                     (cordic.params["LATENCY_ROTATION"], cordic.params["LATENCY_VECTORING"]),
                     (modes[0].latency, modes[1].latency),
                 )
                 self.assertNotIn("LATENCY", cordic.params)
                 self.assertEqual(cordic.params["MODE"], 2)
-                # A fixed mode is its dedicated operator: one Timing, and only that mode's latency is pinned.
+                # A fixed mode has one Timing, and only that mode's latency is pinned.
                 for mode, name, absent in (
                     (0, "LATENCY_ROTATION", "LATENCY_VECTORING"),
                     (1, "LATENCY_VECTORING", "LATENCY_ROTATION"),
@@ -162,7 +173,22 @@ class ZkfModelLayoutTest(unittest.TestCase):
                     self.assertEqual(fixed.timing, modes[mode])
                     self.assertEqual((fixed.params["MODE"], fixed.params[name]), (mode, modes[mode].latency))
                     self.assertNotIn(absent, fixed.params)
-        self.assertEqual(zkf.CordicModel(ZkfFormat(2, 24), mode=0).timing, zkf.SincosModel(ZkfFormat(2, 24)).timing)
+        self.assertEqual(zkf.CordicModel(ZkfFormat(2, 24), mode=0).timing, Timing(25, 26))
+        for wman, stage_decode, latency in ((24, 0, 11), (24, 1, 12), (27, 0, 13), (27, 1, 13)):
+            for mode in (0, 1, 2):
+                model = zkf.DivsqrtModel(ZkfFormat(8, wman), stage_decode=stage_decode, mode=mode)
+                self.assertEqual(model.timing, Timing(latency, 1))
+                self.assertEqual((model.params["LATENCY"], model.params["MODE"]), (latency, mode))
+        divsqrt = zkf.DivsqrtModel(fmt, stage_input=2, stage_pack=1, stage_output=1)
+        self.assertEqual(divsqrt.timing, Timing(15, 1))
+        for knob, value in (
+            ("stage_input", -1),
+            ("stage_decode", 2),
+            ("stage_pack", 2),
+            ("stage_output", 2),
+            ("mode", 3),
+        ):
+            self.assert_knob_error(lambda: zkf.DivsqrtModel(fmt, **{knob: value}))
         for mode in (-1, 3):
             self.assert_knob_error(lambda: zkf.CordicModel(ZkfFormat(4, 24), mode=mode))
 
@@ -196,7 +222,7 @@ class ZkfModelLayoutTest(unittest.TestCase):
             # A bad format is reported as such even alongside a bad knob.
             lambda: zkf.Exp2Model(ZkfFormat(31, exp2_tabled), stage_pack=5),
             lambda: zkf.Ilog2Model(ZkfFormat(8, 24), wint=8, stage_input=-1),
-            lambda: zkf.SincosModel(ZkfFormat(8, trig), unroll100=75),
+            lambda: zkf.CordicModel(ZkfFormat(8, trig), unroll100=75),
         ]
         for index, make in enumerate(refused):
             with self.subTest(case=index):
@@ -212,7 +238,7 @@ class ZkfModelLayoutTest(unittest.TestCase):
         fmt = ZkfFormat(8, 24)
         for make in (
             lambda: zkf.MulModel(fmt, stage_pack=3),
-            lambda: zkf.Atan2Model(fmt, unroll100=75),
+            lambda: zkf.CordicModel(fmt, unroll100=75),
             lambda: zkf.AddModel(ZkfFormat(8, 4), stage_normalize=2),  # _zkf_normshift too narrow to split twice
             lambda: zkf.PipeModel(fmt, w=0),
             lambda: zkf.Ilog2Model(fmt, wint=32.0),  # a non-integer width is a caller bug, not a format

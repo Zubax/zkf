@@ -2,7 +2,7 @@
 """
 Standalone bench for the sticky-folded right shifter _zkf_rshift_sticky.
 
-Embedded callers (zkf_to_int, zkf_add) drive only a limited shift-amount range, leaving the upper radix-4 cascade
+Embedded callers (zkf_exp2, zkf_add) drive only a limited shift-amount range, leaving the upper radix-4 cascade
 stages and the over-range saturation path under-toggled. This bench sweeps (x, shamt) across the FULL shamt range
 (including shamt >= W, the saturation collapse) and checks y against the model, for both STAGE_SPLIT polarities.
 """

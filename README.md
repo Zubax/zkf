@@ -15,8 +15,8 @@ See how ZKF beats other floating-point libraries in <https://zubax.github.io/fpg
 
 `zkf` ships on PyPI and by direct RTL copy-paste; both are first-class.
 
-- As Python dependency: `pip install zkf`, then `zkf.get_rtl()` returns `{path: source}` for every module,
-  keyed relative to `zkf/rtl/`.
+- As Python dependency: `pip install zkf`, then `zkf.get_rtl_bundle()` returns every module as one Verilog source;
+  `zkf.get_rtl()` returns them as `{path: source}`, keyed relative to `zkf/rtl/`.
 - Copy-paste/submodule: add the Verilog modules under `zkf/rtl/` to your project.
 
 Everything else is verification scaffolding, not a shippable artifact.
@@ -79,42 +79,37 @@ The `LATENCY` value is a sum of some constant baseline number of stages,
 plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).
 Compute it like `zkf.MulModel(zkf.ZkfFormat(WEXP, WMAN), stage_product=1).timing.latency`.
 
-Generated lookup table ROMs are plain initialized Verilog arrays. They expose `ZKF_ATTRIBUTE_ROM_PRE` and
-`ZKF_ATTRIBUTE_ROM_POST` as optional hooks around the ROM declaration for tool-specific attributes.
-They may require overriding to enable correct ROM inference depending on the target chip/flow.
+Generated lookup table ROMs are plain initialized Verilog arrays. If the macro `ZKF_ATTRIBUTE_ROM` is defined, it is
+placed before each ROM declaration to carry tool-specific attributes,
+e.g., `` `define ZKF_ATTRIBUTE_ROM (* rom_style = "block" *) ``.
+Likewise, `ZKF_ATTRIBUTE_KEEP` is placed before nets that synthesis must not restructure;
+Lattice LSE may need `` `define ZKF_ATTRIBUTE_KEEP (* syn_keep = 1 *) `` for best results.
 
 ### Catalogue
 
-Notation: ⇝ - combinational, ⇻ - sequential, (nothing) - can be either depending on the selected `STAGE_`s;
 II - initiation interval (cycles between accepting new inputs, reciprocal of cycle throughput;
 1 for zero-bubble pipelined modules).
 
-| Module                |   | II      | Function                                                       | Remarks                     |
-|-----------------------|---|---------|----------------------------------------------------------------|-----------------------------|
-| `zkf_abs`             | ⇝ |         | Absolute value.                                                |                             |
-| `zkf_neg`             | ⇝ |         | Negation.                                                      | May produce -0 (non-canonical)|
-| `zkf_is_finite`       | ⇝ |         | True iff `x` is finite.                                        |                             |
-| `zkf_saturate`        | ⇝ |         | Replace ±∞ with the nearest finite of the same sign.           | Does not canonicalize       |
-| `zkf_cmp`             | ⇻ | 1       | Compare two values.                                            |                             |
-| `zkf_sort`            | ⇻ | 1       | Min and max of two values.                                     | Does not canonicalize       |
-| `zkf_add`             | ⇻ | 1       | `a + b`.                                                       |                             |
-| `zkf_addsub`          | ⇻ | 1       | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
-| `zkf_mul`             | ⇻ | 1       | `a⋅b`.                                                         |                             |
-| `zkf_mul_ilog2`       | ⇻ | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                   |                             |
-| `zkf_ilog2`           | ⇻ | 1       | Raw exponent minus bias; sign-invariant signed integer.       | Flags zero, infinity, negative |
-| `zkf_div`             | ⇻ | 1       | `a ÷ b`; flags divide-by-zero.                                 |                             |
-| `zkf_fma`             | ⇻ | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
-| `zkf_from_int`        | ⇻ | 1       | Cast signed two's-complement integer to float.                 |                             |
-| `zkf_to_int`          | ⇻ | 1       | Cast float to signed two's-complement integer with saturation. | RNTE/floor/ceil/trunc       |
-| `zkf_resize`          |   | 1       | Cast between different float formats.                          |                             |
-| `zkf_round`           |   | 1       | Round to integer in same format: RNTE/floor/ceil/trunc.        | Outputs float; also see `zkf_to_int`|
-| `zkf_sqrt`            | ⇻ | 1       | `√x`; `−inf`&`domain_error` iff `x<0`.                         | Correct rounding, 0.5 ULP   |
-| `zkf_exp2`            | ⇻ | 1       | `2^x`                                                          | Faithful rounding, see below|
-| `zkf_log2`            | ⇻ | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
-| `zkf_sincos`          | ⇻ |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)` for `x` in turns; exposes `quadrant`. | Faithful rounding, see below|
-| `zkf_atan2`           | ⇻ |latency+1| `atan2(y,x)` in turns ∈ (−0.5,0.5] and `hypot(y,x)`.           | Faithful rounding, see below|
-| `zkf_cordic`          | ⇻ |latency+1| `zkf_sincos` or `zkf_atan2`, chosen per transaction or `MODE`. | As those two, latencies too |
-| `zkf_pipe`            |   | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
+| Module                | II      | Function                                                       | Remarks                     |
+|-----------------------|---------|----------------------------------------------------------------|-----------------------------|
+| `zkf_absneg`          | 1       | Absolute value and negation.                                   | Does not canonicalize       |
+| `zkf_finite`          | 1       | Finiteness flag, and ±∞ replaced by the nearest finite value.  | Does not canonicalize       |
+| `zkf_cmp`             | 1       | Compare two values.                                            |                             |
+| `zkf_sort`            | 1       | Min and max of two values.                                     | Does not canonicalize       |
+| `zkf_add`             | 1       | `a + b`.                                                       |                             |
+| `zkf_addsub`          | 1       | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
+| `zkf_mul`             | 1       | `a⋅b`.                                                         |                             |
+| `zkf_mul_ilog2`       | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                   |                             |
+| `zkf_ilog2`           | 1       | Raw exponent minus bias; sign-invariant signed integer.        | Flags zero, infinity, negative |
+| `zkf_fma`             | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
+| `zkf_from_int`        | 1       | Cast signed two's-complement integer to float.                 |                             |
+| `zkf_resize`          | 1       | Cast between different float formats.                          |                             |
+| `zkf_rint`            | 1       | Round to integer, outputs both a float and a saturated integer.| RNTE/floor/ceil/trunc       |
+| `zkf_divsqrt`         | 1       | `a ÷ b` or `√a`; `error` iff /0 or domain error.               | Correct rounding, 0.5 ULP   |
+| `zkf_exp2`            | 1       | `2^x`                                                          | Faithful rounding, see below|
+| `zkf_log2`            | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
+| `zkf_cordic`          |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (−0.5,0.5], `hypot(y,x)`.   | Faithful rounding, see below|
+| `zkf_pipe`            | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
 
 #### Notably absent functions
 
@@ -130,8 +125,8 @@ The basic modules available enable simple computation of a huge variety of deriv
 Bare angle functions follow the usual radian convention; helpers suffixed `_turns` expose ZKF's native turn
 representation.
 
-    sin_turns(x), cos_turns(x)  = zkf_sincos(x)                     ; x in turns
-    atan2_turns(y,x)            = zkf_atan2(y, x)                   ; angle in turns ∈ (−0.5,0.5]
+    sin_turns(x), cos_turns(x)  = zkf_cordic(x)                     ; rotation; x in turns
+    atan2_turns(y,x)            = zkf_cordic(y, x)                  ; vectoring; angle in turns ∈ (−0.5,0.5]
     atan_turns(x)               = atan2_turns(x, 1)
 
     normalize_angle(x)          = x − 2π⋅floor((x + π) / (2π))      ; [-π,+π)
@@ -143,7 +138,7 @@ representation.
     sin(x), cos(x)      = sin_turns(radians_to_turns(x)), cos_turns(radians_to_turns(x))
     atan2(y,x)          = 2π⋅atan2_turns(y, x)
 
-    sqrt(x)             = zkf_sqrt(x)           ; correctly rounded 0.5 ULP
+    sqrt(x)             = zkf_divsqrt(x)        ; correctly rounded 0.5 ULP
     exp(x)              = exp2(x⋅log2(e))
     ln(x)               = log2(x) / log2(e)
     log10(x)            = log2(x) / log2(10)
@@ -151,6 +146,7 @@ representation.
     pow(a,b)            = exp2(b⋅log2(a))       ; real-valued identity for a>0
     recip(x)            = 1 / x
     rsqrt(x)            = exp2(log2(x)⋅-2^-1)   ; x>0; avoids division
+    rsqrt(x)            = sqrt(1 / x)           ; x>0, 1/x normal; faithful, 0.85 ULP max at WMAN=18
     cbrt(x)             = sign(x)⋅exp2(log2(abs(x)) / 3)
 
     tan(x)              = sin(x) / cos(x)
@@ -158,7 +154,7 @@ representation.
     asin(x)             = atan2(x, sqrt(1 − x⋅x))                       ; x ∈ [-1,+1]
     acos(x)             = atan2(sqrt(1 − x⋅x), x)                       ; x ∈ [-1,+1]
     h                   = max(abs(x), abs(y))
-    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf_atan2
+    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf_cordic
 
     min(a,b), max(a,b)  = sort(a,b)
     clamp(x, lo, hi)    = min(max(x, lo), hi)
@@ -209,7 +205,7 @@ And so on.
 
 Generic floating-point remainder/modulo computation is not included because the general solution requires iterative
 range reduction which maps poorly onto fixed-latency FPGA cores; instead, one can build the iterative solver using
-the existing basic operators: zkf_fma, zkf_div, etc.
+the existing basic operators: zkf_fma, zkf_divsqrt, etc.
 
 ## Semantics
 
@@ -217,9 +213,9 @@ Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; 
 round to +0; magnitudes in `[min_normal/2, min_normal)` round to signed min_normal), no −0, no exceptions,
 overflow produces ±∞.
 
-`zkf_atan2`'s magnitude errs toward finite within one ULP of the overflow threshold rather than inventing an infinity.
-Any faithfully-rounded operator may return either +0 or ±min_normal for a result landing very near the `min_normal/2`
-midpoint, since which side is correct is decided by bits a faithful operator does not carry.
+`zkf_cordic`'s vectoring magnitude errs toward finite within one ULP of the overflow threshold rather than inventing an
+infinity. Any faithfully-rounded operator may return either +0 or ±min_normal for a result landing very near the
+`min_normal/2` midpoint, since which side is correct is decided by bits a faithful operator does not carry.
 
 Infinity cases that would be NaN in IEEE 754:
 
@@ -273,14 +269,13 @@ The fixed-point datapath then carries GUARD = ERR_GUARD + 4 = 12 extra fractiona
 truncating Horner's LSB noise — which is the smallest split that keeps the round bit clear of the noise floor under
 truncating arithmetic; widening it further has no accuracy benefit and just pays in DSP/LUT/FF area.
 
-The trigonometric modules (sincos, atan2) carry the same faithful-rounding contract.
+`zkf_cordic` carries the same faithful-rounding contract.
 
 <img src="docs/zkf_transcendental_accuracy.svg">
 
-**ATTENTION:** To achieve good results, it is essential to ensure that the look-up tables used by the
-transcendental/trigonometric operators are correctly mapped to ROM. If you see unreasonable fabric usage and bad
-timings, check your synthesis settings first, and if necessary override `ZKF_ATTRIBUTE_ROM_PRE` and
-`ZKF_ATTRIBUTE_ROM_POST`.
+**ATTENTION:** To achieve good results, it is essential to ensure that the look-up tables used by `zkf_exp2` and
+`zkf_log2` are correctly mapped to ROM. If you see unreasonable fabric usage and bad
+timings, check your synthesis settings first, and if necessary define `ZKF_ATTRIBUTE_ROM`.
 
 ## Sizing the exponent and the significand (WEXP/WMAN)
 

@@ -8,37 +8,6 @@ from ._reference import UnsupportedFormat, check_format_width, trans_spec, trig_
 
 
 @dataclass(frozen=True)
-class _UnaryCombModel(OperatorModel):
-    @property
-    def params(self) -> dict[str, int]:
-        return {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman}
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(0, 1)
-
-
-@dataclass(frozen=True)
-class AbsModel(_UnaryCombModel):
-    module = "zkf_abs"
-
-
-@dataclass(frozen=True)
-class NegModel(_UnaryCombModel):
-    module = "zkf_neg"
-
-
-@dataclass(frozen=True)
-class IsFiniteModel(_UnaryCombModel):
-    module = "zkf_is_finite"
-
-
-@dataclass(frozen=True)
-class SaturateModel(_UnaryCombModel):
-    module = "zkf_saturate"
-
-
-@dataclass(frozen=True)
 class PipeModel(OperatorModel):
     module = "zkf_pipe"
     w: int | None = None
@@ -122,7 +91,48 @@ class PackModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class _CompareModel(OperatorModel):
+class _InOutStagedModel(OperatorModel):
+    stage_input: int = 0
+    stage_output: int = 0
+
+    def __post_init__(self) -> None:
+        _check_int_range(self.stage_input, 0, None)
+        _check_int_range(self.stage_output, 0, None)
+
+    @property
+    def params(self) -> dict[str, int]:
+        return self._params_with_latency(
+            {
+                "WEXP": self.fmt.wexp,
+                "WMAN": self.fmt.wman,
+                "STAGE_INPUT": self.stage_input,
+                "STAGE_OUTPUT": self.stage_output,
+            }
+        )
+
+    @property
+    def timing(self) -> Timing:
+        return Timing(self.stage_input + self.stage_output, 1)
+
+
+@dataclass(frozen=True)
+class CmpModel(_InOutStagedModel):
+    module = "zkf_cmp"
+
+
+@dataclass(frozen=True)
+class FiniteModel(_InOutStagedModel):
+    module = "zkf_finite"
+
+
+@dataclass(frozen=True)
+class AbsNegModel(_InOutStagedModel):
+    module = "zkf_absneg"
+
+
+@dataclass(frozen=True)
+class SortModel(OperatorModel):
+    module = "zkf_sort"
     stage_input: int = 0
 
     def __post_init__(self) -> None:
@@ -137,16 +147,6 @@ class _CompareModel(OperatorModel):
     @property
     def timing(self) -> Timing:
         return Timing(1 + self.stage_input, 1)
-
-
-@dataclass(frozen=True)
-class CmpModel(_CompareModel):
-    module = "zkf_cmp"
-
-
-@dataclass(frozen=True)
-class SortModel(_CompareModel):
-    module = "zkf_sort"
 
 
 @dataclass(frozen=True)
@@ -360,43 +360,21 @@ class MulIlog2Model(OperatorModel):
 
 
 @dataclass(frozen=True)
-class DivCoreModel(OperatorModel):
-    module = "_zkf_div_core"
+class DivsqrtModel(OperatorModel):
+    """`mode` is the RTL's MODE."""
 
-    @property
-    def qfrac_base(self) -> int:
-        return self.fmt.wman + 2
-
-    @property
-    def qfrac(self) -> int:
-        return self.qfrac_base + (self.qfrac_base % 2)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return {
-            "WEXP": self.fmt.wexp,
-            "WMAN": self.fmt.wman,
-            "QFRAC_BASE": self.qfrac_base,
-            "QFRAC": self.qfrac,
-            "WEXP_UNBIASED": self.fmt.wexp + 2,
-        }
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(2 + self.qfrac // 2, 1)
-
-
-@dataclass(frozen=True)
-class DivModel(OperatorModel):
-    module = "zkf_div"
+    module = "zkf_divsqrt"
     stage_input: int = 0
+    stage_decode: int = 0
     stage_pack: int = 0
     stage_output: int = 0
+    mode: int = 2
 
     def __post_init__(self) -> None:
         _check_int_range(self.stage_input, 0, None)
-        for value in (self.stage_pack, self.stage_output):
+        for value in (self.stage_decode, self.stage_pack, self.stage_output):
             _check_int_range(value, 0, 1)
+        _check_int_range(self.mode, 0, 2)
 
     @property
     def params(self) -> dict[str, int]:
@@ -405,67 +383,17 @@ class DivModel(OperatorModel):
                 "WEXP": self.fmt.wexp,
                 "WMAN": self.fmt.wman,
                 "STAGE_INPUT": self.stage_input,
+                "STAGE_DECODE": self.stage_decode,
                 "STAGE_PACK": self.stage_pack,
                 "STAGE_OUTPUT": self.stage_output,
+                "MODE": self.mode,
             }
         )
 
     @property
     def timing(self) -> Timing:
-        return Timing(DivCoreModel(self.fmt).timing.latency + self.stage_input + self.stage_pack + self.stage_output, 1)
-
-
-@dataclass(frozen=True)
-class SqrtCoreModel(OperatorModel):
-    module = "_zkf_sqrt_core"
-
-    @property
-    def qfrac(self) -> int:
-        return self.fmt.wfrac + (self.fmt.wfrac % 2)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return {
-            "WEXP": self.fmt.wexp,
-            "WMAN": self.fmt.wman,
-            "QFRAC": self.qfrac,
-            "WEXP_UNBIASED": self.fmt.wexp + 2,
-        }
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(1 + self.qfrac // 2, 1)
-
-
-@dataclass(frozen=True)
-class SqrtModel(OperatorModel):
-    module = "zkf_sqrt"
-    stage_input: int = 0
-    stage_pack: int = 0
-    stage_output: int = 0
-
-    def __post_init__(self) -> None:
-        _check_int_range(self.stage_input, 0, None)
-        for value in (self.stage_pack, self.stage_output):
-            _check_int_range(value, 0, 1)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {
-                "WEXP": self.fmt.wexp,
-                "WMAN": self.fmt.wman,
-                "STAGE_INPUT": self.stage_input,
-                "STAGE_PACK": self.stage_pack,
-                "STAGE_OUTPUT": self.stage_output,
-            }
-        )
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(
-            SqrtCoreModel(self.fmt).timing.latency + self.stage_input + self.stage_pack + self.stage_output, 1
-        )
+        digits = (self.fmt.wman + 1) // 2 - 1 + (self.stage_decode if self.fmt.wman % 2 == 0 else 0)
+        return Timing(digits + self.stage_input + self.stage_pack + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -505,28 +433,6 @@ class FromIntModel(OperatorModel):
     @property
     def timing(self) -> Timing:
         return Timing(1 + self.stage_input + self.stage_normalize + self.stage_pack + self.stage_output, 1)
-
-
-@dataclass(frozen=True)
-class ToIntModel(OperatorModel):
-    module = "zkf_to_int"
-    wint: int = 32
-    stage_input: int = 0
-
-    def __post_init__(self) -> None:
-        _check_format(self, "WEXP", self.fmt.wexp, 2, 30)  # _zkf_to_fixpoint's guard
-        _check_format(self, "WINT", self.wint, 2)
-        _check_int_range(self.stage_input, 0, None)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman, "WINT": self.wint, "STAGE_INPUT": self.stage_input}
-        )
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(4 + self.stage_input, 1)
 
 
 @dataclass(frozen=True)
@@ -581,18 +487,19 @@ class ResizeModel(OperatorModel):
 
 
 @dataclass(frozen=True)
-class RoundModel(OperatorModel):
-    module = "zkf_round"
+class RintModel(OperatorModel):
+    module = "zkf_rint"
+    wint: int = 32
     stage_input: int = 0
-    stage_decode: int = 0
-    stage_pack: int = 0
+    stage_shift: int = 0
+    stage_round: int = 0
     stage_output: int = 0
 
     def __post_init__(self) -> None:
-        _check_format(self, "WEXP", self.fmt.wexp, 2, 31)  # zkf_round.v's guard
-        _check_int_range(self.stage_input, 0, None)
-        for value in (self.stage_decode, self.stage_pack, self.stage_output):
-            _check_int_range(value, 0, 1)
+        _check_format(self, "WEXP", self.fmt.wexp, 2, 31)  # zkf_rint.v's guard
+        _check_format(self, "WINT", self.wint, 2)
+        for value in (self.stage_input, self.stage_shift, self.stage_round, self.stage_output):
+            _check_int_range(value, 0, None)
 
     @property
     def params(self) -> dict[str, int]:
@@ -600,16 +507,17 @@ class RoundModel(OperatorModel):
             {
                 "WEXP": self.fmt.wexp,
                 "WMAN": self.fmt.wman,
+                "WINT": self.wint,
                 "STAGE_INPUT": self.stage_input,
-                "STAGE_DECODE": self.stage_decode,
-                "STAGE_PACK": self.stage_pack,
+                "STAGE_SHIFT": self.stage_shift,
+                "STAGE_ROUND": self.stage_round,
                 "STAGE_OUTPUT": self.stage_output,
             }
         )
 
     @property
     def timing(self) -> Timing:
-        return Timing(self.stage_input + self.stage_decode + self.stage_pack + self.stage_output, 1)
+        return Timing(self.stage_input + self.stage_shift + self.stage_round + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -743,8 +651,10 @@ class Log2Model(OperatorModel):
 
 
 @dataclass(frozen=True)
-class _TrigModel(OperatorModel):
-    _wexp_min = 5  # mirrors _zkf_cordic_unit's WEXP guard (MODE 1/2)
+class CordicModel(OperatorModel):
+    """`mode` is the RTL's MODE. At 2 the timing is keyed by the `vectoring` input; a fixed mode has one Timing."""
+
+    module = "zkf_cordic"
     unroll100: int = 100
     stage_input: int = 0
     stage_product: int = 0
@@ -752,9 +662,11 @@ class _TrigModel(OperatorModel):
     stage_pack: int = 0
     stage_output: int = 0
     wmultiplier: int = 0
+    mode: int = 2
 
     def __post_init__(self) -> None:
-        _check_format(self, "WEXP", self.fmt.wexp, self._wexp_min, 30)  # the ceiling mirrors _zkf_cordic_unit's
+        _check_int_range(self.mode, 0, 2)  # ahead of the format, whose floor it sets
+        _check_format(self, "WEXP", self.fmt.wexp, 2 if self.mode == 0 else 5, 30)  # zkf_cordic.v's guard
         trig_spec(self.fmt.wman)
         _check_int_range(self.unroll100, 100, None, {50})
         _check_int_range(self.stage_product, 0, 4)
@@ -766,98 +678,40 @@ class _TrigModel(OperatorModel):
 
     @property
     def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {
-                "WEXP": self.fmt.wexp,
-                "WMAN": self.fmt.wman,
-                "WMULTIPLIER": self.wmultiplier,
-                "UNROLL100": self.unroll100,
-                "STAGE_INPUT": self.stage_input,
-                "STAGE_PRODUCT": self.stage_product,
-                "STAGE_NORMALIZE": self.stage_normalize,
-                "STAGE_PACK": self.stage_pack,
-                "STAGE_OUTPUT": self.stage_output,
-            }
-        )
-
-
-@dataclass(frozen=True)
-class SincosModel(_TrigModel):
-    module = "zkf_sincos"
-    _wexp_min = 2  # mirrors _zkf_pack's floor
-
-    @property
-    def timing(self) -> Timing:
-        k = trig_spec(self.fmt.wman)["n_sincos"]
-        xycyc = (k * 100 + self.unroll100 - 1) // self.unroll100
-        parallel = self.unroll100 < 100
-        saved = min(1 + self.stage_product, xycyc - k) if parallel else 0
-        latency = (
-            11
-            + (2 * self.stage_product)
-            + xycyc
-            - saved
-            + self.stage_input
-            + self.stage_normalize
-            + self.stage_pack
-            + self.stage_output
-        )
-        return Timing(latency, latency + 1)
-
-
-@dataclass(frozen=True)
-class Atan2Model(_TrigModel):
-    module = "zkf_atan2"
-
-    @property
-    def timing(self) -> Timing:
-        spec = trig_spec(self.fmt.wman)
-        n = spec["n_atan2"]
-        xf = spec["xf_atan2"]
-        steps = (xf + 1) // 2
-        div_cycles = steps + 1
-        xycyc = (n * 100 + self.unroll100 - 1) // self.unroll100
-        latency = (
-            7
-            + self.stage_input
-            + xycyc
-            + div_cycles
-            + self.stage_product
-            + self.stage_normalize
-            + self.stage_pack
-            + self.stage_output
-        )
-        return Timing(latency, latency + 1)
-
-
-@dataclass(frozen=True)
-class CordicModel(_TrigModel):
-    """`mode` is the RTL's MODE. At 2 the timing is keyed by the `vectoring` input; a fixed mode has one Timing."""
-
-    module = "zkf_cordic"
-    mode: int = 2
-
-    def __post_init__(self) -> None:
-        _check_int_range(self.mode, 0, 2)  # ahead of the format, whose floor it sets
-        super().__post_init__()
-
-    @property
-    def _wexp_min(self) -> int:
-        return SincosModel._wexp_min if self.mode == 0 else Atan2Model._wexp_min
-
-    def _params_with_latency(self, params: dict[str, int]) -> dict[str, int]:
         names = ("LATENCY_ROTATION", "LATENCY_VECTORING")
-        timing = self.timing
-        timings = {self.mode: timing} if isinstance(timing, Timing) else timing
-        return {**params, "MODE": self.mode, **{names[mode]: t.latency for mode, t in timings.items()}}
+        return {
+            "WEXP": self.fmt.wexp,
+            "WMAN": self.fmt.wman,
+            "WMULTIPLIER": self.wmultiplier,
+            "UNROLL100": self.unroll100,
+            "STAGE_INPUT": self.stage_input,
+            "STAGE_PRODUCT": self.stage_product,
+            "STAGE_NORMALIZE": self.stage_normalize,
+            "STAGE_PACK": self.stage_pack,
+            "STAGE_OUTPUT": self.stage_output,
+            "MODE": self.mode,
+            **{names[mode]: self._timing_of(mode).latency for mode in ((0, 1) if self.mode == 2 else (self.mode,))},
+        }
 
     @property
     def timing(self) -> Timing | Mapping[int, Timing]:
-        config = {name: value for name, value in self.config.items() if name != "mode"}
-        models = (SincosModel, Atan2Model)
         if self.mode != 2:
-            return models[self.mode](self.fmt, **config).timing
-        return MappingProxyType({mode: model(self.fmt, **config).timing for mode, model in enumerate(models)})
+            return self._timing_of(self.mode)
+        return MappingProxyType({mode: self._timing_of(mode) for mode in (0, 1)})
+
+    def _timing_of(self, mode: int) -> Timing:
+        spec = trig_spec(self.fmt.wman)
+        stages = self.stage_input + self.stage_normalize + self.stage_pack + self.stage_output
+        if mode == 0:
+            k = spec["n_sincos"]
+            xycyc = (k * 100 + self.unroll100 - 1) // self.unroll100
+            saved = min(1 + self.stage_product, xycyc - k) if self.unroll100 < 100 else 0  # the decoupled z-path
+            latency = 11 + (2 * self.stage_product) + xycyc - saved + stages
+        else:
+            xycyc = (spec["n_atan2"] * 100 + self.unroll100 - 1) // self.unroll100
+            divide = (spec["xf_atan2"] + 1) // 2 + 1
+            latency = 7 + xycyc + divide + self.stage_product + stages
+        return Timing(latency, latency + 1)
 
 
 def _check_format(model: OperatorModel, name: str, value: int, min: int, max: int | None = None) -> None:

@@ -1,13 +1,10 @@
 #!/usr/bin/env python3
 """
-Constant generator for the ZKF CORDIC trigonometric operators: zkf_sincos, zkf_atan2.
+Constant generator for zkf_cordic; the algorithms are documented in ``zkf/rtl/zkf_cordic.v``.
 
-Phase ``x`` is in turns (``sin = sin(2*pi*x)``). The module reduces ``x`` mod 1 to ``frac(x) in [0,1)``, takes the top
-two bits as the ``quadrant`` and folds the rest to one octant angle ``t' in [0, pi/4]``, runs a fixed-point CORDIC
-rotation, then unmaps and packs. Why CORDIC: faithful sin/cos needs relative accuracy near each zero, and CORDIC gets it
-with adds/shifts only (no small-coefficient cancellation; inverse-gain folded into the seed). KEY DESIGN: the SAME
-engine (``zkf/rtl/_zkf_cordic_core.v``), run in *vectoring* mode, computes ``atan2`` + the vector magnitude -- reusing
-the arctan LUT (stored in *turns*), datapath, iteration count, and quadrant pre/post-processing; only MODE differs.
+Why CORDIC: faithful sin/cos needs relative accuracy near each zero, and CORDIC gets it with adds/shifts only (no
+small-coefficient cancellation; inverse-gain folded into the seed). Both functions run on the same engine, sharing the
+arctan LUT (stored in *turns*), the datapath and the iteration count.
 
 Angle units: the arctan LUT is ``L[i] = atan(2**-i)/(2*pi)`` at scale ``2**-ZF``, ``ZF = WT + 2 + GUARD_ZF``. The octant
 coordinate ``t'`` is at scale ``2**-WT``, so the angle accumulator seed is ``z0 = t' << GUARD_ZF`` (no multiply).
@@ -17,7 +14,7 @@ generated ``2*pi``), ``cos = +1``; ``GUARD_FF(WMAN)`` places that handoff where 
 ``cos`` is never small, so only sin needs it.
 
 ``--emit`` writes the per-WMAN Verilog cores and the Python data table and ``--check-emit`` fails if the checked-in
-copies have drifted from a fresh run; ``--check`` verifies that both operators (and the quadrant) are faithfully
+copies have drifted from a fresh run; ``--check`` verifies that both functions (and the quadrant) are faithfully
 rounded against the unrounded ``mpmath`` truth (``zkf_accuracy.py``).
 """
 
@@ -52,13 +49,13 @@ PKG_TABLES = REPO / "zkf" / "_tables"
 # ~WMAN/2 stages instead of ~1.5*WMAN, traded for two correction multiplies. (The correction fixes only the ANGLE
 # residual; the iteration array's truncation still bounds the small sines, so the datapath keeps ~1.5*WMAN frac bits.)
 GUARD_XY = 6  # x/y fractional bits past 1.5*WMAN (round/sticky + iteration-rounding headroom)
-# GOTCHA: GUARD_XY is SHARED by both operators (sizes WX/KINV and atan2's divider F / INV_TAU scale). sincos is faithful
+# GOTCHA: GUARD_XY is SHARED by both functions (sizes WX/KINV and atan2's divider F / INV_TAU scale). sincos is faithful
 # at 3; atan2's theta is XF-bound (more iterations don't help, only XF does), so it needs the larger value. GUARD_XY=6
 # keeps atan2 faithful across the supported range (WMAN >= 16, which is the smallest trig format -- see SUPPORTED_WMAN
-# below). WMAN=11 would have needed GUARD_XY=7 (XF=24) and was therefore dropped from the trig operators rather than
+# below). WMAN=11 would have needed GUARD_XY=7 (XF=24) and was therefore dropped from zkf_cordic rather than
 # widen the shared engine for every format; it is still supported by the algebraic operators, which use no CORDIC table.
 # Do not lower GUARD_XY, or add a smaller trig WMAN, without re-running --check for all supported WMAN.
-# Iterations before termination: N = (WMAN+1)//2 + GUARD_ITER_*. Named per operator but kept EQUAL (n_iters()
+# Iterations before termination: N = (WMAN+1)//2 + GUARD_ITER_*. Named per function but kept EQUAL (n_iters()
 # enforces it): one table bakes one LUT depth, and zkf_cordic's runtime-mode engine has one stopping count.
 # Both are 2 because all three outputs miss faithful rounding at 1, each for its own dropped term -- sincos and
 # atan2's MAGNITUDE a quadratic one, atan2's THETA the cubic one dropped by the RESIDUAL correction's arctan
@@ -72,7 +69,7 @@ GUARD_Z = 3
 # 2**-ZF (~K*2**-ZF error) and the residual feeds the correction multiply, so it must keep full small-angle precision.
 GUARD_ZF = 6
 # atan2 residual-divide guard: extra quotient fractional bits so the divide-termination and small-ratio bypass round
-# to <= 1 ULP. Consumed by the atan2 model and _zkf_cordic_unit.v.
+# to <= 1 ULP. Consumed by the atan2 model and zkf_cordic.v.
 # NOT MONOTONE -- raising it does not buy accuracy. It also sets the small-ratio bypass threshold, and the bypass
 # drops a term cubic in the ratio (at 9, (11,53) theta exceeds 2 ULP). This, not GUARD_ITER_ATAN2, binds theta, the
 # output with the least headroom.
@@ -110,7 +107,7 @@ RANDOM_CHECK_SAMPLES = int(os.environ.get("ZKF_CHECK_SAMPLES", "1000000"))
 
 def guard_ff(wman: int) -> int:
     # Small-angle handoff guard: places the linear-path boundary where |1 - cos(2*pi*2**e_b)| <= 2**-WMAN, i.e.
-    # GUARD_FF >= WMAN//2 + 2; floored at 12. Mirrored in _zkf_cordic_unit.
+    # GUARD_FF >= WMAN//2 + 2; floored at 12. Mirrored in zkf_cordic.
     return max(12, wman // 2 + 2)
 
 
@@ -125,17 +122,17 @@ def wt_bits(wman: int) -> int:
 
 
 def n_sincos(wman: int) -> int:
-    """N for zkf_sincos: rotation iterations before the linear final rotation (see the GUARD_ITER_* comment)."""
+    """N for sincos: rotation iterations before the linear final rotation (see the GUARD_ITER_* comment)."""
     return (wman + 1) // 2 + GUARD_ITER_SINCOS
 
 
 def n_atan2(wman: int) -> int:
-    """N for zkf_atan2: vectoring iterations before the residual divide (see the GUARD_ITER_* comment)."""
+    """N for atan2: vectoring iterations before the residual divide (see the GUARD_ITER_* comment)."""
     return (wman + 1) // 2 + GUARD_ITER_ATAN2
 
 
 def n_iters(wman: int) -> int:
-    """The one CORDIC depth both operators run to, baked into the shared per-WMAN table as its LUT length."""
+    """The one CORDIC depth both functions run to, baked into the shared per-WMAN table as its LUT length."""
     ns, na = n_sincos(wman), n_atan2(wman)
     if ns != na:
         raise ValueError(
@@ -166,9 +163,9 @@ class Spec:
     zf: int  # angle accumulator fractional bits (scale 2**-zf) = WT + 2 + GUARD_ZF (finer than WT+2)
     zw: int  # angle signed width
     kinv: int  # round(1/gain * 2**xf), gain = prod sqrt(1+2**-2i)
-    n_sincos: int  # zkf_sincos iterations: (WMAN+1)//2 + GUARD_ITER_SINCOS
-    n_atan2: int  # zkf_atan2 iterations: (WMAN+1)//2 + GUARD_ITER_ATAN2
-    xf_atan2: int  # zkf_atan2 x/y fractional bits (drives the divider F/STEPS); == xf atm (shared engine width)
+    n_sincos: int  # rotation iterations: (WMAN+1)//2 + GUARD_ITER_SINCOS
+    n_atan2: int  # vectoring iterations: (WMAN+1)//2 + GUARD_ITER_ATAN2
+    xf_atan2: int  # vectoring x/y fractional bits (drives the divider F/STEPS); == xf atm (shared engine width)
     tsa: int = 0  # small-angle handoff: t' < tsa uses the linear path (TSA_BITS = log2)
     lut: list = field(default_factory=list)  # L[i] = round(atan(2**-i)/(2*pi) * 2**zf), i = 0..n-1
     # The multiplier constants are EMITTED PRE-NARROWED to WMAN+5 bits, each at its own native scale 2**-S; every
@@ -392,7 +389,7 @@ def _emit_consts(s: Spec) -> str:
 def _emit_python(all_specs: dict[int, Spec]) -> str:
     w = _Writer()
     w("# GENERATED by zkf_trig.py -- DO NOT EDIT.")
-    w('"""Bit-exact CORDIC constants for zkf_sincos (and the shared atan2 engine), consumed by the zkf package."""')
+    w('"""Bit-exact constants of zkf_cordic, consumed by the zkf package."""')
     w("")
     w("SPECS = {")
     w.push()
@@ -750,7 +747,7 @@ def _atan2_unit(case: tuple[int, int]) -> tuple[float, float, int, int, tuple | 
 
 
 def _check_atan2() -> list[str]:
-    """Same for zkf_atan2 (theta and mag). Returns the per-format failures."""
+    """Same for atan2 (theta and mag). Returns the per-format failures."""
     import sys
     from concurrent.futures import ProcessPoolExecutor
 

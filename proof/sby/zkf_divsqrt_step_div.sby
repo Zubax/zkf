@@ -1,0 +1,17 @@
+[options]
+mode bmc
+depth 1
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal _zkf_divsqrt_step.v
+read -formal zkf_divsqrt_step_eq.v
+chparam -set MODE 0 zkf_divsqrt_step_eq
+prep -top zkf_divsqrt_step_eq
+
+[files]
+zkf/rtl/_zkf_divsqrt_step.v
+proof/harness/zkf_divsqrt_step_eq.v

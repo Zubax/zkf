@@ -1,0 +1,19 @@
+[options]
+mode bmc
+depth 5
+expect pass
+
+[engines]
+smtbmc yices
+
+[script]
+read -formal zkf_pipe.v
+read -formal zkf_finite.v
+read -formal zkf_finite_eq.v
+chparam -set WEXP 6 -set WMAN 18 -set STAGE_INPUT 1 -set STAGE_OUTPUT 1 zkf_finite_eq
+prep -top zkf_finite_eq
+
+[files]
+zkf/rtl/zkf_pipe.v
+zkf/rtl/zkf_finite.v
+proof/harness/zkf_finite_eq.v

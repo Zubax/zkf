@@ -256,7 +256,7 @@ class Zkf:
         return DivResult(Zkf(fmt, round_fraction_to_zkf(fmt, result_sign, value)), div0)
 
     def sqrt(self) -> SqrtResult:
-        """sqrt(self) plus the domain-error (self<0) flag; sqrt(x<0) = -inf (the zkf_sqrt operator)."""
+        """sqrt(self) plus the domain-error (self<0) flag; sqrt(x<0) = -inf (zkf_divsqrt's square root)."""
         fmt = self.fmt
         if self.is_zero:
             return SqrtResult(Zkf(fmt, zero(fmt)), False)  # sign of zero ignored
@@ -350,23 +350,23 @@ class Zkf:
         return Zkf(fmt_out, round_fraction_to_zkf(fmt_out, self.negative, abs(self.to_fraction())))
 
     def round(self) -> Zkf:
-        """Round to the nearest integral value, ties to even (the zkf_round RNTE mode)."""
+        """Round to the nearest integral value, ties to even (the zkf_rint RNTE mode)."""
         return self._round_to_integral(RoundMode.NEAREST_EVEN)
 
     def floor(self) -> Zkf:
-        """Round toward -inf to an integral value (the zkf_round floor mode)."""
+        """Round toward -inf to an integral value (the zkf_rint floor mode)."""
         return self._round_to_integral(RoundMode.FLOOR)
 
     def ceil(self) -> Zkf:
-        """Round toward +inf to an integral value (the zkf_round ceil mode)."""
+        """Round toward +inf to an integral value (the zkf_rint ceil mode)."""
         return self._round_to_integral(RoundMode.CEIL)
 
     def trunc(self) -> Zkf:
-        """Round toward zero to an integral value (the zkf_round trunc mode)."""
+        """Round toward zero to an integral value (the zkf_rint trunc mode)."""
         return self._round_to_integral(RoundMode.TRUNC)
 
     def _round_to_integral(self, mode: RoundMode) -> Zkf:
-        """Round to an integral value in the same format per mode (the zkf_round operator)."""
+        """Round to an integral value in the same format per mode (zkf_rint's y_float)."""
         fmt = self.fmt
         if self.is_inf:
             return Zkf(fmt, canonical_inf(fmt, self.negative))
@@ -472,7 +472,7 @@ class Zkf:
         return Log2Result(Zkf(fmt, y), False, False)
 
     def sincos(self) -> SinCos:
-        """(sin(2*pi*self), cos(2*pi*self), quadrant) -- the zkf_sincos operator."""
+        """(sin(2*pi*self), cos(2*pi*self), quadrant) -- zkf_cordic's rotation."""
         fmt, bits = self.fmt, self.bits
         spec = trig_spec(fmt.wman)
         d = self
@@ -484,7 +484,7 @@ class Zkf:
 
         xf, zf = spec["xf"], spec["zf"]
         # const2pi arrives PRE-NARROWED from the table (top WMAN+5 bits == round(2*pi * 2**const2pi_s)); const2pi_s is
-        # the single source of scale for every consuming shift / exp-offset. Mirrors zkf/rtl/_zkf_cordic_unit.v.
+        # the single source of scale for every consuming shift / exp-offset. Mirrors zkf/rtl/zkf_cordic.v.
         const2pi, const2pi_s = spec["const2pi"], spec["const2pi_s"]
         n_sincos = spec["n_sincos"]  # sincos iterations (linear-rotation termination); == table n
         wt = spec["wt"]  # quadrant-local coordinate width (FF - 2)
@@ -566,11 +566,8 @@ class Zkf:
 
     def atan2(self, x: Zkf) -> Atan2Result:
         """
-        (theta, magnitude) of atan2(self, x): theta in turns (-0.5, 0.5], magnitude = hypot(self, x).
-
-        Reuses the sincos CORDIC engine in vectoring mode: it yields z_K ~= atan2 (turns) and x_K ~= gain*hypot; a
-        residual divide finishes the small angle, a small-ratio bypass covers the near-+x-axis, and the magnitude
-        descales x_K by 1/gain (== KINV).
+        (theta, magnitude) of atan2(self, x): theta in turns (-0.5, 0.5], magnitude = hypot(self, x) -- zkf_cordic's
+        vectoring.
         """
         self._require_same(x)
         check_format_width("atan2 WEXP", self.fmt.wexp, 5)
@@ -589,7 +586,7 @@ class Zkf:
 
         # The shared _zkf_pmul multiplies x_K*kinv_mag (magnitude) and Q*inv_tau (residual + bypass theta). Both
         # constants are PRE-NARROWED to WMAN+5 bits at their native scales (kinv_s, invtau_s), so every dependent shift
-        # is "product-scale minus target-scale" with no fold-back. Mirrors zkf/rtl/_zkf_cordic_unit.v.
+        # is "product-scale minus target-scale" with no fold-back. Mirrors zkf/rtl/zkf_cordic.v.
         kinv_mag, kinv_s = spec["kinv_mag"], spec["kinv_s"]  # narrowed 1/gain (MAG product) + its native scale
         inv_tau, invtau_s = spec["inv_tau"], spec["invtau_s"]  # narrowed 1/(2*pi) (residual + bypass) + native scale
 

@@ -7,7 +7,6 @@ expect pass
 smtbmc yices
 
 [script]
-read -formal zkf_cmp_comb.v
 read -formal zkf_pipe.v
 read -formal zkf_cmp.v
 read -formal zkf_cmp_ref.v
@@ -16,7 +15,6 @@ chparam -set WEXP 6 -set WMAN 18 zkf_cmp_eq
 prep -top zkf_cmp_eq
 
 [files]
-zkf/rtl/zkf_cmp_comb.v
 zkf/rtl/zkf_pipe.v
 zkf/rtl/zkf_cmp.v
 proof/refs/zkf_cmp_ref.v

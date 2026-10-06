@@ -9,15 +9,6 @@
 
 `default_nettype none
 
-`ifndef ZKF_ATTRIBUTE_ROM_PRE
-`define ZKF_ATTRIBUTE_ROM_PRE
-`define ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`endif
-`ifndef ZKF_ATTRIBUTE_ROM_POST
-`define ZKF_ATTRIBUTE_ROM_POST
-`define ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`endif
-
 module _zkf_log2_m36 #(
     parameter D                   = 3,
     parameter WSB                 = 1,
@@ -55,7 +46,10 @@ module _zkf_log2_m36 #(
     wire [K-1:0]    idx_ofs = idx_raw - SEG_BASE[K-1:0];
     wire [WIDX-1:0] idx     = idx_ofs[WIDX-1:0];
     wire [RW-1:0]   w       = v[RW-1:0];
-    `ZKF_ATTRIBUTE_ROM_PRE reg [(D+1)*CW-1:0] rom [0:NSEG-1] `ZKF_ATTRIBUTE_ROM_POST;
+`ifdef ZKF_ATTRIBUTE_ROM
+    `ZKF_ATTRIBUTE_ROM
+`endif
+    reg [(D+1)*CW-1:0] rom [0:NSEG-1];
     initial begin
         rom[  0] = {51'h7fffffffba962, 51'h0000010acbfbb, 51'h7ffb73047f34d, 51'h1b50a94c5c292};
         rom[  1] = {51'h7fffffffbae38, 51'h00000109fbbe1, 51'h7ffb751946f83, 51'h1b4c1d5b61efc};
@@ -835,15 +829,6 @@ module _zkf_log2_m36 #(
     assign l_mag = umag_p[F2:0];
     assign l_neg = fsb[WSB];
 endmodule
-
-`ifdef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`undef ZKF_ATTRIBUTE_ROM_PRE
-`undef ZKF_ATTRIBUTE_ROM_PRE_DEFAULTED
-`endif
-`ifdef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`undef ZKF_ATTRIBUTE_ROM_POST
-`undef ZKF_ATTRIBUTE_ROM_POST_DEFAULTED
-`endif
 
 // verilog_lint: waive-stop line-length
 `default_nettype wire

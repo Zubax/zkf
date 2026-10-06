@@ -148,12 +148,6 @@ def random_pack_mag_scale(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int
     return sign, mag, scale
 
 
-def normal_from_significands(fmt: ZkfFormat, ma: int, mb: int) -> tuple[int, int]:
-    a = normal(fmt, 0, fmt.bias, ma - (1 << fmt.wfrac))
-    b = normal(fmt, 0, fmt.bias, mb - (1 << fmt.wfrac))
-    return a, b
-
-
 def directed_integers(wint: int) -> dict[str, int]:
     if wint < 2:
         raise ValueError(f"wint must be at least 2, got {wint}")
@@ -208,7 +202,7 @@ def saturating_y(fmt: ZkfFormat) -> int:
     """
     The y that, against x = max_finite, puts hypot in the middle of the round-up window (max + 1/2 ULP, max + 1 ULP]
     -- so the magnitude's rounding increment carries into the exponent and only _zkf_pack's SATURATE_ROUND_CARRY
-    keeps the result finite. y is normal at every format zkf_atan2 accepts.
+    keeps the result finite. y is normal at every format vectoring accepts.
 
     Worked in ULP units with the encoding built rather than computed, so nothing scales with WEXP (materializing y
     would need a 2**(2**WEXP)-sized rational): with max = U*ulp and U = 2**WMAN - 1,

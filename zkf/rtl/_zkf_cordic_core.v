@@ -1,6 +1,6 @@
-// Folded (iterative) CORDIC engine shared by the ZKF trigonometric operators. One (x, y, z) datapath is reused over
-// several cycles, a configurable number of iterations unrolled per cycle, instead of an N-stage pipeline -- so the
-// area is a single datapath at the cost of an initiation interval equal to the latency.
+// Folded (iterative) CORDIC engine of zkf_cordic. One (x, y, z) datapath is reused over several cycles, a configurable
+// number of iterations unrolled per cycle, instead of an N-stage pipeline -- so the area is a single datapath at the
+// cost of an initiation interval equal to the latency.
 //
 // UNROLL100 is the latency knob (iterations per cycle x100); pick the largest that closes timings:
 //     50 = one iteration per two cycles (split shift/add to halve the per-iteration combinational path, at 2N cycles);
@@ -10,11 +10,10 @@
 // MODE selects the trajectory; the x/y/z update is otherwise identical:
 //
 //   MODE = 0 (ROTATION):  sigma_i = (z_i >= 0) ? +1 : -1   -- drives the angle z to 0; (x, y) rotates by z0.
-//                         Used by zkf_sincos with (x0, y0) = (1/gain, 0) so (xn, yn) ~ (cos z0, sin z0) and
-//                         zn is the small residual _zkf_cordic_unit finishes with one linear rotation.
+//                         Seeded with (x0, y0) = (1/gain, 0) so (xn, yn) ~ (cos z0, sin z0) and zn is the small
+//                         residual that zkf_cordic finishes with one linear rotation.
 //
 //   MODE = 1 (VECTORING): sigma_i = (y_i >= 0) ? -1 : +1   -- drives y to 0; zn = z0 + atan2(y0, x0), xn ~ |(x0,y0)|.
-//                         Used by zkf_atan2.
 //
 //   MODE = 2 (RUNTIME):   either of the above per transaction, vectoring iff `vectoring` is high at `start`.
 //
@@ -28,7 +27,7 @@
 // stream ahead of time. The sigma sequence is identical either way; "coupled" (lock-step) and "decoupled" differ only
 // in HOW sigma reaches the rotator: an inline combinational tap off the in-step z-chain / y (coupled), or a registered
 // read from sig_mem fed by the ahead-running z-engine (decoupled). So the rotator is written once; the z handling is
-// the only thing that varies. Decoupling lets sincos start its residual-angle correction during the CORDIC.
+// the only thing that varies. Decoupling lets rotation start its residual-angle correction during the CORDIC.
 //
 // PARALLEL only helps -- and is only legal -- with the half-rate (pipe) rotator: the z-recurrence is one narrow add,
 // so its fast rate is one iteration/cycle, which laps a half-rate x/y but merely ties a full-rate one. So a full-rate

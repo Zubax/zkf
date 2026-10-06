@@ -1,5 +1,5 @@
-// Streamed min/max sorter built on zkf_cmp_comb.
-// Inherits the canonical-zero and same-sign-infinity equality semantics from zkf_cmp_comb.
+// Streamed min/max sorter built on a combinational zkf_cmp, whose canonical-zero and same-sign-infinity equality it
+// inherits.
 //
 // STAGE_INPUT=0: operands feed the sorter combinationally (default).
 // STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
@@ -44,13 +44,11 @@ module zkf_sort #(
 
     wire a_lt_b;
 
-    // Only the less-than result orders the pair; the gt/eq outputs are intentionally left unconnected.
-    zkf_cmp_comb #(.WEXP(WEXP), .WMAN(WMAN)) u_cmp (
-        .a(a_q),
-        .b(b_q),
-        .a_gt_b(),
-        .a_eq_b(),
-        .a_lt_b(a_lt_b)
+    // Only the less-than result orders the pair.
+    zkf_cmp #(.WEXP(WEXP), .WMAN(WMAN)) u_cmp (
+        .clk(clk), .rst(rst), .in_valid(in_valid_q),
+        .a(a_q), .b(b_q),
+        .out_valid(), .a_gt_b(), .a_eq_b(), .a_lt_b(a_lt_b)
     );
 
     // Reset only stream validity. Payload registers intentionally free-run.

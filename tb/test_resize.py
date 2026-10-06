@@ -19,7 +19,7 @@ from zkf_operands import (
     random_zero,
 )
 from zkf_params import check_width, resize_context
-from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
+from zkf_stream import RegisterStageScoreboard, check_combinational, drive_unsigned, run_stream_cases, start_clock
 
 
 @dataclass(frozen=True)
@@ -151,7 +151,6 @@ async def resize_runtime_cases(dut) -> None:
     check_width("y", dut.y, fmt_out.wfull, context)
     cases = cases_for(fmt_in, fmt_out, context.kind, context.seed, context.count)
 
-    start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
     drive_unsigned(dut.a, 0)
@@ -185,6 +184,9 @@ async def resize_runtime_cases(dut) -> None:
         dut.in_valid.value = 1
         return drive_case(cases[0])
 
+    if register_stages == 0:
+        await check_combinational(dut, context.prefix(), {"y": dut.y}, cases[:256], drive_case)
+    start_clock(dut)
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
     assert scoreboard.checked == len(

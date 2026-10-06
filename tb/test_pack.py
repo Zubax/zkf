@@ -15,7 +15,14 @@ from zkf._reference import pack_reference
 from zkf_bits import hex_bits, mask, signed_range
 from zkf_operands import random_pack_mag_scale
 from zkf_params import check_width, float_context
-from zkf_stream import RegisterStageScoreboard, drive_signed, drive_unsigned, run_stream_cases, start_clock
+from zkf_stream import (
+    RegisterStageScoreboard,
+    check_combinational,
+    drive_signed,
+    drive_unsigned,
+    run_stream_cases,
+    start_clock,
+)
 
 
 def pack_from_mag_scale(
@@ -329,7 +336,6 @@ async def pack_runtime_cases(dut) -> None:
         saturate_round_carry,
     )
 
-    start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
     dut.sign.value = 0
@@ -388,6 +394,9 @@ async def pack_runtime_cases(dut) -> None:
         dut.in_valid.value = 1
         return drive_case(cases[0])
 
+    if register_stages == 0:
+        await check_combinational(dut, context.prefix(), {"y": dut.y}, cases[:256], drive_case)
+    start_clock(dut)
     await scoreboard.reset(register_stages + 1, drive_during_reset=drive_reset_sample)
     await run_stream_cases(dut, scoreboard, cases, drive_case, invalid_drive, describe)
     assert scoreboard.checked == len(

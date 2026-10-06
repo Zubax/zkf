@@ -1,5 +1,5 @@
 // Power-of-two multiplier: y = a * 2^k, where k is a signed integer (ldexp/scalbn).
-// This is far cheaper than full multiplication (zkf_mul) or division (zkf_div) because the significand is preserved
+// This is far cheaper than full multiplication (zkf_mul) or division (zkf_divsqrt) because the significand is preserved
 // bit-for-bit and only the biased exponent is shifted by k, and no rounding is required -- the operation is exact
 // in the format's normal range.
 //
@@ -96,6 +96,10 @@ module zkf_mul_ilog2 #(
 
     wire signed [WACC-1:0] a_exp_acc = $signed({{(WACC-WEXP){1'b0}}, a_exp});
     wire signed [WACC-1:0] k_exp_acc = $signed({{(WACC-WK_NRW){k_nrw[WK_NRW-1]}}, k_nrw});
+    // Kept by ZKF_ATTRIBUTE_KEEP: LSE otherwise restructures it into a slower cone.
+`ifdef ZKF_ATTRIBUTE_KEEP
+    `ZKF_ATTRIBUTE_KEEP
+`endif
     wire signed [WACC-1:0] new_exp_acc = a_exp_acc + k_exp_acc;
     // The subtraction's sign bit implements >= EXP_INF as a carry chain; wide comparators mapped poorly in some tools.
     wire signed [WACC-1:0] of_acc = new_exp_acc - $signed({{(WACC-WEXP){1'b0}}, EXP_INF});

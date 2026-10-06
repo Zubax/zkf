@@ -92,7 +92,7 @@ def write_yosys_script(
     # show their internals instead of opaque boxes. The original design is then popped back for the actual
     # synthesis pass, leaving its results unaffected.
     defines = script.parent / "zkf_yosys_defines.vh"
-    defines.write_text('`define ZKF_ATTRIBUTE_ROM_PRE (* rom_style = "block" *)\n' "`define ZKF_ATTRIBUTE_ROM_POST\n")
+    defines.write_text('`define ZKF_ATTRIBUTE_ROM (* rom_style = "block" *)\n')
     rtl = [str(defines)] + [str(path) for path in rtl_sources(spec)] + [str(wrapper)]
     schematic_commands = []
     if spec.emit_schematic:

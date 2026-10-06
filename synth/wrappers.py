@@ -385,388 +385,6 @@ endmodule
 """)
 
 
-def write_div_core_wrapper(spec: ModuleSpec, path: Path) -> None:
-    wfull = spec.wexp + spec.wman
-    model = model_for(spec)
-    wexp_unbiased = model.params["WEXP_UNBIASED"]
-    params = model.verilog_params.replace(", ", ",\n        ")
-    path.write_text(f"""`default_nettype none
-
-module {spec.top} (
-    input  wire                     clk,
-    input  wire                     rst,
-    input  wire                     in_valid,
-    input  wire [{wfull - 1}:0]     a,
-    input  wire [{wfull - 1}:0]     b,
-    output wire                     out_valid,
-    output wire                     sign,
-    output wire                     force_zero,
-    output wire                     force_inf,
-    output wire signed [{wexp_unbiased - 1}:0] exp_biased,
-    output wire [{spec.wman - 1}:0] significand,
-    output wire                     guard,
-    output wire                     round,
-    output wire                     sticky,
-    output wire                     div0,
-    output wire [{spec.wman - 1}:0] partial_rem
-);
-    // Measurement harness: put real registers on every DUT input and output so the timing report includes
-    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
-    {SYNTH_REG_ATTR}
-    reg                 r_in_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_a;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_b;
-
-    wire                            dut_out_valid;
-    wire                            dut_sign;
-    wire                            dut_force_zero;
-    wire                            dut_force_inf;
-    wire signed [{wexp_unbiased - 1}:0] dut_exp_biased;
-    wire                 [{spec.wman - 1}:0] dut_significand;
-    wire                            dut_guard;
-    wire                            dut_round;
-    wire                            dut_sticky;
-    wire                            dut_div0;
-    wire                 [{spec.wman - 1}:0] dut_partial_rem;
-
-    {SYNTH_REG_ATTR}
-    reg                            r_out_valid;
-    {SYNTH_REG_ATTR}
-    reg                            r_sign;
-    {SYNTH_REG_ATTR}
-    reg                            r_force_zero;
-    {SYNTH_REG_ATTR}
-    reg                            r_force_inf;
-    {SYNTH_REG_ATTR}
-    reg signed [{wexp_unbiased - 1}:0] r_exp_biased;
-    {SYNTH_REG_ATTR}
-    reg                 [{spec.wman - 1}:0] r_significand;
-    {SYNTH_REG_ATTR}
-    reg                            r_guard;
-    {SYNTH_REG_ATTR}
-    reg                            r_round;
-    {SYNTH_REG_ATTR}
-    reg                            r_sticky;
-    {SYNTH_REG_ATTR}
-    reg                            r_div0;
-    {SYNTH_REG_ATTR}
-    reg                 [{spec.wman - 1}:0] r_partial_rem;
-
-    assign out_valid    = r_out_valid;
-    assign sign         = r_sign;
-    assign force_zero   = r_force_zero;
-    assign force_inf    = r_force_inf;
-    assign exp_biased   = r_exp_biased;
-    assign significand  = r_significand;
-    assign guard        = r_guard;
-    assign round        = r_round;
-    assign sticky       = r_sticky;
-    assign div0         = r_div0;
-    assign partial_rem  = r_partial_rem;
-
-    _zkf_div_core #(
-        {params}
-    ) dut (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(r_in_valid),
-        .a(r_a),
-        .b(r_b),
-        .out_valid(dut_out_valid),
-        .sign(dut_sign),
-        .force_zero(dut_force_zero),
-        .force_inf(dut_force_inf),
-        .exp_biased(dut_exp_biased),
-        .significand(dut_significand),
-        .guard(dut_guard),
-        .round(dut_round),
-        .sticky(dut_sticky),
-        .div0(dut_div0),
-        .partial_rem(dut_partial_rem)
-    );
-
-    always @(posedge clk) begin
-        if (rst) begin
-            r_in_valid  <= 1'b0;
-            r_out_valid <= 1'b0;
-        end else begin
-            r_in_valid  <= in_valid;
-            r_out_valid <= dut_out_valid;
-        end
-
-        r_a             <= a;
-        r_b             <= b;
-        r_sign          <= dut_sign;
-        r_force_zero    <= dut_force_zero;
-        r_force_inf     <= dut_force_inf;
-        r_exp_biased    <= dut_exp_biased;
-        r_significand   <= dut_significand;
-        r_guard         <= dut_guard;
-        r_round         <= dut_round;
-        r_sticky        <= dut_sticky;
-        r_div0          <= dut_div0;
-        r_partial_rem   <= dut_partial_rem;
-    end
-endmodule
-
-`default_nettype wire
-""")
-
-
-def write_div_wrapper(spec: ModuleSpec, path: Path) -> None:
-    wfull = spec.wexp + spec.wman
-    params = _verilog_params(spec)
-    path.write_text(f"""`default_nettype none
-
-module {spec.top} (
-    input  wire                 clk,
-    input  wire                 rst,
-    input  wire                 in_valid,
-    input  wire [{wfull - 1}:0] a,
-    input  wire [{wfull - 1}:0] b,
-    output wire                 out_valid,
-    output wire [{wfull - 1}:0] q,
-    output wire                 div0
-);
-    // Measurement harness: put real registers on every DUT input and output so the timing report includes
-    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
-    {SYNTH_REG_ATTR}
-    reg                 r_in_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_a;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_b;
-
-    wire                 dut_out_valid;
-    wire [{wfull - 1}:0] dut_q;
-    wire                 dut_div0;
-
-    {SYNTH_REG_ATTR}
-    reg                 r_out_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_q;
-    {SYNTH_REG_ATTR}
-    reg                 r_div0;
-
-    assign out_valid = r_out_valid;
-    assign q         = r_q;
-    assign div0      = r_div0;
-
-    zkf_div #(
-        {params}
-    ) dut (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(r_in_valid),
-        .a(r_a),
-        .b(r_b),
-        .out_valid(dut_out_valid),
-        .q(dut_q),
-        .div0(dut_div0)
-    );
-
-    always @(posedge clk) begin
-        if (rst) begin
-            r_in_valid  <= 1'b0;
-            r_out_valid <= 1'b0;
-        end else begin
-            r_in_valid  <= in_valid;
-            r_out_valid <= dut_out_valid;
-        end
-
-        r_a    <= a;
-        r_b    <= b;
-        r_q    <= dut_q;
-        r_div0 <= dut_div0;
-    end
-endmodule
-
-`default_nettype wire
-""")
-
-
-def write_sqrt_core_wrapper(spec: ModuleSpec, path: Path) -> None:
-    wfull = spec.wexp + spec.wman
-    model = model_for(spec)
-    wexp_unbiased = model.params["WEXP_UNBIASED"]
-    qfrac = model.params["QFRAC"]
-    params = model.verilog_params.replace(", ", ",\n        ")
-    path.write_text(f"""`default_nettype none
-
-module {spec.top} (
-    input  wire                     clk,
-    input  wire                     rst,
-    input  wire                     in_valid,
-    input  wire [{wfull - 1}:0]     x,
-    output wire                     out_valid,
-    output wire                     force_zero,
-    output wire                     force_inf,
-    output wire                     domain_error,
-    output wire signed [{wexp_unbiased - 1}:0] exp_biased,
-    output wire [{spec.wman - 1}:0] significand,
-    output wire                     guard,
-    output wire                     sticky,
-    output wire [{qfrac + 1}:0]     partial_rem
-);
-    // Measurement harness: put real registers on every DUT input and output so the timing report includes
-    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
-    {SYNTH_REG_ATTR}
-    reg                 r_in_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_x;
-
-    wire                            dut_out_valid;
-    wire                            dut_force_zero;
-    wire                            dut_force_inf;
-    wire                            dut_domain_error;
-    wire signed [{wexp_unbiased - 1}:0] dut_exp_biased;
-    wire                 [{spec.wman - 1}:0] dut_significand;
-    wire                            dut_guard;
-    wire                            dut_sticky;
-    wire                 [{qfrac + 1}:0] dut_partial_rem;
-
-    {SYNTH_REG_ATTR}
-    reg                            r_out_valid;
-    {SYNTH_REG_ATTR}
-    reg                            r_force_zero;
-    {SYNTH_REG_ATTR}
-    reg                            r_force_inf;
-    {SYNTH_REG_ATTR}
-    reg                            r_domain_error;
-    {SYNTH_REG_ATTR}
-    reg signed [{wexp_unbiased - 1}:0] r_exp_biased;
-    {SYNTH_REG_ATTR}
-    reg                 [{spec.wman - 1}:0] r_significand;
-    {SYNTH_REG_ATTR}
-    reg                            r_guard;
-    {SYNTH_REG_ATTR}
-    reg                            r_sticky;
-    {SYNTH_REG_ATTR}
-    reg                 [{qfrac + 1}:0] r_partial_rem;
-
-    assign out_valid    = r_out_valid;
-    assign force_zero   = r_force_zero;
-    assign force_inf    = r_force_inf;
-    assign domain_error = r_domain_error;
-    assign exp_biased   = r_exp_biased;
-    assign significand  = r_significand;
-    assign guard        = r_guard;
-    assign sticky       = r_sticky;
-    assign partial_rem  = r_partial_rem;
-
-    _zkf_sqrt_core #(
-        {params}
-    ) dut (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(r_in_valid),
-        .x(r_x),
-        .out_valid(dut_out_valid),
-        .force_zero(dut_force_zero),
-        .force_inf(dut_force_inf),
-        .domain_error(dut_domain_error),
-        .exp_biased(dut_exp_biased),
-        .significand(dut_significand),
-        .guard(dut_guard),
-        .sticky(dut_sticky),
-        .raw(),
-        .partial_rem(dut_partial_rem)
-    );
-
-    always @(posedge clk) begin
-        if (rst) begin
-            r_in_valid  <= 1'b0;
-            r_out_valid <= 1'b0;
-        end else begin
-            r_in_valid  <= in_valid;
-            r_out_valid <= dut_out_valid;
-        end
-
-        r_x             <= x;
-        r_force_zero    <= dut_force_zero;
-        r_force_inf     <= dut_force_inf;
-        r_domain_error  <= dut_domain_error;
-        r_exp_biased    <= dut_exp_biased;
-        r_significand   <= dut_significand;
-        r_guard         <= dut_guard;
-        r_sticky        <= dut_sticky;
-        r_partial_rem   <= dut_partial_rem;
-    end
-endmodule
-
-`default_nettype wire
-""")
-
-
-def write_sqrt_wrapper(spec: ModuleSpec, path: Path) -> None:
-    wfull = spec.wexp + spec.wman
-    params = _verilog_params(spec)
-    path.write_text(f"""`default_nettype none
-
-module {spec.top} (
-    input  wire                 clk,
-    input  wire                 rst,
-    input  wire                 in_valid,
-    input  wire [{wfull - 1}:0] x,
-    output wire                 out_valid,
-    output wire [{wfull - 1}:0] y,
-    output wire                 domain_error
-);
-    // Measurement harness: put real registers on every DUT input and output so the timing report includes
-    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
-    {SYNTH_REG_ATTR}
-    reg                 r_in_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_x;
-
-    wire                 dut_out_valid;
-    wire [{wfull - 1}:0] dut_y;
-    wire                 dut_domain_error;
-
-    {SYNTH_REG_ATTR}
-    reg                 r_out_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_y;
-    {SYNTH_REG_ATTR}
-    reg                 r_domain_error;
-
-    assign out_valid    = r_out_valid;
-    assign y            = r_y;
-    assign domain_error = r_domain_error;
-
-    zkf_sqrt #(
-        {params}
-    ) dut (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(r_in_valid),
-        .x(r_x),
-        .out_valid(dut_out_valid),
-        .y(dut_y),
-        .domain_error(dut_domain_error)
-    );
-
-    always @(posedge clk) begin
-        if (rst) begin
-            r_in_valid  <= 1'b0;
-            r_out_valid <= 1'b0;
-        end else begin
-            r_in_valid  <= in_valid;
-            r_out_valid <= dut_out_valid;
-        end
-
-        r_x            <= x;
-        r_y            <= dut_y;
-        r_domain_error <= dut_domain_error;
-    end
-endmodule
-
-`default_nettype wire
-""")
-
-
 def write_cmp_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     params = _verilog_params(spec)
@@ -1105,71 +723,6 @@ endmodule
 """)
 
 
-def write_to_int_wrapper(spec: ModuleSpec, path: Path) -> None:
-    wfull = spec.wexp + spec.wman
-    wint = spec.wint
-    params = _verilog_params(spec)
-    path.write_text(f"""`default_nettype none
-
-module {spec.top} (
-    input  wire                          clk,
-    input  wire                          rst,
-    input  wire                          in_valid,
-    input  wire [{wfull - 1}:0]          a,
-    input  wire [1:0]                    round_mode,
-    output wire                          out_valid,
-    output wire signed [{wint - 1}:0]    y
-);
-    // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
-    {SYNTH_REG_ATTR}
-    reg                 r_in_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_a;
-    {SYNTH_REG_ATTR}
-    reg           [1:0] r_round_mode;
-
-    wire                       dut_out_valid;
-    wire signed [{wint - 1}:0] dut_y;
-
-    {SYNTH_REG_ATTR}
-    reg                       r_out_valid;
-    {SYNTH_REG_ATTR}
-    reg signed [{wint - 1}:0] r_y;
-
-    assign out_valid = r_out_valid;
-    assign y         = r_y;
-
-    zkf_to_int #(
-        {params}
-    ) dut (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(r_in_valid),
-        .a(r_a),
-        .round_mode(r_round_mode),
-        .out_valid(dut_out_valid),
-        .y(dut_y)
-    );
-
-    always @(posedge clk) begin
-        if (rst) begin
-            r_in_valid  <= 1'b0;
-            r_out_valid <= 1'b0;
-        end else begin
-            r_in_valid  <= in_valid;
-            r_out_valid <= dut_out_valid;
-        end
-
-        r_a <= a;
-        r_round_mode <= round_mode;
-        r_y <= dut_y;
-    end
-endmodule
-
-`default_nettype wire
-""")
-
-
 def write_resize_wrapper(spec: ModuleSpec, path: Path) -> None:
     in_wfull = spec.wexp_in + spec.wman_in
     out_wfull = spec.wexp_out + spec.wman_out
@@ -1230,19 +783,20 @@ endmodule
 """)
 
 
-def write_round_wrapper(spec: ModuleSpec, path: Path) -> None:
+def write_rint_wrapper(spec: ModuleSpec, path: Path) -> None:
     wfull = spec.wexp + spec.wman
     params = _verilog_params(spec)
     path.write_text(f"""`default_nettype none
 
 module {spec.top} (
-    input  wire                 clk,
-    input  wire                 rst,
-    input  wire                 in_valid,
-    input  wire [{wfull - 1}:0] a,
-    input  wire           [1:0] round_mode,
-    output wire                 out_valid,
-    output wire [{wfull - 1}:0] y
+    input  wire                        clk,
+    input  wire                        rst,
+    input  wire                        in_valid,
+    input  wire [{wfull - 1}:0]        a,
+    input  wire                  [1:0] round_mode,
+    output wire                        out_valid,
+    output wire [{wfull - 1}:0]        y_float,
+    output wire signed [{spec.wint - 1}:0] y_int
 );
     // Measurement harness: register every DUT I/O so the timing report includes register-to-register paths only.
     {SYNTH_REG_ATTR}
@@ -1252,18 +806,22 @@ module {spec.top} (
     {SYNTH_REG_ATTR}
     reg           [1:0] r_round_mode;
 
-    wire                 dut_out_valid;
-    wire [{wfull - 1}:0] dut_y;
+    wire                        dut_out_valid;
+    wire [{wfull - 1}:0]        dut_y_float;
+    wire signed [{spec.wint - 1}:0] dut_y_int;
 
     {SYNTH_REG_ATTR}
-    reg                 r_out_valid;
+    reg                        r_out_valid;
     {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_y;
+    reg [{wfull - 1}:0]        r_y_float;
+    {SYNTH_REG_ATTR}
+    reg signed [{spec.wint - 1}:0] r_y_int;
 
     assign out_valid = r_out_valid;
-    assign y         = r_y;
+    assign y_float   = r_y_float;
+    assign y_int     = r_y_int;
 
-    zkf_round #(
+    zkf_rint #(
         {params}
     ) dut (
         .clk(clk),
@@ -1272,7 +830,8 @@ module {spec.top} (
         .a(r_a),
         .round_mode(r_round_mode),
         .out_valid(dut_out_valid),
-        .y(dut_y)
+        .y_float(dut_y_float),
+        .y_int(dut_y_int)
     );
 
     always @(posedge clk) begin
@@ -1286,7 +845,8 @@ module {spec.top} (
 
         r_a          <= a;
         r_round_mode <= round_mode;
-        r_y          <= dut_y;
+        r_y_float    <= dut_y_float;
+        r_y_int      <= dut_y_int;
     end
 endmodule
 
@@ -1426,17 +986,14 @@ endmodule
 """)
 
 
-_TRIG_PORTS = {  # the payload ports beyond the in_valid/in_ready/out_valid/out_ready handshake
-    "sincos": (("x",), ("sin", "cos", "quadrant")),
-    "atan2": (("y", "x"), ("theta", "mag")),
-    "cordic": (("vectoring", "a", "b"), ("r0", "r1", "quadrant")),
-}
-
-
-def write_trig_wrapper(spec: ModuleSpec, path: Path) -> None:
-    inputs, outputs = _TRIG_PORTS[spec.kind]
+def write_cordic_wrapper(spec: ModuleSpec, path: Path) -> None:
+    # A fixed mode gets only the ports it uses, as an instance in a design would leave the others tied off or open.
+    wfull = spec.wexp + spec.wman
+    inputs = {0: ("a",), 1: ("a", "b"), 2: ("vectoring", "a", "b")}[spec.mode]
+    outputs = ("r0", "r1") if spec.mode == 1 else ("r0", "r1", "quadrant")
+    unused = {"vectoring": f"1'b{int(spec.mode == 1)}", "b": f"{{{wfull}{{1'b0}}}}", "quadrant": ""}  # "" = open
     widths = {"vectoring": "", "quadrant": "[1:0] "}
-    w = {name: widths.get(name, f"[{spec.wexp + spec.wman - 1}:0] ") for name in inputs + outputs}
+    w = {name: widths.get(name, f"[{wfull - 1}:0] ") for name in inputs + outputs}
     w.update({name: "" for name in ("in_valid", "in_ready", "out_valid", "out_ready")})
     head = ("in_valid", "in_ready", *inputs, "out_valid", "out_ready", *outputs)
     direction = {name: "output" if name in ("in_ready", "out_valid", *outputs) else "input " for name in head}
@@ -1445,6 +1002,7 @@ def write_trig_wrapper(spec: ModuleSpec, path: Path) -> None:
     control = (("in_valid", "in_valid"), ("in_ready", "dut_in_ready"), ("out_valid", "dut_out_valid"))
     control += (("out_ready", "out_ready"),)
     connections = {name: f"r_{name}" if name in captured else f"dut_{name}" for name in head}
+    dut = ("in_valid", "in_ready", "vectoring", "a", "b", "out_valid", "out_ready", "r0", "r1", "quadrant")
     lines = ["`default_nettype none", "", f"module {spec.top} (", "    input  wire clk,", "    input  wire rst,"]
     lines += [f"    {direction[n]} wire {w[n]}{n}{',' if i < len(head) - 1 else ''}" for i, n in enumerate(head)]
     lines += [
@@ -1458,12 +1016,50 @@ def write_trig_wrapper(spec: ModuleSpec, path: Path) -> None:
     for name in driven:
         lines += [f"    {SYNTH_REG_ATTR}", f"    reg {w[name]}r_{name};"]
     lines += [f"    assign {name} = r_{name};" for name in driven]
-    lines += [f"    zkf_{spec.kind} #(", f"        {_verilog_params(spec)}", "    ) dut (", "        .clk(clk),"]
-    lines += ["        .rst(rst),"] + [f"        .{n}({connections[n]})," for n in head]
+    lines += ["    zkf_cordic #(", f"        {_verilog_params(spec)}", "    ) dut (", "        .clk(clk),"]
+    lines += ["        .rst(rst),"] + [
+        f"        .{n}({connections[n] if n in connections else unused[n]})," for n in dut
+    ]
     lines[-1] = lines[-1].rstrip(",")
     lines += ["    );", "    always @(posedge clk) begin", "        if (rst) begin"]
     lines += [f"            r_{name} <= 1'b0;" for name, _ in control] + ["        end else begin"]
     lines += [f"            r_{name} <= {source};" for name, source in control] + ["        end"]
+    lines += [f"        r_{name} <= {name};" for name in inputs] + [
+        f"        r_{name} <= dut_{name};" for name in outputs
+    ]
+    path.write_text("\n".join(lines + ["    end", "endmodule", "", "`default_nettype wire", ""]))
+
+
+def write_divsqrt_wrapper(spec: ModuleSpec, path: Path) -> None:
+    # A fixed mode gets only the inputs it uses, as an instance in a design would tie the others off.
+    wfull = spec.wexp + spec.wman
+    inputs = {0: ("a", "b"), 1: ("a",), 2: ("op_sqrt", "a", "b")}[spec.mode]
+    outputs = ("y", "error")
+    width = {name: f"[{wfull - 1}:0] " for name in ("a", "b", "y")}
+    unused = {"op_sqrt": "1'b0", "b": f"{{{wfull}{{1'b0}}}}"}
+    lines = ["`default_nettype none", "", f"module {spec.top} (", "    input  wire clk,", "    input  wire rst,"]
+    lines += ["    input  wire in_valid,"] + [f"    input  wire {width.get(n, '')}{n}," for n in inputs]
+    lines += ["    output wire out_valid,"] + [f"    output wire {width.get(n, '')}{n}," for n in outputs]
+    lines[-1] = lines[-1].rstrip(",")
+    lines += [
+        ");",
+        "    // Measurement harness: register every DUT I/O so the timing report includes register-to-register",
+    ]
+    lines += ["    // paths only."]
+    for name in ("in_valid", *inputs, "out_valid", *outputs):
+        lines += [f"    {SYNTH_REG_ATTR}", f"    reg {width.get(name, '')}r_{name};"]
+    lines += [f"    wire {width.get(name, '')}dut_{name};" for name in ("out_valid", *outputs)]
+    lines += [f"    assign {name} = r_{name};" for name in ("out_valid", *outputs)]
+    lines += ["    zkf_divsqrt #(", f"        {_verilog_params(spec)}", "    ) dut (", "        .clk(clk),"]
+    lines += ["        .rst(rst),", "        .in_valid(r_in_valid),"]
+    for name in ("op_sqrt", "a", "b"):
+        lines.append(f"        .{name}({f'r_{name}' if name in inputs else unused[name]}),")
+    lines.append("        .out_valid(dut_out_valid),")
+    lines += [f"        .{name}(dut_{name})," for name in outputs]
+    lines[-1] = lines[-1].rstrip(",")
+    lines += ["    );", "    always @(posedge clk) begin", "        if (rst) begin"]
+    lines += ["            r_in_valid  <= 1'b0;", "            r_out_valid <= 1'b0;", "        end else begin"]
+    lines += ["            r_in_valid  <= in_valid;", "            r_out_valid <= dut_out_valid;", "        end"]
     lines += [f"        r_{name} <= {name};" for name in inputs] + [
         f"        r_{name} <= dut_{name};" for name in outputs
     ]
@@ -1481,14 +1077,8 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_addsub_wrapper(spec, path)
     elif spec.kind == "fma":
         write_fma_wrapper(spec, path)
-    elif spec.kind == "div_core":
-        write_div_core_wrapper(spec, path)
-    elif spec.kind == "div":
-        write_div_wrapper(spec, path)
-    elif spec.kind == "sqrt_core":
-        write_sqrt_core_wrapper(spec, path)
-    elif spec.kind == "sqrt":
-        write_sqrt_wrapper(spec, path)
+    elif spec.kind == "divsqrt":
+        write_divsqrt_wrapper(spec, path)
     elif spec.kind == "cmp":
         write_cmp_wrapper(spec, path)
     elif spec.kind == "sort":
@@ -1499,17 +1089,15 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_mul_ilog2_wrapper(spec, path)
     elif spec.kind == "from_int":
         write_from_int_wrapper(spec, path)
-    elif spec.kind == "to_int":
-        write_to_int_wrapper(spec, path)
     elif spec.kind == "resize":
         write_resize_wrapper(spec, path)
-    elif spec.kind == "round":
-        write_round_wrapper(spec, path)
+    elif spec.kind == "rint":
+        write_rint_wrapper(spec, path)
     elif spec.kind == "exp2":
         write_exp2_wrapper(spec, path)
     elif spec.kind == "log2":
         write_log2_wrapper(spec, path)
-    elif spec.kind in _TRIG_PORTS:
-        write_trig_wrapper(spec, path)
+    elif spec.kind == "cordic":
+        write_cordic_wrapper(spec, path)
     else:
         raise ValueError(f"unsupported module kind: {spec.kind}")

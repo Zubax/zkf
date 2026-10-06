@@ -45,7 +45,7 @@ _RECORD = re.compile(r"^C '(.*)' (\d+)\s*$")
 # Top-level DUT ports excluded from the TOGGLE gate: primary I/O is testbench-driven (stimulus, not DUT logic) and
 # outputs are covered by line+branch, so their toggle reflects stimulus. Standard policy. These bare names are never
 # internal-net names here, so internal nets stay gated. (pack's data inputs are NOT excluded -- sim_pack covers them.)
-_TB_DRIVEN_PORTS = {"clk", "rst", "in_valid", "out_valid", "a", "b", "x", "y", "in", "op_sub", "shamt"}
+_TB_DRIVEN_PORTS = {"clk", "rst", "in_valid", "out_valid", "a", "b", "x", "y", "in", "op_sub", "op_sqrt", "shamt"}
 
 
 def is_zkf_source(path_text: str) -> bool:
