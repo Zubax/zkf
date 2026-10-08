@@ -69,13 +69,6 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 | `_zkf_divsqrt_root0`    | WMAN=4,5,18,27,36,53 | yices | the root's stage 0 from any radicand, establishing the invariant |
 | `_zkf_divsqrt_last`     | WMAN=18,27,36,53 | yices    | the last decision with its rounding select, from the invariant, in every MODE, folded and not |
 
-Trivial-wrapper consolidation rule applied:
-
-- `zkf_addsub` is **not** separately proved; it is a thin XOR-on-`b.sign` wrapper around `zkf_add`
-  and contributes no arithmetic of its own, so the `zkf_add` proof at the same widths is
-  sufficient. The `zkf_addsub` RTL is still exercised by `test_addsub.py` and by the
-  `sim_properties_addsub_icarus` commutativity check.
-
 ## How to run
 
 ```

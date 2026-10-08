@@ -9,7 +9,7 @@ import numpy as np
 
 from zkf import ZkfFormat
 from zkf_bits import hex_bits, mask
-from zkf_operands import directed_numbers, random_bits, random_operand
+from zkf_operands import directed_numbers, random_bits, random_operand, raw_directed_values
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, check_combinational, drive_unsigned, run_stream_cases, start_clock
 
@@ -22,19 +22,6 @@ class CompareCase:
 
     def describe(self, fmt: ZkfFormat) -> str:
         return f"{self.label} a={hex_bits(self.a, fmt.wfull)} b={hex_bits(self.b, fmt.wfull)}"
-
-
-def raw_directed_values(fmt: ZkfFormat) -> list[int]:
-    return [
-        0,
-        1,
-        fmt.frac_mask,
-        1 << fmt.sign_shift,
-        (1 << fmt.sign_shift) | min(fmt.frac_mask, 1),
-        fmt.exp_inf << fmt.wfrac,
-        (1 << fmt.sign_shift) | (fmt.exp_inf << fmt.wfrac),
-        mask(fmt.wfull),
-    ]
 
 
 def special_class_representatives(fmt: ZkfFormat) -> list[tuple[str, int]]:

@@ -39,11 +39,11 @@ class ModuleSpec:
     stage_reduce: int = 0  # zkf_exp2: register reduced fixed-point i/f/flags before evaluator ROM input.
     stage_product: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul pipeline depth / split 0..4.
     stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
-    stage_align: int = 0  # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
-    stage_decode: int = 0  # zkf_add, zkf_addsub, zkf_mul_ilog2, zkf_fma, zkf_log2, zkf_divsqrt
-    stage_normalize: int = 0  # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
+    stage_align: int = 0  # zkf_add, zkf_fma: 0 or 1 (alignment shifter split).
+    stage_decode: int = 0  # zkf_add, zkf_mul_ilog2, zkf_fma, zkf_log2, zkf_divsqrt
+    stage_normalize: int = 0  # zkf_add, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
     stage_normalize_output: int = 0  # zkf_log2: 0/1 _zkf_normshift.STAGE_OUTPUT register.
-    stage_pack: int = 0  # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
+    stage_pack: int = 0  # zkf_add, zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0/1 (_zkf_pack.STAGE_INPUT).
     stage_shift: int = 0  # zkf_rint
     stage_round: int = 0  # zkf_rint
     stage_output: int = 0
@@ -186,15 +186,6 @@ MODULES = [
         stage_decode=1,
         stage_align=1,
         stage_normalize=1,
-    ),
-    ModuleSpec(
-        name="zkf_addsub",
-        label="zkf_addsub",
-        top="zkf_addsub_synth_top",
-        kind="addsub",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
     ),
     ModuleSpec(
         name="zkf_fma",
@@ -700,15 +691,6 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
             hdl / "_zkf_normshift.v",
             hdl / "_zkf_rshift_sticky.v",
             hdl / "zkf_add.v",
-        ]
-    if spec.kind == "addsub":
-        return [
-            hdl / "_zkf_pack.v",
-            hdl / "zkf_pipe.v",
-            hdl / "_zkf_normshift.v",
-            hdl / "_zkf_rshift_sticky.v",
-            hdl / "zkf_add.v",
-            hdl / "zkf_addsub.v",
         ]
     if spec.kind == "fma":
         return [

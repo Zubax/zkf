@@ -95,8 +95,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_absneg`          | 1       | Absolute value and negation.                                   | Does not canonicalize       |
 | `zkf_finite`          | 1       | Finiteness flag, and ±∞ replaced by the nearest finite value.  | Does not canonicalize       |
 | `zkf_cmp`             | 1       | Compare two values; also outputs their min and max.            | Does not canonicalize       |
-| `zkf_add`             | 1       | `a + b`.                                                       |                             |
-| `zkf_addsub`          | 1       | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
+| `zkf_add`             | 1       | `a + b`, also `a - b` when the sign bit of `b` is flipped.     |                             |
 | `zkf_mul`             | 1       | `a⋅b`.                                                         |                             |
 | `zkf_mul_ilog2`       | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                   |                             |
 | `zkf_ilog2`           | 1       | Raw exponent minus bias; sign-invariant signed integer.        | Flags zero, infinity, negative |
@@ -107,7 +106,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 | `zkf_divsqrt`         | 1       | `a ÷ b` or `√a`; `error` iff /0 or domain error.               | Correct rounding, 0.5 ULP   |
 | `zkf_exp2`            | 1       | `2^x`                                                          | Faithful rounding, see below|
 | `zkf_log2`            | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
-| `zkf_cordic`          |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (−0.5,0.5], `hypot(y,x)`.   | Faithful rounding, see below|
+| `zkf_cordic`          |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (-0.5,0.5], `hypot(y,x)`.   | Faithful rounding, see below|
 | `zkf_pipe`            | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
 
 #### Notably absent functions
@@ -125,11 +124,11 @@ Bare angle functions follow the usual radian convention; helpers suffixed `_turn
 representation.
 
     sin_turns(x), cos_turns(x)  = zkf_cordic(x)                     ; rotation; x in turns
-    atan2_turns(y,x)            = zkf_cordic(y, x)                  ; vectoring; angle in turns ∈ (−0.5,0.5]
+    atan2_turns(y,x)            = zkf_cordic(y, x)                  ; vectoring; angle in turns ∈ (-0.5,0.5]
     atan_turns(x)               = atan2_turns(x, 1)
 
-    normalize_angle(x)          = x − 2π⋅floor((x + π) / (2π))      ; [-π,+π)
-    normalize_angle_turns(t)    = t − floor(t + 0.5)                ; [-0.5,+0.5)
+    normalize_angle(x)          = x - 2π⋅floor((x + π) / (2π))      ; [-π,+π)
+    normalize_angle_turns(t)    = t - floor(t + 0.5)                ; [-0.5,+0.5)
 
     INV_TAU = 1 / (2π)
     radians_to_turns(x) = x⋅INV_TAU
@@ -150,23 +149,23 @@ representation.
 
     tan(x)              = sin(x) / cos(x)
     atan(x)             = atan2(x, 1)
-    asin(x)             = atan2(x, sqrt(1 − x⋅x))                       ; x ∈ [-1,+1]
-    acos(x)             = atan2(sqrt(1 − x⋅x), x)                       ; x ∈ [-1,+1]
+    asin(x)             = atan2(x, sqrt(1 - x⋅x))                       ; x ∈ [-1,+1]
+    acos(x)             = atan2(sqrt(1 - x⋅x), x)                       ; x ∈ [-1,+1]
     h                   = max(abs(x), abs(y))
     hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf_cordic
 
     min(a,b), max(a,b)  = zkf_cmp(a,b)
     clamp(x, lo, hi)    = min(max(x, lo), hi)
-    lerp(a,b,t)         = fma(t, b − a, a)
-    deadzone(x,d)       = sign(x)⋅max(abs(x) − d, 0)
-    smoothstep(t)       = t⋅t⋅(3 − 2⋅t); where t is clamped to [0,1]
+    lerp(a,b,t)         = fma(t, b - a, a)
+    deadzone(x,d)       = sign(x)⋅max(abs(x) - d, 0)
+    smoothstep(t)       = t⋅t⋅(3 - 2⋅t); where t is clamped to [0,1]
 
     dot(a,b)            = sum_i a[i]⋅b[i]                               ; use zkf_fma chains
     norm2(x)            = dot(x, x)
     norm(x)             = sqrt(norm2(x))
     normalize(x)        = x⋅rsqrt(norm2(x) + ε)
-    distance(a,b)       = norm(a − b)
-    distance_2d(a,b)    = hypot(a.x − b.x, a.y − b.y)
+    distance(a,b)       = norm(a - b)
+    distance_2d(a,b)    = hypot(a.x - b.x, a.y - b.y)
 
     db_power(x)         = 10⋅log10(x)                                   ; x>0
     db_amplitude(x)     = 20⋅log10(abs(x))                              ; x≠0
@@ -175,30 +174,30 @@ representation.
 
     sinc(x)             = sin(π⋅x) / (π⋅x)                              ; normalized, sinc(0)=1
     rms(x)              = sqrt(mean(x⋅x))
-    ema(y,x,a)          = fma(a, x − y, y)
+    ema(y,x,a)          = fma(a, x - y, y)
 
     complex_abs(re,im)  = hypot(re, im)
     arg(re,im)          = atan2(im, re)
     arg_turns(re,im)    = atan2_turns(im, re)
     unit_complex(t)     = (cos(t), sin(t))                              ; principal counterpart of arg()
     polar(r,t)          = (r⋅cos(t), r⋅sin(t))                          ; r≥0
-    complex_mul((ar,ai),(br,bi)) = (ar⋅br − ai⋅bi, ar⋅bi + ai⋅br)
-    rotate2(x,y,t)      = (x⋅cos(t) − y⋅sin(t), x⋅sin(t) + y⋅cos(t))
+    complex_mul((ar,ai),(br,bi)) = (ar⋅br - ai⋅bi, ar⋅bi + ai⋅br)
+    rotate2(x,y,t)      = (x⋅cos(t) - y⋅sin(t), x⋅sin(t) + y⋅cos(t))
 
     relu(x)             = max(x, 0)
     leaky_relu(x)       = x ≥ 0 ? x : α⋅x
     hard_sigmoid(x)     = clamp(α⋅x + β, 0, 1)
     hard_swish(x)       = x⋅hard_sigmoid(x)
 
-    sigmoid(x)          = 1 / (1 + exp2(−x⋅log2(e)))
-    tanh(x)             = 2⋅sigmoid(2⋅x) − 1
-    softplus(x)         = max(x, 0) + log2(1 + exp2(−abs(x)⋅log2(e))) / log2(e)
+    sigmoid(x)          = 1 / (1 + exp2(-x⋅log2(e)))
+    tanh(x)             = 2⋅sigmoid(2⋅x) - 1
+    softplus(x)         = max(x, 0) + log2(1 + exp2(-abs(x)⋅log2(e))) / log2(e)
     silu(x)             = x⋅sigmoid(x)
 
     m                   = max_i x[i]
-    logsumexp(x[])      = m + log2(sum_i exp2((x[i] − m)⋅log2(e))) / log2(e)
-    softmax_i(x[])      = exp2((x[i] − m)⋅log2(e)) / sum_j exp2((x[j] − m)⋅log2(e))
-    layer_norm(x)       = (x − mean(x))⋅rsqrt(var(x) + ε)
+    logsumexp(x[])      = m + log2(sum_i exp2((x[i] - m)⋅log2(e))) / log2(e)
+    softmax_i(x[])      = exp2((x[i] - m)⋅log2(e)) / sum_j exp2((x[j] - m)⋅log2(e))
+    layer_norm(x)       = (x - mean(x))⋅rsqrt(var(x) + ε)
 
 And so on.
 
@@ -209,7 +208,7 @@ the existing basic operators: zkf_fma, zkf_divsqrt, etc.
 ## Semantics
 
 Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; finite magnitudes in `(0, min_normal/2)`
-round to +0; magnitudes in `[min_normal/2, min_normal)` round to signed min_normal), no −0, no exceptions,
+round to +0; magnitudes in `[min_normal/2, min_normal)` round to signed min_normal), no -0, no exceptions,
 overflow produces ±∞.
 
 `zkf_cordic`'s vectoring magnitude errs toward finite within one ULP of the overflow threshold rather than inventing an
@@ -220,7 +219,7 @@ Infinity cases that would be NaN in IEEE 754:
 
 | Expression          | Result                         |
 |---------------------|--------------------------------|
-| +∞ + −∞             | +0                             |
+| +∞ + -∞             | +0                             |
 | 0⋅±∞                | +0                             |
 | 0 ÷ 0               | +0                             |
 | ±∞ ÷ ±∞             | +0                             |

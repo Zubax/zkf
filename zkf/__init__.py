@@ -6,7 +6,6 @@ from ._operators import (
     CordicModel as CordicModel,
     CmpModel as CmpModel,
     AddModel as AddModel,
-    AddSubModel as AddSubModel,
     DivsqrtModel as DivsqrtModel,
     Exp2Model as Exp2Model,
     FiniteModel as FiniteModel,

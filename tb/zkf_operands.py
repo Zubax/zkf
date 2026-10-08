@@ -31,6 +31,20 @@ def pack_bits(fmt: ZkfFormat, sign: int, exp: int, frac: int) -> int:
     return fmt.pack(sign, exp, frac).bits
 
 
+def raw_directed_values(fmt: ZkfFormat) -> list[int]:
+    """Raw-bit corner patterns: zeros and infinities of both signs, with and without payload."""
+    return [
+        0,
+        1,
+        fmt.frac_mask,
+        1 << fmt.sign_shift,
+        (1 << fmt.sign_shift) | min(fmt.frac_mask, 1),
+        fmt.exp_inf << fmt.wfrac,
+        (1 << fmt.sign_shift) | (fmt.exp_inf << fmt.wfrac),
+        mask(fmt.wfull),
+    ]
+
+
 def directed_numbers(fmt: ZkfFormat) -> dict[str, int]:
     if fmt.bias - 1 < 1 or fmt.bias + 1 > fmt.exp_max_finite:
         raise ValueError(f"format too small for generic directed values: {fmt}")

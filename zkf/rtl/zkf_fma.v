@@ -1,4 +1,5 @@
 // Streamed Zubax Kulibin fused multiply-add: y = a*b + c.
+// Subtraction a*b - c is achieved by inverting the sign bit of c.
 // The exact 2*WMAN-bit product is carried through alignment, add, and normalize, so a*b+c is rounded once.
 // That single rounding is the reason a true FMA is fundamentally wider than a chained zkf_mul -> zkf_add.
 // The structure mirrors zkf_add with operand A replaced by the multiplier's full product.

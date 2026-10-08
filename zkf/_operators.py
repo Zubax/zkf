@@ -131,7 +131,8 @@ class AbsNegModel(_InOutStagedModel):
 
 
 @dataclass(frozen=True)
-class _AdderModel(OperatorModel):
+class AddModel(OperatorModel):
+    module = "zkf_add"
     stage_input: int = 0
     stage_decode: int = 0
     stage_align: int = 0
@@ -175,16 +176,6 @@ class _AdderModel(OperatorModel):
             + self.stage_output
         )
         return Timing(latency, 1)
-
-
-@dataclass(frozen=True)
-class AddModel(_AdderModel):
-    module = "zkf_add"
-
-
-@dataclass(frozen=True)
-class AddSubModel(_AdderModel):
-    module = "zkf_addsub"
 
 
 @dataclass(frozen=True)

@@ -7,7 +7,7 @@ vlog parameters, plusargs, and a tier. The tiers gate selection:
 
   pr          per-PR set (runs by default; what `nox -s tests` exercises)
   deep        full parameter-equivalence-class sweep (correctness on icarus, coverage on verilator)
-  properties  algebraic-property tests (test_properties.py) on the add/addsub/mul toplevels
+  properties  algebraic-property tests (test_properties.py) on the add/mul toplevels
   fast        the smallest-config smoke set
 
 test_float_matrix.py parametrizes pytest over build_matrix(), tagging each Run with its tier and
@@ -565,23 +565,21 @@ def _per_pr(sim, out: list) -> None:
     # STAGE_INPUT>1 sweep).
     for knobs in ({"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}, {"so": 2}, {"si": 2, "so": 2}):
         out.append(_binary("cmp", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, **knobs))
-    for op in ("add", "addsub"):
-        for sd in (0, 1):
-            for sa in (0, 1):
-                for cfg, w, m, k, c in BINARY:
-                    out.append(_binary(op, sim, "pr", cfg, w, m, k, c, sd=sd, sa=sa))
-        # si/pa knobs plus the all-on maxpipe row guard the latency bookkeeping against a register-stage change.
-        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
-        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
-        out.append(_binary(op, sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1, si=2, so=1))
-        # STAGE_INPUT>1 (dummy input stages) exercises the counted-latency bookkeeping and the multi-stage input pipe.
-        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
-        out.append(_binary(op, sim, "pr", "w8_m18", 8, 18, "random", 256, si=2))
-        # STAGE_NORMALIZE forwards to _zkf_normshift.STAGE_SPLIT (close-cancel path); SN=2 adds an s2x catch-up cycle
-        # and needs NL4 >= 3, i.e. NINPUT = WMAN+3 >= 11 -> WMAN >= 8 (hence the w8_m18 sn2 row).
-        for sn in (1,):
-            out.append(_binary(op, sim, "pr", "w4_m6_sn", 4, 6, "random", 256, sn=sn))
-        out.append(_binary(op, sim, "pr", "w8_m18_sn2", 8, 18, "random", 256, sd=1, sa=1, sn=2))
+    for sd in (0, 1):
+        for sa in (0, 1):
+            for cfg, w, m, k, c in BINARY:
+                out.append(_binary("add", sim, "pr", cfg, w, m, k, c, sd=sd, sa=sa))
+    # si/pa knobs plus the all-on maxpipe row guard the latency bookkeeping against a register-stage change.
+    out.append(_binary("add", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+    out.append(_binary("add", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
+    out.append(_binary("add", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1, si=2, so=1))
+    # STAGE_INPUT>1 (dummy input stages) exercises the counted-latency bookkeeping and the multi-stage input pipe.
+    out.append(_binary("add", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
+    out.append(_binary("add", sim, "pr", "w8_m18", 8, 18, "random", 256, si=2))
+    # STAGE_NORMALIZE forwards to _zkf_normshift.STAGE_SPLIT (close-cancel path); SN=2 adds an s2x catch-up cycle
+    # and needs NL4 >= 3, i.e. NINPUT = WMAN+3 >= 11 -> WMAN >= 8 (hence the w8_m18 sn2 row).
+    out.append(_binary("add", sim, "pr", "w4_m6_sn", 4, 6, "random", 256, sn=1))
+    out.append(_binary("add", sim, "pr", "w8_m18_sn2", 8, 18, "random", 256, sd=1, sa=1, sn=2))
     for sp in (0, 1):
         for si in (0, 1):
             for cfg, w, m, k, c in BINARY:
@@ -812,7 +810,7 @@ def _per_pr(sim, out: list) -> None:
 def _deep_correctness(out: list) -> None:
     # Full Cartesian product of each module's structural knobs across every format in its deep list (correctness;
     # coverage closure lives in _deep_coverage under merged-union). Knob axes: mul = STAGE_INPUT x PRODUCT x OUTPUT;
-    # add/addsub = STAGE_DECODE x ALIGN x OUTPUT; from_int/resize = STAGE_INPUT x OUTPUT; pack = STAGE_OUTPUT x
+    # add = STAGE_DECODE x ALIGN x OUTPUT; from_int/resize = STAGE_INPUT x OUTPUT; pack = STAGE_OUTPUT x
     # EXP_IS_BIASED.
     s = "icarus"
     for w, m, k, c in BIN_EXT:
@@ -821,11 +819,10 @@ def _deep_correctness(out: list) -> None:
             for si in (0, 1):
                 for so in (0, 1):
                     out.append(_binary("mul", s, "deep", base, w, m, k, c, sp=sp, si=si, so=so))
-        for op in ("add", "addsub"):
-            for sd in (0, 1):
-                for sa in (0, 1):
-                    for so in (0, 1):
-                        out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
+        for sd in (0, 1):
+            for sa in (0, 1):
+                for so in (0, 1):
+                    out.append(_binary("add", s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
         out.append(_binary("cmp", s, "deep", base, w, m, k, c))
     w, m, k, c = BIN_EXT[0]
     out.append(_binary("cmp", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, so=1))
@@ -1001,8 +998,6 @@ def _deep_coverage(out: list) -> None:
         out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, sd=0, sa=0))
         out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
         out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, si=2))
-        out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
-        out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, si=2))
         out.append(_binary("cmp", s, "deep", base, w, m, "exhaustive", 0))
     # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default + all-on toggles the
     # product/decode/align/normalize/output split registers; wider random runs toggle the wide shifters and the
@@ -1148,7 +1143,6 @@ def _deep_coverage(out: list) -> None:
     # via _zkf_pack_delay comes from divsqrt's maxpipe rows above). One config per branch suffices under merged-union.
     out.append(_binary("mul", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sp=0, so=1))
     out.append(_binary("add", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=0, sa=0, so=1))
-    out.append(_binary("addsub", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=1, sa=1, so=1))
     out.append(_cast("from_int", s, "deep", "w4m5i7", 4, 5, 7, "exhaustive", 0, 0, so=1))
     # Identity widen (FRAC_PAD=0, BIAS_OFFSET=0): registered s_y has no structurally-zero padding, so every bit
     # toggles; a padding-bearing widen would leave low s_y bits permanently 0.
@@ -1168,29 +1162,15 @@ def _deep_coverage(out: list) -> None:
 
 def _properties(out: list) -> None:
     s = "icarus"
-    for op in ("add", "addsub"):
-        tgt = f"sim_properties_{op}_icarus"
-        for sd in (0, 1):
-            for sa in (0, 1):
-                for cfg, w, m, k, c in BINARY:
-                    out.append(_binary(op, s, "properties", cfg, w, m, k, c, sd=sd, sa=sa, target=tgt, root_module=op))
+    tgt = "sim_properties_add_icarus"
+    for sd in (0, 1):
+        for sa in (0, 1):
+            for cfg, w, m, k, c in BINARY:
+                out.append(_binary("add", s, "properties", cfg, w, m, k, c, sd=sd, sa=sa, target=tgt))
+    tgt = "sim_properties_mul_icarus"
     for sp in (0, 1):
         for cfg, w, m, k, c in BINARY:
-            out.append(
-                _binary(
-                    "mul",
-                    s,
-                    "properties",
-                    cfg,
-                    w,
-                    m,
-                    k,
-                    c,
-                    sp=sp,
-                    target="sim_properties_mul_icarus",
-                    root_module="mul",
-                )
-            )
+            out.append(_binary("mul", s, "properties", cfg, w, m, k, c, sp=sp, target=tgt))
 
 
 # Smoke set: (name, module, extra-vlog).
@@ -1201,8 +1181,6 @@ _FAST = [
     ("finite", "finite", [("WEXP", 2), ("WMAN", 4)]),
     ("add_sd0_sa0", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),
     ("add_sd1_sa1", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
-    ("addsub_sd0_sa0", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),
-    ("addsub_sd1_sa1", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
     ("ilog2rt_sd0", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 0)]),
     ("ilog2rt_sd1", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 1)]),
     ("ilog2_si0", "ilog2", [("WEXP", 2), ("WMAN", 4), ("WINT", 3), ("STAGE_INPUT", 0), ("LATENCY", 1)]),

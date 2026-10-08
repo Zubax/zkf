@@ -50,14 +50,6 @@ FILESETS: dict[str, list[str]] = {
     "rtl_absneg": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_absneg.v"],
     "rtl_finite": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_finite.v"],
     "rtl_cmp": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_cmp.v"],
-    "rtl_addsub": [
-        "zkf/rtl/_zkf_pack.v",
-        "zkf/rtl/zkf_pipe.v",
-        "zkf/rtl/_zkf_normshift.v",
-        "zkf/rtl/_zkf_rshift_sticky.v",
-        "zkf/rtl/zkf_add.v",
-        "zkf/rtl/zkf_addsub.v",
-    ],
     "rtl_ilog2": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_ilog2.v"],
     "rtl_mul_ilog2": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_mul_ilog2.v"],
     "rtl_from_int": [
@@ -131,7 +123,6 @@ TARGETS: dict[str, Target] = {
     "sim_pack": _t("_zkf_pack", "test_pack", "rtl_pack"),
     "sim_mul": _t("zkf_mul", "test_mul", "rtl_mul"),
     "sim_add": _t("zkf_add", "test_add", "rtl_add"),
-    "sim_addsub": _t("zkf_addsub", "test_addsub", "rtl_addsub"),
     "sim_fma": _t("zkf_fma", "test_fma", "rtl_fma"),
     "sim_divsqrt": _t("zkf_divsqrt", "test_divsqrt", "rtl_divsqrt"),
     "sim_absneg": _t("zkf_absneg", "test_absneg", "rtl_absneg"),
@@ -152,5 +143,4 @@ TARGETS: dict[str, Target] = {
     # Algebraic-property suite: same RTL as the direct operator targets, but the test_properties cocotb module.
     "sim_properties_mul": _t("zkf_mul", "test_properties", "rtl_mul"),
     "sim_properties_add": _t("zkf_add", "test_properties", "rtl_add"),
-    "sim_properties_addsub": _t("zkf_addsub", "test_properties", "rtl_addsub"),
 }
