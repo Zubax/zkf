@@ -1,4 +1,5 @@
 // Streamed Zubax Kulibin float adder.
+// Subtraction a - b is achieved by inverting the sign bit of b.
 //
 // STAGE_INPUT=0: operands feed the datapath combinationally (default).
 // STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).

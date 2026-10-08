@@ -39,6 +39,8 @@ class CmpResult(NamedTuple):
     lt: bool
     eq: bool
     gt: bool
+    min: Zkf
+    max: Zkf
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -101,33 +103,27 @@ class Zkf:
 
     def round_int(self, wint: int) -> int:
         """Round to the nearest signed wint-bit integer, ties to even, with saturation."""
-        return self._round_to_int(wint, RoundMode.NEAREST_EVEN)
+        return self.rint_int(wint, RoundMode.NEAREST_EVEN)
 
     def floor_int(self, wint: int) -> int:
         """Round toward -inf to a signed wint-bit integer with saturation."""
-        return self._round_to_int(wint, RoundMode.FLOOR)
+        return self.rint_int(wint, RoundMode.FLOOR)
 
     def ceil_int(self, wint: int) -> int:
         """Round toward +inf to a signed wint-bit integer with saturation."""
-        return self._round_to_int(wint, RoundMode.CEIL)
+        return self.rint_int(wint, RoundMode.CEIL)
 
     def trunc_int(self, wint: int) -> int:
         """Round toward zero to a signed wint-bit integer with saturation."""
-        return self._round_to_int(wint, RoundMode.TRUNC)
+        return self.rint_int(wint, RoundMode.TRUNC)
 
-    def _round_to_int(self, wint: int, mode: RoundMode) -> int:
+    def rint_int(self, wint: int, mode: RoundMode) -> int:
+        """Round per mode to a signed wint-bit integer with saturation (zkf_rint's y_int)."""
         int_max = signed_int_max(wint)
         int_min = signed_int_min(wint)
         if self.is_inf:
             return int_min if self.negative else int_max
-        if self.is_zero:
-            return 0
-        rounded = round_signed_fraction_to_int(self.to_fraction(), mode)
-        if rounded > int_max:
-            return int_max
-        if rounded < int_min:
-            return int_min
-        return rounded
+        return max(int_min, min(int_max, round_signed_fraction_to_int(self.to_fraction(), mode)))
 
     def __float__(self) -> float:
         if self.is_inf:
@@ -351,46 +347,33 @@ class Zkf:
 
     def round(self) -> Zkf:
         """Round to the nearest integral value, ties to even (the zkf_rint RNTE mode)."""
-        return self._round_to_integral(RoundMode.NEAREST_EVEN)
+        return self.rint(RoundMode.NEAREST_EVEN)
 
     def floor(self) -> Zkf:
         """Round toward -inf to an integral value (the zkf_rint floor mode)."""
-        return self._round_to_integral(RoundMode.FLOOR)
+        return self.rint(RoundMode.FLOOR)
 
     def ceil(self) -> Zkf:
         """Round toward +inf to an integral value (the zkf_rint ceil mode)."""
-        return self._round_to_integral(RoundMode.CEIL)
+        return self.rint(RoundMode.CEIL)
 
     def trunc(self) -> Zkf:
         """Round toward zero to an integral value (the zkf_rint trunc mode)."""
-        return self._round_to_integral(RoundMode.TRUNC)
+        return self.rint(RoundMode.TRUNC)
 
-    def _round_to_integral(self, mode: RoundMode) -> Zkf:
-        """Round to an integral value in the same format per mode (zkf_rint's y_float)."""
-        fmt = self.fmt
+    def rint(self, mode: RoundMode) -> Zkf:
+        """Round per mode to an integral value in the same format (zkf_rint's y_float)."""
         if self.is_inf:
-            return Zkf(fmt, canonical_inf(fmt, self.negative))
-        if self.is_zero:
-            return Zkf(fmt, zero(fmt))
-        rounded = round_signed_fraction_to_int(self.to_fraction(), mode)
-        if rounded == 0:
-            return Zkf(fmt, zero(fmt))
-        return Zkf(fmt, round_fraction_to_zkf(fmt, int(rounded < 0), Fraction(abs(rounded))))
+            return self.fmt.inf(self.negative)
+        return self.fmt.encode(round_signed_fraction_to_int(self.to_fraction(), mode))
 
     def cmp(self, other: Zkf) -> CmpResult:
         """Numeric comparison mirroring the RTL zkf_cmp (total order over the format)."""
         self._require_same(other)
         a_key = ordered_key(self.fmt, self.bits)
         b_key = ordered_key(self.fmt, other.bits)
-        return CmpResult(a_key < b_key, a_key == b_key, a_key > b_key)
-
-    def sort(self, other: Zkf) -> tuple[Zkf, Zkf]:
-        """Return (min, max) of the pair by numeric order (the zkf_sort operator)."""
-        self._require_same(other)
-        lt = self.cmp(other).lt
-        a_bits, b_bits = self.bits, other.bits
-        lo, hi = (a_bits, b_bits) if lt else (b_bits, a_bits)
-        return Zkf(self.fmt, lo), Zkf(self.fmt, hi)
+        lt = a_key < b_key
+        return CmpResult(lt, a_key == b_key, a_key > b_key, self if lt else other, other if lt else self)
 
     def exp2(self) -> Zkf:
         """2 ** self (the zkf_exp2 operator)."""

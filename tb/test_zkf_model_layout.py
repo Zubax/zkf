@@ -150,9 +150,6 @@ class ZkfModelLayoutTest(unittest.TestCase):
                 self.assertEqual(model(fmt, stage_output=2).timing, Timing(2, 1))
                 for knobs in ({"stage_input": -1}, {"stage_output": -1}):
                     self.assert_knob_error(lambda: model(fmt, **knobs))
-        self.assertEqual(
-            zkf.SortModel(fmt, stage_input=1).params, {"WEXP": 8, "WMAN": 24, "STAGE_INPUT": 1, "LATENCY": 2}
-        )
         for config, latencies in (({}, (25, 43)), ({"unroll100": 50, "stage_product": 2, "stage_pack": 1}, (41, 60))):
             with self.subTest(config=config):
                 cordic = zkf.CordicModel(fmt, **config)
@@ -465,6 +462,7 @@ class ZkfModelLayoutTest(unittest.TestCase):
     def test_integer_rounding_modes(self) -> None:
         fmt = ZkfFormat(8, 24)
         methods = ("round_int", "floor_int", "ceil_int", "trunc_int")
+        integral = ("round", "floor", "ceil", "trunc")
         cases = [
             (Fraction(1, 2), (0, 0, 1, 0)),
             (Fraction(-1, 2), (0, -1, 0, 0)),
@@ -477,9 +475,12 @@ class ZkfModelLayoutTest(unittest.TestCase):
         ]
         for value, expected in cases:
             encoded = fmt.encode(value)
-            for method, result in zip(methods, expected):
+            for mode, method, to_integral, result in zip(RoundMode, methods, integral, expected):
                 with self.subTest(value=value, method=method):
                     self.assertEqual(getattr(encoded, method)(8), result)
+                    self.assertEqual(encoded.rint_int(8, mode), result)
+                    self.assertEqual(encoded.rint(mode), fmt.encode(result))
+                    self.assertEqual(getattr(encoded, to_integral)(), fmt.encode(result))
 
         self.assertEqual(fmt.encode(128).round_int(8), 127)
         self.assertEqual(fmt.encode(-128).round_int(8), -128)

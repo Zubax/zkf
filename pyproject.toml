@@ -55,7 +55,7 @@ addopts = ["-v", "-m", "not deep and not properties and not fast", "-p", "no:myp
 markers = [
     "pr: per-PR verification tier (the default selection)",
     "deep: full parameter-equivalence sweep (correctness on icarus, coverage on verilator); skipped unless -m deep",
-    "properties: algebraic-property tests on add/addsub/mul; skipped unless -m properties",
+    "properties: algebraic-property tests on add/mul; skipped unless -m properties",
     "fast: smallest-config smoke tier; skipped unless -m fast",
     "icarus: Icarus Verilog correctness run",
     "verilator: Verilator coverage-collecting run",

@@ -131,26 +131,8 @@ class AbsNegModel(_InOutStagedModel):
 
 
 @dataclass(frozen=True)
-class SortModel(OperatorModel):
-    module = "zkf_sort"
-    stage_input: int = 0
-
-    def __post_init__(self) -> None:
-        _check_int_range(self.stage_input, 0, None)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman, "STAGE_INPUT": self.stage_input}
-        )
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(1 + self.stage_input, 1)
-
-
-@dataclass(frozen=True)
-class _AdderModel(OperatorModel):
+class AddModel(OperatorModel):
+    module = "zkf_add"
     stage_input: int = 0
     stage_decode: int = 0
     stage_align: int = 0
@@ -194,16 +176,6 @@ class _AdderModel(OperatorModel):
             + self.stage_output
         )
         return Timing(latency, 1)
-
-
-@dataclass(frozen=True)
-class AddModel(_AdderModel):
-    module = "zkf_add"
-
-
-@dataclass(frozen=True)
-class AddSubModel(_AdderModel):
-    module = "zkf_addsub"
 
 
 @dataclass(frozen=True)
@@ -328,7 +300,7 @@ class MulIlog2Model(OperatorModel):
         if self.wk is not None:
             _check_format(self, "WK", self.wk, 1)
         _check_int_range(self.stage_input, 0, None)
-        _check_int_range(self.stage_decode, 0, 1)
+        _check_int_range(self.stage_decode, 0, None)
 
     @property
     def _wk(self) -> int:
@@ -588,7 +560,7 @@ class Log2Model(OperatorModel):
         _check_int_range(self.stage_product, 0, 4)
         if self.stage_product_final is not None:
             _check_int_range(self.stage_product_final, 0, 4)
-        _check_int_range(self.stage_decode, 0, 1)
+        _check_int_range(self.stage_decode, 0, None)
         norm_width = self.fmt.wexp + self.fmt.wfrac + spec["cf"]
         _check_int_range(self.stage_normalize, 0, 2)
         if self.stage_normalize == 2 and norm_width < 17:

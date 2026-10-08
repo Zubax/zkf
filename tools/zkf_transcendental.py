@@ -410,10 +410,9 @@ def _emit_table(s: Spec) -> str:
     else:
         w(
             f"// Table+polynomial core for zkf_log2 at WMAN={s.wman} (degree {s.d}); zero-bubble, see _zkf_horner.",
-            "// Symmetric reduction: indexes C(f)=log2(1+f)/f by unsigned v (WFRAC+1 bits) and returns log2(m')=f*C(f) as",
-            "// the unsigned magnitude l_mag = |f|*C(f) plus the sign l_neg (set when m>=sqrt(2)), at scale 2**-F2,",
-            "// F2 = WFRAC+1+CF. The final f*C(f) multiply is fully unsigned (|f|*C(f)); the caller folds l_neg into its",
-            "// reconstruction add/subtract. Register stages: two-stage ROM read + Horner + final multiply.",
+            "// Symmetric reduction: indexes C(f)=log2(1+f)/f by unsigned v (WFRAC+1 bits) and returns |log2(m')| as",
+            "// the unsigned l_mag = |f|*C(f) at scale 2**-F2, F2 = WFRAC+1+CF; the caller reads the sign off v, so no",
+            "// wide negate follows the product. Register stages: two-stage ROM read + Horner + final multiply.",
         )
     w("")
     w("// verilog_lint: waive-start line-length  (the ROM rows are wide one-liners)")
@@ -463,8 +462,7 @@ def _emit_table(s: Spec) -> str:
             input  wire     [{s.wman:3}-1:0] v,  // index coordinate v = f + 2**WFRAC (WFRAC+1 = WMAN bits)
             output wire               out_valid,
             output wire     [WSB-1:0] sb_out,
-            output wire        [{2 * s.wman + 12}:0] l_mag,  // |log2(m')| = |f|*C(f) magnitude at scale 2**-F2, F2 = WFRAC+1+CF
-            output wire               l_neg   // sign of log2(m') (= sign of reduced f); 1 when m >= sqrt(2)
+            output wire        [{2 * s.wman + 11}:0] l_mag
         """)
     w.pop()
     w(");")
@@ -525,42 +523,26 @@ def _emit_table(s: Spec) -> str:
         w("wire [WIDX-1:0] idx     = idx_ofs[WIDX-1:0];")
         w("wire [RW-1:0]   w       = v[RW-1:0];")
         _rom_read_pipeline(w, s, sb_load="{sb_in, idx_raw}", sb_width="(K + WSB)")
-        # log2(m') = f * C(f), SIGNED (f < 0 when m >= sqrt(2); acc = C(f) > 0), at scale 2^-F2. acc is trimmed to
-        # ACCM = CF+2 bits (its high guard bits are structurally zero since C(f) < 2) so the multiply maps to a smaller
-        # DSP grid. Instead of a signed*unsigned product (whose signed slice grid wastes a bit per tile, costing ~1/3
-        # more DSPs), multiply the UNSIGNED magnitude |f|*C(f) on the cheaper fully-unsigned grid, carry f's sign bit
-        # through the pmul sideband (same latency), and restore it combinationally: two's-complement negation commutes
-        # with the [F2:0] truncation, so the result is bit-identical to the old signed product. This adds a same-cycle
-        # negate cone after the final product but no latency and no ROM. The final multiply has its own split-depth knob
-        # because its operands are wider than the Horner acc*w product, and it carries the external sideband to its
-        # output. |f| < 2**(WF-1) over the reduced range, so the WF-bit unsigned magnitude has a structural top zero.
+        # The final multiply is fully unsigned (a signed slice grid wastes a bit per tile, costing ~1/3 more DSPs) and
+        # has its own split-depth knob because its operands are wider than the Horner acc*w product.
         w("""
             wire        [K-1:0]    idx_p = esb[K-1:0];
             wire        [WSB-1:0]  sb_p  = esb[K +: WSB];
             wire        [WMAN-1:0] v_p   = {idx_p, ew};
             wire signed [WF-1:0]   f_p   = $signed({~v_p[WMAN-1], v_p[WMAN-2:0]});
-            wire                   f_neg = f_p[WF-1];
-            wire        [WF-1:0]   mag_f = f_neg ? (-f_p) : f_p;   // |f|, fits WF-1 bits (top bit structurally 0)
+            wire        [WF-1:0]   mag_f = f_p[WF-1] ? (-f_p) : f_p;   // |f|, fits WF-1 bits (top bit structurally 0)
 
-            wire [WF+ACCM-1:0] umag_p;   // unsigned |f| * C(f)
-            wire [WSB:0]       fsb;      // {delayed f sign, external sideband} riding the pmul
+            wire [WF+ACCM-1:0] umag_p;
             _zkf_pmul #(
                 .WA(WF), .WB(ACCM), .A_SIGNED(0), .B_SIGNED(0),
-                .WSB(WSB + 1), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT_FINAL)
+                .WSB(WSB), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT_FINAL)
             ) u_final_pmul (
-                .clk(clk), .rst(rst), .in_valid(ev), .sb_in({f_neg, sb_p}),
+                .clk(clk), .rst(rst), .in_valid(ev), .sb_in(sb_p),
                 .a(mag_f), .b(acc[ACCM-1:0]),
-                .out_valid(out_valid), .sb_out(fsb), .p(umag_p)
+                .out_valid(out_valid), .sb_out(sb_out), .p(umag_p)
             );
-            assign sb_out = fsb[WSB-1:0];
-            // Emit the magnitude and the sign SEPARATELY rather than a signed product: the caller folds the sign into
-            // its e + log2(m') reconstruction as a single add/subtract, so the post-product cone carries one fewer wide
-            // negate carry chain (a standalone two's-complement negate here would otherwise sit in series with that
-            // adder and the magnitude abs, the critical path on wide formats). umag_p is the exact |f|*C(f): C(f) < 2
-            // and |f| < 2**(WF-1) bound it below 2**(F2-1), so the F2+1-bit slice is lossless. The sign rode the pmul
-            // sideband (fsb[WSB]) and so is aligned with out_valid.
-            assign l_mag = umag_p[F2:0];
-            assign l_neg = fsb[WSB];
+            // C(f) < 2 and |f| < 2**(WF-1) bound umag_p below 2**F2, so the F2-bit slice is lossless.
+            assign l_mag = umag_p[F2-1:0];
         """)
     w.pop()
     w("endmodule")

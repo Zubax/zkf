@@ -2,8 +2,8 @@
 """
 Model-independent algebraic-property tests: self-consistency identities (commutativity, algebraic
 identities) that hold for any correct implementation, so a failure flags an RTL bug even when the Python
-model shares it. The scaffolding dispatches by DUT port shape, so one file serves any binary toplevel
-exposing (clk, rst, in_valid, a, b, out_valid, y): zkf_mul, zkf_add, zkf_addsub.
+model shares it. The scaffolding dispatches by toplevel name, so one file serves the binary toplevels
+exposing (clk, rst, in_valid, a, b, out_valid, y): zkf_mul, zkf_add.
 """
 
 from __future__ import annotations
@@ -37,8 +37,6 @@ async def reset_dut(dut, stages: int) -> None:
     dut.in_valid.value = 0
     drive_unsigned(dut.a, 0)
     drive_unsigned(dut.b, 0)
-    if hasattr(dut, "op_sub"):
-        dut.op_sub.value = 0
     for _ in range(stages + 2):
         await RisingEdge(dut.clk)
         await Timer(1, unit="ns")
@@ -47,15 +45,10 @@ async def reset_dut(dut, stages: int) -> None:
     await Timer(1, unit="ns")
 
 
-async def drive_and_capture(dut, a: int, b: int, stages: int, op_sub: int = 0) -> int:
-    """
-    Drive (a, b) one cycle; expect out_valid=1 after exactly stages clock edges.
-    op_sub selects subtraction on toplevels that expose it (zkf_addsub); ignored otherwise.
-    """
+async def drive_and_capture(dut, a: int, b: int, stages: int) -> int:
+    """Drive (a, b) one cycle; expect out_valid=1 after exactly stages clock edges."""
     drive_unsigned(dut.a, a)
     drive_unsigned(dut.b, b)
-    if hasattr(dut, "op_sub"):
-        dut.op_sub.value = op_sub
     dut.in_valid.value = 1
     await RisingEdge(dut.clk)
     await Timer(1, unit="ns")
@@ -77,7 +70,7 @@ def infer_stages(
     name = str(dut._name)
     if "mul" in name:
         return fmt.model_of("mul")(stage_product=stage_product, stage_output=stage_output).timing.latency
-    if "addsub" in name or "add" in name:
+    if "add" in name:
         return fmt.model_of("add")(
             stage_decode=stage_decode,
             stage_align=stage_align,
@@ -156,9 +149,7 @@ async def algebraic_identities(dut) -> None:
 
     name = str(dut._name)
     is_mul = "mul" in name
-    is_addsub = "addsub" in name
-    is_add = ("add" in name) and not is_addsub
-    has_sub = hasattr(dut, "op_sub")
+    is_add = "add" in name
 
     start_clock(dut)
     await reset_dut(dut, stages)
@@ -175,38 +166,33 @@ async def algebraic_identities(dut) -> None:
 
     fails: list[str] = []
 
-    async def expect(label: str, a: int, b: int, op_sub: int, want: int) -> None:
-        got = await drive_and_capture(dut, a, b, stages, op_sub)
+    async def expect(label: str, a: int, b: int, want: int) -> None:
+        got = await drive_and_capture(dut, a, b, stages)
         if got != want:
             fails.append(
-                f"{label}: a={hex_bits(a, fmt.wfull)} b={hex_bits(b, fmt.wfull)} sub={op_sub} "
+                f"{label}: a={hex_bits(a, fmt.wfull)} b={hex_bits(b, fmt.wfull)} "
                 f"got={hex_bits(got, fmt.wfull)} want={hex_bits(want, fmt.wfull)}"
             )
 
     for a in operands:
         if is_mul:
-            await expect("mul_identity a*1==a", a, one, 0, fmt.wrap(a).canonicalize().bits)
-            await expect("mul_annihilator a*0==+0", a, pos_zero, 0, pos_zero)
-        if is_add or is_addsub:
-            await expect("add_identity a+0==a", a, pos_zero, 0, fmt.wrap(a).canonicalize().bits)
-            await expect("add_inverse a+(-a)==+0", a, (-fmt.wrap(a)).bits, 0, pos_zero)
-        if is_addsub and has_sub:
-            await expect("sub_self a-a==+0", a, a, 1, pos_zero)
-            await expect("sub_identity a-0==a", a, pos_zero, 1, fmt.wrap(a).canonicalize().bits)
+            await expect("mul_identity a*1==a", a, one, fmt.wrap(a).canonicalize().bits)
+            await expect("mul_annihilator a*0==+0", a, pos_zero, pos_zero)
+        if is_add:
+            await expect("add_identity a+0==a", a, pos_zero, fmt.wrap(a).canonicalize().bits)
+            await expect("add_identity a+(-0)==a", a, zero(fmt, 1), fmt.wrap(a).canonicalize().bits)
+            await expect("add_inverse a+(-a)==+0", a, (-fmt.wrap(a)).bits, pos_zero)
 
     # Pair identities over specials only (O(n^2)) plus a few random pairs.
     pairs = [(a, b) for a in special_operands(fmt) for b in special_operands(fmt)]
     pairs += [(random_operand(fmt, rng), random_operand(fmt, rng)) for _ in range(24)]
     for a, b in pairs:
         if is_mul:
-            y_ab = await drive_and_capture(dut, a, b, stages, 0)
-            await expect("mul_sign (-a)*b==-(a*b)", (-fmt.wrap(a)).bits, b, 0, neg_or_zero(y_ab))
-        if is_add or is_addsub:
-            y_ab = await drive_and_capture(dut, a, b, stages, 0)
-            await expect("add_neg (-a)+(-b)==-(a+b)", (-fmt.wrap(a)).bits, (-fmt.wrap(b)).bits, 0, neg_or_zero(y_ab))
-        if is_addsub and has_sub:
-            y_addnegb = await drive_and_capture(dut, a, (-fmt.wrap(b)).bits, stages, 0)
-            await expect("sub_via_neg a-b==a+(-b)", a, b, 1, y_addnegb)
+            y_ab = await drive_and_capture(dut, a, b, stages)
+            await expect("mul_sign (-a)*b==-(a*b)", (-fmt.wrap(a)).bits, b, neg_or_zero(y_ab))
+        if is_add:
+            y_ab = await drive_and_capture(dut, a, b, stages)
+            await expect("add_neg (-a)+(-b)==-(a+b)", (-fmt.wrap(a)).bits, (-fmt.wrap(b)).bits, neg_or_zero(y_ab))
 
     for line in fails[:8]:
         cocotb.log.error(f"identity violation: {line}")

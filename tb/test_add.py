@@ -18,6 +18,7 @@ from zkf_operands import (
     random_normal_near,
     random_operand,
     random_zero,
+    raw_directed_values,
 )
 from zkf_params import check_width, float_context
 from zkf_stream import RegisterStageScoreboard, drive_unsigned, run_stream_cases, start_clock
@@ -232,6 +233,19 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
     return cases
 
 
+def cross_operands(fmt: ZkfFormat) -> list[tuple[str, int, int]]:
+    """Every pair of the raw corner patterns and the directed numbers, with b in both signs."""
+    values = [(f"raw_{index}", value) for index, value in enumerate(raw_directed_values(fmt))]
+    if fmt.wexp >= 3:
+        values.extend(directed_numbers(fmt).items())
+    return [
+        (f"cross_{a_label}_{prefix}{b_label}", a, b ^ flip)
+        for a_label, a in values
+        for b_label, b in values
+        for prefix, flip in (("", 0), ("neg_", 1 << fmt.sign_shift))
+    ]
+
+
 def binary32_manual_cases() -> list[tuple[str, int, int, int]]:
     return [
         ("manual_zero_plus_zero", 0x00000000, 0x00000000, 0x00000000),
@@ -327,6 +341,8 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[AddCase]
     if fmt.wexp >= 3:
         for label, a, b in directed_case_operands(fmt):
             add_unique(cases, seen, label, fmt, a, b)
+    for label, a, b in cross_operands(fmt):
+        add_unique(cases, seen, label, fmt, a, b)
 
     if (fmt.wexp, fmt.wman) == (8, 24):
         for label, a, b, expected in binary32_manual_cases():
@@ -342,7 +358,8 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[AddCase]
         return cases
 
     rng = np.random.default_rng(seed)
-    while len(cases) < count:
+    target = len(cases) + count  # count counts the random cases
+    while len(cases) < target:
         a, b = random_case(fmt, rng)
         add_unique(cases, seen, "random", fmt, a, b)
     return cases

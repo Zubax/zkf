@@ -34,11 +34,11 @@ class TestContext:
     stage_reduce: int = 0  # zkf_exp2: register the reduced fixed-point before the evaluator ROM
     stage_product: int = 0  # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_cordic
     stage_product_final: int = 0  # zkf_log2 final f*C(f) multiply; defaults to stage_product in float_context()
-    stage_align: int = 0  # zkf_add / zkf_addsub / zkf_fma
-    stage_decode: int = 0  # zkf_mul_ilog2 / zkf_fma / zkf_log2 / zkf_divsqrt
-    stage_normalize: int = 0  # zkf_add / zkf_addsub / zkf_fma / zkf_log2 / zkf_from_int
+    stage_align: int = 0  # zkf_add / zkf_fma
+    stage_decode: int = 0  # zkf_add / zkf_mul_ilog2 / zkf_fma / zkf_log2 / zkf_divsqrt
+    stage_normalize: int = 0  # zkf_add / zkf_fma / zkf_log2 / zkf_from_int
     stage_normalize_output: int = 0  # zkf_log2: register _zkf_normshift outputs before GRS/exponent combine
-    stage_pack: int = 0  # zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
+    stage_pack: int = 0  # zkf_add / zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
     stage_shift: int = 0  # zkf_rint
     stage_round: int = 0  # zkf_rint
     stage_output: int = 0
