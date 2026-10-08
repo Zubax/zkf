@@ -73,7 +73,7 @@ Timing closure is an iterative process of hunting the next bottleneck and adding
 This process works regardless of whether the failure to meet timings is caused by too many logic levels or long routing.
 Special things to look out for:
 
-- DSP tiles must begin and end with a register stage. If retiming has moved a register away from a DSP tile,
+- DSP tiles should begin and end with a register stage. If retiming has moved a register away from a DSP tile,
   it means that the adjacent hop is starving and needs a new register there, even if it's not on the critical path.
 - Splitting multiplication into parallel halves (e.g., `STAGE_PRODUCT=1`) is almost never a good idea unless the
   multiplicand bitwidth exceeds the DSP slice input width.
@@ -82,10 +82,7 @@ Special things to look out for:
 
 More pipeline stages do not necessarily improve f_max, and can cost both timing and area. Every optional stage spreads
 that operator's flip-flops across more slices; on a wide, register-pressure-heavy datapath this adds routing congestion,
-so a congestion-bound design gets slower as stages are added even though no logic path got longer. When the critical
-path is routing-dominated -- most of the delay is wire across only a few logic levels -- and adding a stage near it
-makes things worse, the design is over-pipelined, not under-pipelined: strategically removing stages can raise f_max and
-free flip-flops at the same time.
+so a congestion-bound design gets slower as stages are added even though no logic path got longer.
 
 A robust closure procedure that accounts for this starts lean and adds back one stage at a time:
 
@@ -97,5 +94,4 @@ A robust closure procedure that accounts for this starts lean and adds back one 
   incidental cone that a stage added elsewhere will relieve.
 - Add exactly one stage, at the boundary that splits the true bottleneck, and re-measure. Adding stages one at a time
   this way logic-balances a routing-dominated design without over-populating it with flip-flops.
-- Repeat until f_max clears the target. If a newly added stage lowers f_max it was relieving congestion, not logic
-  depth: back it out and split a different boundary.
+- Repeat until f_max clears the target.
