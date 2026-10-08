@@ -465,6 +465,7 @@ class ZkfModelLayoutTest(unittest.TestCase):
     def test_integer_rounding_modes(self) -> None:
         fmt = ZkfFormat(8, 24)
         methods = ("round_int", "floor_int", "ceil_int", "trunc_int")
+        integral = ("round", "floor", "ceil", "trunc")
         cases = [
             (Fraction(1, 2), (0, 0, 1, 0)),
             (Fraction(-1, 2), (0, -1, 0, 0)),
@@ -477,9 +478,12 @@ class ZkfModelLayoutTest(unittest.TestCase):
         ]
         for value, expected in cases:
             encoded = fmt.encode(value)
-            for method, result in zip(methods, expected):
+            for mode, method, to_integral, result in zip(RoundMode, methods, integral, expected):
                 with self.subTest(value=value, method=method):
                     self.assertEqual(getattr(encoded, method)(8), result)
+                    self.assertEqual(encoded.rint_int(8, mode), result)
+                    self.assertEqual(encoded.rint(mode), fmt.encode(result))
+                    self.assertEqual(getattr(encoded, to_integral)(), fmt.encode(result))
 
         self.assertEqual(fmt.encode(128).round_int(8), 127)
         self.assertEqual(fmt.encode(-128).round_int(8), -128)

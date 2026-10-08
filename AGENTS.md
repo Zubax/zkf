@@ -13,6 +13,10 @@ Never alter the git staging index unless asked; it is often used for manual part
 
 Generated reports must be written in rich and colorful HTML format, not Markdown.
 
+Synthesis attributes, the `ZKF_ATTRIBUTE_*` hook sites included, are added only where a measurement shows a
+significant and consistent gain; a minor or mixed gain does not justify one, and a site whose gain turns minor is
+removed. Each attribute adds maintenance and portability risk.
+
 ### Reset strategy
 
 Use synchronous active-high reset for stream control only: validity flags, state-machine state, and other control

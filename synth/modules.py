@@ -40,7 +40,7 @@ class ModuleSpec:
     stage_product: int = 0  # zkf_mul/fma/exp2/log2/cordic: _zkf_pmul pipeline depth / split 0..4.
     stage_product_final: int = -1  # zkf_log2 only: final f*C(f) split; -1 mirrors stage_product.
     stage_align: int = 0  # zkf_add, zkf_addsub, zkf_fma: 0 or 1 (alignment shifter split).
-    stage_decode: int = 0  # zkf_add, zkf_addsub, zkf_mul_ilog2, zkf_fma, zkf_log2, zkf_divsqrt: 0 or 1.
+    stage_decode: int = 0  # zkf_add, zkf_addsub, zkf_mul_ilog2, zkf_fma, zkf_log2, zkf_divsqrt
     stage_normalize: int = 0  # zkf_add, zkf_addsub, zkf_fma, zkf_log2, zkf_from_int: 0/1/2 (normshift STAGE_SPLIT).
     stage_normalize_output: int = 0  # zkf_log2: 0/1 _zkf_normshift.STAGE_OUTPUT register.
     stage_pack: int = 0  # zkf_fma, zkf_log2, zkf_exp2, zkf_from_int: 0 or 1 (forwarded to _zkf_pack.STAGE_INPUT).
@@ -310,7 +310,6 @@ MODULES = [
         wman=36,
         wexp_unbiased=0,
     ),
-    # WK=44/SD0 pins the full cone that regressed to 97.37 MHz when accumulator width followed WK.
     ModuleSpec(
         name="zkf_mul_ilog2",
         label="zkf_mul_ilog2 (runtime k; WEXP=6, WMAN=18, WK=7)",
@@ -331,16 +330,17 @@ MODULES = [
         wexp_unbiased=0,
         wk=9,
     ),
+    # WK=44 exercises the saturating wide-k decode; its single-cycle cone misses 100 MHz on Yosys without STAGE_DECODE.
     ModuleSpec(
         name="zkf_mul_ilog2_w8m36_wk44",
-        label="zkf_mul_ilog2 (runtime k; WEXP=8, WMAN=36, WK=44, STAGE_DECODE=0)",
+        label="zkf_mul_ilog2 (runtime k; WEXP=8, WMAN=36, WK=44, STAGE_DECODE=1)",
         top="zkf_mul_ilog2_w8m36_wk44_synth_top",
         kind="mul_ilog2",
         wexp=8,
         wman=36,
         wexp_unbiased=0,
         wk=44,
-        stage_decode=0,
+        stage_decode=1,
     ),
     ModuleSpec(
         name="zkf_mul_ilog2_w8m36_sd1",
@@ -500,10 +500,7 @@ MODULES = [
     #     1 is operand-capture + native multiply). It then reaches ~125 MHz Yosys.
     #   - log2's argument is the narrow segment-local fraction, so acc*w is wide x narrow and the Horner multiply can
     #     stay unsplit. The generated tables insert their own mandatory post-ROM hold register, so STAGE_PRODUCT is not
-    #     used merely to isolate the first multiply. The critical path is the final f*C(f) multiply + its carry chain;
-    #     STAGE_NORMALIZE=2 (splitting the close-cancellation x->1 normalize) is the single knob that relieves the
-    #     surrounding placement enough to close 100 MHz on both Yosys ECP5 (102.9 MHz) and Diamond (105.9 MHz). The
-    #     STAGE_PACK=1 places a register at the rounder input, isolating the normalizer-to-packer path.
+    #     used merely to isolate the first multiply; the knobs that close it are in the entry's label.
     ModuleSpec(
         name="zkf_exp2",
         label="zkf_exp2 (2**x, table+polynomial; STAGE_PRODUCT=2 splits each Horner multiply into a registered "
@@ -523,7 +520,7 @@ MODULES = [
         "unsigned |f|*C(f) multiply's DSP "
         "from the |f| magnitude-negate cone. The biased fixed-to-float back-end (EXP_IS_BIASED) and the "
         "direct-magnitude reconstruct freed enough slack to drop STAGE_NORMALIZE 2->1; closes 100 MHz on Yosys "
-        "ECP5 (103.0 MHz) and Diamond)",
+        "ECP5 and Diamond)",
         top="zkf_log2_synth_top",
         kind="log2",
         wexp=6,
@@ -554,14 +551,13 @@ MODULES = [
     # (WMULTIPLIER=0) would cut the 53-bit accumulator into 18/18/17-bit slices, but the signed slice product then
     # needs a 19-bit operand (18 magnitude + sign), one bit past the MULT18X18 limit, so Lattice synthesis can drop the
     # whole Horner multiply into a fabric carry-chain soft multiplier (~76 MHz). The 18-bit tile hint derives DSP-fit
-    # grids for the signed*unsigned products (3x3 for exp2 Horner, 3x2 for log2 Horner, 3x3 for log2's final f*C(f)),
-    # so every multiply maps to DSP on both Yosys and Diamond. exp2's STAGE_PRODUCT=3 splits the flat 9-term column sum
+    # grids (3x3 for exp2's Horner, 3x2 for log2's signed Horner, 2x3 for log2's unsigned final f*C(f)), so every
+    # multiply maps to DSP on both Yosys and Diamond. exp2's STAGE_PRODUCT=3 splits the flat 9-term column sum
     # (STAGE_PRODUCT=2: 64 MHz); its 27 of 28 DSPs then leave the capture-FF->DSP->partial-product hop as the limiter,
     # which no stage splits and only placement moves (Yosys ~85-118 MHz across seeds): STAGE_PRODUCT=4 and the
-    # STAGE_INPUT/REDUCE/PACK/OUTPUT stages merely reshuffle it. log2's final f*C(f) multiply is fully UNSIGNED
-    # (|f|*C(f) with the sign folded into the back-end add/subtract), an unsigned 2x3 grid: 24 DSPs. Lean-first, log2
-    # needs STAGE_NORMALIZE=2 (the x->1 normalize), STAGE_PACK=1 and STAGE_PRODUCT=3 on both multiplies, then meets the
-    # same DSP hop (Yosys ~85-126 MHz across seeds); STAGE_OUTPUT=1 is a placement pick, not a split.
+    # STAGE_INPUT/REDUCE/PACK/OUTPUT stages merely reshuffle it. Lean-first, log2 (24 DSPs) needs STAGE_NORMALIZE=2
+    # (the x->1 normalize), STAGE_PACK=1 and STAGE_PRODUCT=3 on both multiplies, then meets the same DSP hop (Yosys
+    # ~85-126 MHz across seeds).
     ModuleSpec(
         name="zkf_exp2_w8m36",
         label="zkf_exp2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + WMULTIPLIER=18 18-bit DSP-tile grid)",
@@ -577,7 +573,7 @@ MODULES = [
     ModuleSpec(
         name="zkf_log2_w8m36",
         label="zkf_log2 (WEXP=8, WMAN=36, STAGE_PRODUCT=3 + STAGE_PRODUCT_FINAL=3 + WMULTIPLIER=18 18-bit DSP-tile "
-        "grid + STAGE_NORMALIZE=2 + STAGE_PACK=1 + STAGE_OUTPUT=1)",
+        "grid + STAGE_NORMALIZE=2 + STAGE_PACK=1)",
         top="zkf_log2_w8m36_synth_top",
         kind="log2",
         wexp=8,
@@ -588,7 +584,6 @@ MODULES = [
         wmultiplier=18,
         stage_normalize=2,
         stage_pack=1,
-        stage_output=1,
         emit_schematic=False,
     ),
     # zkf_cordic fixed to rotation: a turns-reduction front end, the folded engine, the tiny-input bypass multiply, and

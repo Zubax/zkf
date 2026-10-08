@@ -328,7 +328,7 @@ class MulIlog2Model(OperatorModel):
         if self.wk is not None:
             _check_format(self, "WK", self.wk, 1)
         _check_int_range(self.stage_input, 0, None)
-        _check_int_range(self.stage_decode, 0, 1)
+        _check_int_range(self.stage_decode, 0, None)
 
     @property
     def _wk(self) -> int:
@@ -588,7 +588,7 @@ class Log2Model(OperatorModel):
         _check_int_range(self.stage_product, 0, 4)
         if self.stage_product_final is not None:
             _check_int_range(self.stage_product_final, 0, 4)
-        _check_int_range(self.stage_decode, 0, 1)
+        _check_int_range(self.stage_decode, 0, None)
         norm_width = self.fmt.wexp + self.fmt.wfrac + spec["cf"]
         _check_int_range(self.stage_normalize, 0, 2)
         if self.stage_normalize == 2 and norm_width < 17:

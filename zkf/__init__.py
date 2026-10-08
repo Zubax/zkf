@@ -34,4 +34,4 @@ from ._reference import RoundMode as RoundMode, UnsupportedFormat as Unsupported
 from ._rtl import get_rtl as get_rtl, get_rtl_bundle as get_rtl_bundle
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.8.0"
+__version__ = "0.8.1"

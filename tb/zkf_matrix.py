@@ -659,6 +659,7 @@ def _per_pr(sim, out: list) -> None:
         out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, si=1, sp=1, so=1))
     out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sr=1))
     out.append(_trans("log2", sim, "pr", "w6_m16_decode", 6, 16, "random", 256, sd=1))
+    out.append(_trans("log2", sim, "pr", "w6_m16_decode", 6, 16, "random", 256, sd=2))
     out.append(_trans("log2", sim, "pr", "w6_m16_split_final", 6, 16, "random", 256, sp=1, spf=2))
     # UNROLL100 (iterations/cycle x100): 50 = half-rate, 100 = synthesized M18 rate, 200 = 2/cycle. Each changes the
     # published latency; the test asserts measured == model.
@@ -766,6 +767,7 @@ def _per_pr(sim, out: list) -> None:
     # the saturating boundaries).
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1, sd=1))
+    out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sd=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=6, sd=1))
@@ -914,7 +916,7 @@ def _deep_correctness(out: list) -> None:
     # operating point synthesis actually builds, not just the symmetric default.
     out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
     out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, wm=18))
-    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, spf=3, wm=18, sn=2, pa=1, so=1))
+    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, spf=3, wm=18, sn=2, pa=1))
     # Vectoring deep: baseline per format, UNROLL100 sweep + full staging on 5/16, and the synthesized 6/18 + 8/36
     # operating points. Each asserts latency.
     for cfg, w, m, k, c in TRANS_ATAN2:
