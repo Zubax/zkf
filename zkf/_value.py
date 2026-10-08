@@ -39,6 +39,8 @@ class CmpResult(NamedTuple):
     lt: bool
     eq: bool
     gt: bool
+    min: Zkf
+    max: Zkf
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -370,15 +372,8 @@ class Zkf:
         self._require_same(other)
         a_key = ordered_key(self.fmt, self.bits)
         b_key = ordered_key(self.fmt, other.bits)
-        return CmpResult(a_key < b_key, a_key == b_key, a_key > b_key)
-
-    def sort(self, other: Zkf) -> tuple[Zkf, Zkf]:
-        """Return (min, max) of the pair by numeric order (the zkf_sort operator)."""
-        self._require_same(other)
-        lt = self.cmp(other).lt
-        a_bits, b_bits = self.bits, other.bits
-        lo, hi = (a_bits, b_bits) if lt else (b_bits, a_bits)
-        return Zkf(self.fmt, lo), Zkf(self.fmt, hi)
+        lt = a_key < b_key
+        return CmpResult(lt, a_key == b_key, a_key > b_key, self if lt else other, other if lt else self)
 
     def exp2(self) -> Zkf:
         """2 ** self (the zkf_exp2 operator)."""

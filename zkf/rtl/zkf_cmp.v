@@ -1,5 +1,7 @@
-// Streamed floating-point compare producing three mutually exclusive flags. Any exponent-zero pattern compares equal to
-// canonical +0, and infinities of the same sign compare equal regardless of their fraction bits.
+// Streamed floating-point compare producing three mutually exclusive flags and the ordered pair. Any exponent-zero
+// pattern compares equal to canonical +0, and infinities of the same sign compare equal regardless of their fraction
+// bits. min and max are the operands themselves, not canonicalized; when they compare equal, min is b and max is a.
+// An unused result may be left unconnected; its logic is pruned.
 //
 // The operands become monotonic keys (sign-magnitude to ordered unsigned) beside the zero/infinity classification, so
 // the one wide compare does not wait on it: `<` is the borrow of a subtraction, which maps onto the carry chain, `==`
@@ -26,10 +28,12 @@ module zkf_cmp #(
     input wire [WEXP+WMAN-1:0] a,
     input wire [WEXP+WMAN-1:0] b,
 
-    output wire out_valid,
-    output wire a_gt_b,
-    output wire a_eq_b,
-    output wire a_lt_b
+    output wire                 out_valid,
+    output wire                 a_gt_b,
+    output wire                 a_eq_b,
+    output wire                 a_lt_b,
+    output wire [WEXP+WMAN-1:0] min,
+    output wire [WEXP+WMAN-1:0] max
 );
     localparam WFRAC = WMAN - 1;
     localparam WFULL = WEXP + WMAN;
@@ -63,9 +67,13 @@ module zkf_cmp #(
     wire             eq     = (a_key == b_key) | same;
     wire             lt     = diff[WFULL] & ~same;
 
-    zkf_pipe #(.W(3), .N(STAGE_OUTPUT)) u_output_pipe (
-        .clk(clk), .rst(rst), .in_valid(valid_q), .in({~(lt | eq), eq, lt}),
-        .out_valid(out_valid), .out({a_gt_b, a_eq_b, a_lt_b})
+    zkf_pipe #(.W(3 + 2*WFULL), .N(STAGE_OUTPUT)) u_output_pipe (
+        .clk(clk),
+        .rst(rst),
+        .in_valid(valid_q),
+        .in({~(lt | eq), eq, lt, lt ? a_q : b_q, lt ? b_q : a_q}),
+        .out_valid(out_valid),
+        .out({a_gt_b, a_eq_b, a_lt_b, min, max})
     );
 endmodule
 

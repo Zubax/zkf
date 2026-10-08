@@ -55,8 +55,7 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 |-------------------------|-----------------|-----------|-------|
 | `zkf_absneg`            | WEXP=6, WMAN=18 | yices     | spec inlined; negation an involution, absolute value idempotent; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
 | `zkf_finite`            | WEXP=6, WMAN=18 | yices     | spec inlined; saturation finite and idempotent; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
-| `zkf_cmp`               | WEXP=6, WMAN=18 | yices     | references explicit case analysis; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
-| `zkf_sort`              | WEXP=6, WMAN=18 | yices     | multiset + ordering via cmp_ref |
+| `zkf_cmp`               | WEXP=6, WMAN=18 | yices     | references explicit case analysis, min/max by the reference order; combinational and STAGE_INPUT=STAGE_OUTPUT=1 |
 | `zkf_pipe`              | W=24, N=4       | yices     | BMC depth 12 covers full propagation |
 | `_zkf_pack`             | WEXP=6, WMAN=18 | yices     | at the production parameter set; also with STAGE_OUTPUT=1 |
 | `_zkf_pack` (biased)    | WEXP=6, WMAN=18 | yices     | EXP_IS_BIASED=1 port |

@@ -50,7 +50,6 @@ FILESETS: dict[str, list[str]] = {
     "rtl_absneg": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_absneg.v"],
     "rtl_finite": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_finite.v"],
     "rtl_cmp": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_cmp.v"],
-    "rtl_sort": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_cmp.v", "zkf/rtl/zkf_sort.v"],
     "rtl_addsub": [
         "zkf/rtl/_zkf_pack.v",
         "zkf/rtl/zkf_pipe.v",
@@ -138,7 +137,6 @@ TARGETS: dict[str, Target] = {
     "sim_absneg": _t("zkf_absneg", "test_absneg", "rtl_absneg"),
     "sim_finite": _t("zkf_finite", "test_finite", "rtl_finite"),
     "sim_cmp": _t("zkf_cmp", "test_cmp", "rtl_cmp"),
-    "sim_sort": _t("zkf_sort", "test_sort", "rtl_sort"),
     "sim_pipe": _t("zkf_pipe", "test_pipe", "rtl_pipe"),
     "sim_normshift": _t("_zkf_normshift", "test_normshift", "rtl_normshift"),
     "sim_rshift": _t("_zkf_rshift_sticky", "test_rshift", "rtl_rshift"),

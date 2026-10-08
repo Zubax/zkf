@@ -399,7 +399,9 @@ module {spec.top} (
     output wire                 out_valid,
     output wire                 a_gt_b,
     output wire                 a_eq_b,
-    output wire                 a_lt_b
+    output wire                 a_lt_b,
+    output wire [{wfull - 1}:0] min,
+    output wire [{wfull - 1}:0] max
 );
     // Measurement harness: put real registers on every DUT input and output so the timing report includes
     // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
@@ -410,10 +412,12 @@ module {spec.top} (
     {SYNTH_REG_ATTR}
     reg [{wfull - 1}:0] r_b;
 
-    wire dut_out_valid;
-    wire dut_a_gt_b;
-    wire dut_a_eq_b;
-    wire dut_a_lt_b;
+    wire                 dut_out_valid;
+    wire                 dut_a_gt_b;
+    wire                 dut_a_eq_b;
+    wire                 dut_a_lt_b;
+    wire [{wfull - 1}:0] dut_min;
+    wire [{wfull - 1}:0] dut_max;
 
     {SYNTH_REG_ATTR}
     reg r_out_valid;
@@ -423,11 +427,17 @@ module {spec.top} (
     reg r_a_eq_b;
     {SYNTH_REG_ATTR}
     reg r_a_lt_b;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_min;
+    {SYNTH_REG_ATTR}
+    reg [{wfull - 1}:0] r_max;
 
     assign out_valid = r_out_valid;
     assign a_gt_b    = r_a_gt_b;
     assign a_eq_b    = r_a_eq_b;
     assign a_lt_b    = r_a_lt_b;
+    assign min       = r_min;
+    assign max       = r_max;
 
     zkf_cmp #(
         {params}
@@ -440,7 +450,9 @@ module {spec.top} (
         .out_valid(dut_out_valid),
         .a_gt_b(dut_a_gt_b),
         .a_eq_b(dut_a_eq_b),
-        .a_lt_b(dut_a_lt_b)
+        .a_lt_b(dut_a_lt_b),
+        .min(dut_min),
+        .max(dut_max)
     );
 
     always @(posedge clk) begin
@@ -457,78 +469,8 @@ module {spec.top} (
         r_a_gt_b <= dut_a_gt_b;
         r_a_eq_b <= dut_a_eq_b;
         r_a_lt_b <= dut_a_lt_b;
-    end
-endmodule
-
-`default_nettype wire
-""")
-
-
-def write_sort_wrapper(spec: ModuleSpec, path: Path) -> None:
-    wfull = spec.wexp + spec.wman
-    params = _verilog_params(spec)
-    path.write_text(f"""`default_nettype none
-
-module {spec.top} (
-    input  wire                 clk,
-    input  wire                 rst,
-    input  wire                 in_valid,
-    input  wire [{wfull - 1}:0] a,
-    input  wire [{wfull - 1}:0] b,
-    output wire                 out_valid,
-    output wire [{wfull - 1}:0] min,
-    output wire [{wfull - 1}:0] max
-);
-    // Measurement harness: put real registers on every DUT input and output so the timing report includes
-    // paths that would otherwise be reported as unconstrained primary-input/primary-output delays.
-    {SYNTH_REG_ATTR}
-    reg                 r_in_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_a;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_b;
-
-    wire                 dut_out_valid;
-    wire [{wfull - 1}:0] dut_min;
-    wire [{wfull - 1}:0] dut_max;
-
-    {SYNTH_REG_ATTR}
-    reg                 r_out_valid;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_min;
-    {SYNTH_REG_ATTR}
-    reg [{wfull - 1}:0] r_max;
-
-    assign out_valid = r_out_valid;
-    assign min       = r_min;
-    assign max       = r_max;
-
-    zkf_sort #(
-        {params}
-    ) dut (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(r_in_valid),
-        .a(r_a),
-        .b(r_b),
-        .out_valid(dut_out_valid),
-        .min(dut_min),
-        .max(dut_max)
-    );
-
-    always @(posedge clk) begin
-        if (rst) begin
-            r_in_valid  <= 1'b0;
-            r_out_valid <= 1'b0;
-        end else begin
-            r_in_valid  <= in_valid;
-            r_out_valid <= dut_out_valid;
-        end
-
-        r_a   <= a;
-        r_b   <= b;
-        r_min <= dut_min;
-        r_max <= dut_max;
+        r_min    <= dut_min;
+        r_max    <= dut_max;
     end
 endmodule
 
@@ -1081,8 +1023,6 @@ def write_wrapper(spec: ModuleSpec, path: Path) -> None:
         write_divsqrt_wrapper(spec, path)
     elif spec.kind == "cmp":
         write_cmp_wrapper(spec, path)
-    elif spec.kind == "sort":
-        write_sort_wrapper(spec, path)
     elif spec.kind == "ilog2":
         write_ilog2_wrapper(spec, path)
     elif spec.kind == "mul_ilog2":

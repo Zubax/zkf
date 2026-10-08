@@ -148,6 +148,8 @@ async def cmp_runtime_cases(dut) -> None:
     check_width("a_gt_b", dut.a_gt_b, 1, context)
     check_width("a_eq_b", dut.a_eq_b, 1, context)
     check_width("a_lt_b", dut.a_lt_b, 1, context)
+    check_width("min", dut.min, fmt.wfull, context)
+    check_width("max", dut.max, fmt.wfull, context)
     cases = cases_for(fmt, context.kind, context.seed, context.count)
 
     register_stages = fmt.model_of("cmp")(
@@ -158,12 +160,11 @@ async def cmp_runtime_cases(dut) -> None:
         drive_unsigned(dut.a, case.a)
         drive_unsigned(dut.b, case.b)
         c = fmt.wrap(case.a).cmp(fmt.wrap(case.b))
-        a_gt_b, a_eq_b, a_lt_b = int(c.gt), int(c.eq), int(c.lt)
-        return {"a_gt_b": a_gt_b, "a_eq_b": a_eq_b, "a_lt_b": a_lt_b}
+        return {"a_gt_b": int(c.gt), "a_eq_b": int(c.eq), "a_lt_b": int(c.lt), "min": c.min.bits, "max": c.max.bits}
 
-    flags = {"a_gt_b": dut.a_gt_b, "a_eq_b": dut.a_eq_b, "a_lt_b": dut.a_lt_b}
+    outputs = {"a_gt_b": dut.a_gt_b, "a_eq_b": dut.a_eq_b, "a_lt_b": dut.a_lt_b, "min": dut.min, "max": dut.max}
     if register_stages == 0:
-        await check_combinational(dut, context.prefix(), flags, cases[:256], drive_case)
+        await check_combinational(dut, context.prefix(), outputs, cases[:256], drive_case)
     start_clock(dut)
     dut.rst.value = 1
     dut.in_valid.value = 0
@@ -173,7 +174,13 @@ async def cmp_runtime_cases(dut) -> None:
         dut,
         register_stages,
         context,
-        {name: (handle, 1) for name, handle in flags.items()},
+        {
+            "a_gt_b": (dut.a_gt_b, 1),
+            "a_eq_b": (dut.a_eq_b, 1),
+            "a_lt_b": (dut.a_lt_b, 1),
+            "min": (dut.min, fmt.wfull),
+            "max": (dut.max, fmt.wfull),
+        },
         reset_passthrough=register_stages == 0,
     )
 

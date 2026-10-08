@@ -558,10 +558,9 @@ def _per_pr(sim, out: list) -> None:
     _cordic_modes(sim, "pr", out)
     for cfg, w, m, u, k, c in PACK:
         out.append(_pack(sim, "pr", cfg, w, m, u, k, c))
-    for op in ("cmp", "sort"):
-        for cfg, w, m, k, c in BINARY:
-            out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
-        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+    for cfg, w, m, k, c in BINARY:
+        out.append(_binary("cmp", sim, "pr", cfg, w, m, k, c))
+    out.append(_binary("cmp", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     # Output stages alone and behind input stages (si=0 and si=1/2 alone are covered by the rows above and the
     # STAGE_INPUT>1 sweep).
     for knobs in ({"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}, {"so": 2}, {"si": 2, "so": 2}):
@@ -798,7 +797,7 @@ def _per_pr(sim, out: list) -> None:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
     # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks widened input
     # pipes in the latency model.
-    for op in ("mul", "cmp", "sort"):
+    for op in ("mul", "cmp"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
     out.append(_fma(sim, "pr", "w4_m6", 4, 6, "random", 256, si=2))
@@ -828,7 +827,6 @@ def _deep_correctness(out: list) -> None:
                     for so in (0, 1):
                         out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
         out.append(_binary("cmp", s, "deep", base, w, m, k, c))
-        out.append(_binary("sort", s, "deep", base, w, m, k, c))
     w, m, k, c = BIN_EXT[0]
     out.append(_binary("cmp", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, so=1))
     # fma: each deep format once (results are staging-independent), the full pipeline-knob cartesian on one fast
@@ -1006,7 +1004,6 @@ def _deep_coverage(out: list) -> None:
         out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
         out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, si=2))
         out.append(_binary("cmp", s, "deep", base, w, m, "exhaustive", 0))
-        out.append(_binary("sort", s, "deep", base, w, m, "exhaustive", 0))
     # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default + all-on toggles the
     # product/decode/align/normalize/output split registers; wider random runs toggle the wide shifters and the
     # far-shift saturation path the tiny W2/M4 exponent range cannot reach.
@@ -1200,7 +1197,6 @@ def _properties(out: list) -> None:
 _FAST = [
     ("pack", "pack", [("WEXP", 2), ("WMAN", 4), ("WEXP_UNBIASED", 4)]),
     ("cmp", "cmp", [("WEXP", 2), ("WMAN", 4)]),
-    ("sort", "sort", [("WEXP", 2), ("WMAN", 4)]),
     ("absneg", "absneg", [("WEXP", 2), ("WMAN", 4)]),
     ("finite", "finite", [("WEXP", 2), ("WMAN", 4)]),
     ("add_sd0_sa0", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),

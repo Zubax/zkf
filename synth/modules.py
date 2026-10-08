@@ -293,24 +293,6 @@ MODULES = [
         wexp_unbiased=0,
     ),
     ModuleSpec(
-        name="zkf_sort",
-        label="zkf_sort",
-        top="zkf_sort_synth_top",
-        kind="sort",
-        wexp=6,
-        wman=18,
-        wexp_unbiased=0,
-    ),
-    ModuleSpec(
-        name="zkf_sort_w8m36",
-        label="zkf_sort (WEXP=8, WMAN=36)",
-        top="zkf_sort_w8m36_synth_top",
-        kind="sort",
-        wexp=8,
-        wman=36,
-        wexp_unbiased=0,
-    ),
-    ModuleSpec(
         name="zkf_mul_ilog2",
         label="zkf_mul_ilog2 (runtime k; WEXP=6, WMAN=18, WK=7)",
         top="zkf_mul_ilog2_synth_top",
@@ -741,8 +723,6 @@ def rtl_sources(spec: ModuleSpec) -> list[Path]:
         return [hdl / "zkf_pipe.v", hdl / "_zkf_pack.v", hdl / "_zkf_divsqrt_step.v", hdl / "zkf_divsqrt.v"]
     if spec.kind == "cmp":
         return [hdl / "zkf_pipe.v", hdl / "zkf_cmp.v"]
-    if spec.kind == "sort":
-        return [hdl / "zkf_pipe.v", hdl / "zkf_cmp.v", hdl / "zkf_sort.v"]
     if spec.kind == "ilog2":
         return [hdl / "zkf_pipe.v", hdl / "zkf_ilog2.v"]
     if spec.kind == "mul_ilog2":

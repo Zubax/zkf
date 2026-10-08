@@ -94,8 +94,7 @@ II - initiation interval (cycles between accepting new inputs, reciprocal of cyc
 |-----------------------|---------|----------------------------------------------------------------|-----------------------------|
 | `zkf_absneg`          | 1       | Absolute value and negation.                                   | Does not canonicalize       |
 | `zkf_finite`          | 1       | Finiteness flag, and ±∞ replaced by the nearest finite value.  | Does not canonicalize       |
-| `zkf_cmp`             | 1       | Compare two values.                                            |                             |
-| `zkf_sort`            | 1       | Min and max of two values.                                     | Does not canonicalize       |
+| `zkf_cmp`             | 1       | Compare two values; also outputs their min and max.            | Does not canonicalize       |
 | `zkf_add`             | 1       | `a + b`.                                                       |                             |
 | `zkf_addsub`          | 1       | `a + b` or `a − b` selected by `op_sub` (trivial wrapper).     |                             |
 | `zkf_mul`             | 1       | `a⋅b`.                                                         |                             |
@@ -156,7 +155,7 @@ representation.
     h                   = max(abs(x), abs(y))
     hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf_cordic
 
-    min(a,b), max(a,b)  = sort(a,b)
+    min(a,b), max(a,b)  = zkf_cmp(a,b)
     clamp(x, lo, hi)    = min(max(x, lo), hi)
     lerp(a,b,t)         = fma(t, b − a, a)
     deadzone(x,d)       = sign(x)⋅max(abs(x) − d, 0)

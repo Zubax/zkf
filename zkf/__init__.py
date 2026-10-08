@@ -19,7 +19,6 @@ from ._operators import (
     PipeModel as PipeModel,
     ResizeModel as ResizeModel,
     RintModel as RintModel,
-    SortModel as SortModel,
 )
 from ._value import (
     Atan2Result as Atan2Result,
@@ -34,4 +33,4 @@ from ._reference import RoundMode as RoundMode, UnsupportedFormat as Unsupported
 from ._rtl import get_rtl as get_rtl, get_rtl_bundle as get_rtl_bundle
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.8.1"
+__version__ = "0.9.0"

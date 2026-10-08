@@ -131,25 +131,6 @@ class AbsNegModel(_InOutStagedModel):
 
 
 @dataclass(frozen=True)
-class SortModel(OperatorModel):
-    module = "zkf_sort"
-    stage_input: int = 0
-
-    def __post_init__(self) -> None:
-        _check_int_range(self.stage_input, 0, None)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman, "STAGE_INPUT": self.stage_input}
-        )
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(1 + self.stage_input, 1)
-
-
-@dataclass(frozen=True)
 class _AdderModel(OperatorModel):
     stage_input: int = 0
     stage_decode: int = 0
