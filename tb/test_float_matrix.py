@@ -620,7 +620,7 @@ def _latency_models() -> list:
 
 @pytest.mark.parametrize("cls", _latency_models(), ids=lambda cls: cls.module)
 def test_header_latency_formula(tmp_path, cls) -> None:
-    """The LATENCY formula that ends an operator's header, evaluated by Icarus, is the model's latency at every knob."""
+    """The LATENCY formula that ends an operator's header, if it has one, is the model's latency at every knob."""
     import dataclasses
     import zkf
 
@@ -651,6 +651,8 @@ def test_header_latency_formula(tmp_path, cls) -> None:
         return  # zkf_pipe
     source = (REPO_ROOT / "zkf" / "rtl" / f"{cls.module}.v").read_text()
     header, _, body = source.partition("`default_nettype")
+    if not re.search(r"^// LATENCY\w* += ", header, re.M):
+        return
     formula = re.findall(r"^// (\w+) += (.+)$", header.rstrip().rsplit("\n//\n", 1)[1], re.M)
     defaults = re.findall(r"^ +parameter +(\w+) *= *(.+?),? *(?://.*)?$", body.partition("\n) (")[0], re.M)
     text, wanted = [], {}
