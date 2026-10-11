@@ -2,11 +2,11 @@
 // If no stages are enabled, the module behaves combinationally; clk, rst are ignored.
 //
 // STAGE_INPUT=0: input combinational paths are exposed.
-// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input (one extra cycle).
-// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+// STAGE_INPUT=1: inputs are latched, the external module sees registers at the input.
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs.
 //
 // STAGE_OUTPUT=0: outputs are combinational (default)
-// STAGE_OUTPUT=1: registered (one extra cycle).
+// STAGE_OUTPUT=1: registered.
 //
 // Behaviour:
 //   Widening both (WMAN_OUT >= WMAN_IN, WEXP_OUT >= WEXP_IN): exact result, no rounding, fast path.
@@ -15,6 +15,8 @@
 //                                        tiny finite outputs use the zero/MIN_NORMAL boundary rule.
 //   Zero (exp_in == 0): canonicalises to +0 in the output format.
 //   Infinity (exp_in == all-ones): canonicalises to signed infinity in the output format.
+//
+// LATENCY = STAGE_*
 
 `default_nettype none
 

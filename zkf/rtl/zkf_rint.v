@@ -16,8 +16,9 @@
 //     the first stage to enable.
 // STAGE_ROUND: register the rounding decision ahead of the increments; the second stage to enable.
 // STAGE_OUTPUT: register the results.
-// Each knob is a register count costing as many cycles; values above one add dummy stages. With all of them zero the
-// module is combinational and clk/rst are ignored.
+// Values above one add dummy stages. With all of them zero the module is combinational and clk/rst are ignored.
+//
+// LATENCY = STAGE_*
 
 `default_nettype none
 

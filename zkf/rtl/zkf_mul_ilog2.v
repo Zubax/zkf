@@ -8,11 +8,13 @@
 // spans the entire useful range; widen WK if k is driven from a wider computed value.
 //
 // STAGE_INPUT=0: operand and k feed the decode combinationally (default).
-// STAGE_INPUT=1: latch {a, k} before any combinational logic, isolating them from upstream paths (+1 cycle).
-// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+// STAGE_INPUT=1: latch {a, k} before any combinational logic, isolating them from upstream paths.
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs.
 //
 // STAGE_DECODE: registers between the decode and the output mux; splits the long route from the input to the output
 //     register (the dominant delay path at wide WMAN on placement-sensitive tools).
+//
+// LATENCY = 1 + STAGE_*
 
 `default_nettype none
 
@@ -20,8 +22,8 @@ module zkf_mul_ilog2 #(
     parameter         WEXP         = 6,
     parameter         WMAN         = 18,        // significand precision including the hidden bit
     parameter         WK           = WEXP + 1,  // width of the signed exponent shift k; default spans the useful range
-    parameter         STAGE_INPUT  = 0,         // number of input register stages (>=0); +STAGE_INPUT cycles
-    parameter         STAGE_DECODE = 0,         // number of decode register stages (>=0); +STAGE_DECODE cycles
+    parameter         STAGE_INPUT  = 0,         // number of input register stages (>=0)
+    parameter         STAGE_DECODE = 0,         // number of decode register stages (>=0)
     parameter         LATENCY      = 0
 ) (
     input wire clk,
