@@ -61,7 +61,7 @@ jobs:
   accuracy:
     name: accuracy
     if: *run_deep
-    runs-on: [self-hosted, ci-runner]
+    runs-on: [self-hosted, ci-runner-small]
     container: *mega_toolchain_container
     steps:
       - *checkout_step
