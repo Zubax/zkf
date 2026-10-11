@@ -271,6 +271,7 @@ def expected_timing(context) -> Mapping[int, Timing]:
         unroll100=context.unroll100,
         stage_input=context.stage_input,
         stage_product=context.stage_product,
+        divide_radix=context.divide_radix,
         stage_normalize=context.stage_normalize,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,

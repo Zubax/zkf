@@ -28,6 +28,7 @@ FILESETS: dict[str, list[str]] = {
         "zkf/rtl/zkf_pipe.v",
         "zkf/rtl/_zkf_normshift.v",
         "zkf/rtl/_zkf_rshift_sticky.v",
+        "zkf/rtl/_zkf_add_core.v",
         "zkf/rtl/zkf_add.v",
     ],
     "rtl_fma": [
@@ -36,6 +37,7 @@ FILESETS: dict[str, list[str]] = {
         "zkf/rtl/_zkf_pmul.v",
         "zkf/rtl/_zkf_normshift.v",
         "zkf/rtl/_zkf_rshift_sticky.v",
+        "zkf/rtl/_zkf_add_core.v",
         "zkf/rtl/zkf_fma.v",
     ],
     "rtl_divsqrt": [
@@ -62,21 +64,15 @@ FILESETS: dict[str, list[str]] = {
     "rtl_resize": ["zkf/rtl/_zkf_pack.v", "zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_resize.v"],
     "rtl_rint": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_rint.v"],
     "rtl_exp2": [
-        "zkf/rtl/_zkf_pack.v",
         "zkf/rtl/zkf_pipe.v",
         "zkf/rtl/_zkf_pmul.v",
-        "zkf/rtl/_zkf_rshift_sticky.v",
-        "zkf/rtl/_zkf_horner.v",
         *_EXP2_TABLES,
         "zkf/rtl/zkf_exp2.v",
     ],
     "rtl_log2": [
-        "zkf/rtl/_zkf_pack.v",
         "zkf/rtl/zkf_pipe.v",
         "zkf/rtl/_zkf_pmul.v",
         "zkf/rtl/_zkf_normshift.v",
-        "zkf/rtl/_zkf_fixed_to_float.v",
-        "zkf/rtl/_zkf_horner.v",
         *_LOG2_TABLES,
         "zkf/rtl/zkf_log2.v",
     ],

@@ -125,8 +125,8 @@ def directed_case_operands(fmt: ZkfFormat) -> list[tuple[str, int, int, int]]:
         ):
             cases.append((label, a, b, c))
 
-    # (4,30) deep cancellation whose corrected exponent underflows far below the product range: a sub-path exponent
-    # field sized only WEXP+2 would wrap the tiny residual to a spurious large finite; these must round to +0.
+    # (4,30) deep cancellation whose corrected exponent underflows far below the product range: an exponent field of
+    # only WEXP+2 bits in _zkf_add_core would wrap the tiny residual to a spurious large finite; these must round to +0.
     if (fmt.wexp, fmt.wman) == (4, 30):
         for label, a, b, c in (
             ("w4m30_cancel_underflow0", 0x08EA99F89, 0x07AEC4FCE, 0x22AF60440),

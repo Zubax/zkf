@@ -4,11 +4,6 @@
 //   - `count` : (W-1) - position_of_leading_one, i.e. the applied left-shift amount. Don't-care when `zero`.
 //   - `y`     : x << count, the normalized vector (leading 1 at bit W-1 for nonzero x).
 //
-// This fuses what used to be a separate leading-one detector (_zkf_lod) followed by a separate barrel shift: the
-// same mux cascade that tests-and-shifts also yields the count as the concatenation of its per-level digits, roughly
-// halving the multiplexer footprint of the count-then-shift pair. Modelled on FloPoCo's Normalizer_Z. Used by the
-// adder's close-cancellation normalization and by the integer-to-float magnitude normalization.
-//
 // Implementation: radix-4 cascade, processed largest-shift first, so the depth is half the radix-2 equivalent (which
 // matters for timing closure at wide W). Level k (weight G = 4^k) inspects the top G, 2G and 3G bits; the number of
 // all-zero leading G-groups (0..3) is the radix-4 digit, the data is shifted left by digit*G, and the digit is the
@@ -28,17 +23,13 @@
 // STAGE_SPLIT=2: two register barriers; the first sits right after the top (widest) radix-4 level (where the wide
 // leading-zero OR-reductions and the largest barrel-shift muxes live) and the second at the existing midpoint. The
 // pre-barrier digits/zero get the extra cycle of delay so the whole count and zero stay aligned. Useful at wide W
-// where one barrier still leaves the top two levels in the same combinational stage (a substantial f_max gain at wide
-// WMAN in zkf_log2; the same path zkf_fma uses for its close-cancellation normalize when STAGE_NORMALIZE=2). Requires
-// NL4 >= 3 so the two barriers do not coincide.
-//
-// STAGE_OUTPUT=1: register the fully aligned y/count/zero outputs after the cascade (+1 cycle). This is useful when
-// the consumer needs a clean boundary after normalization without changing the internal split geometry.
+// where one barrier still leaves the top two levels in the same combinational stage.
+// Requires NL4 >= 3 so the two barriers do not coincide.
 //
 // Streaming sideband: in_valid/out_valid and the generic sb_in/sb_out bus are delayed by exactly the module's output
-// latency (STAGE_SPLIT + STAGE_OUTPUT) so they land aligned with y/count/zero. This lets callers thread their control
-// payload through the normalizer instead of a parallel zkf_pipe. Reset clears only out_valid; sb and the datapath
-// free-run per the project reset policy. Callers that don't need the sideband set WSB=1 and stub sb_in with a constant.
+// latency (STAGE_SPLIT) so they land aligned with y/count/zero. This lets callers thread their control payload through
+// the normalizer instead of a parallel zkf_pipe. Reset clears only out_valid; sb and the datapath free-run per the
+// project reset policy. Callers that don't need the sideband set WSB=1 and stub sb_in with a constant.
 
 `default_nettype none
 
@@ -46,10 +37,9 @@ module _zkf_normshift #(
     parameter W            = 16,
     parameter WSHAMT       = $clog2(W),
     parameter STAGE_SPLIT  = 0,
-    parameter STAGE_OUTPUT = 0,
     parameter WSB          = 1      // sideband passthrough bit width
 ) (
-    input  wire              clk,   // unused when STAGE_SPLIT == 0 && STAGE_OUTPUT == 0
+    input  wire              clk,   // unused when STAGE_SPLIT == 0
     input  wire              rst,   // resets only out_valid; unused when purely combinational
     input  wire              in_valid,
     input  wire    [WSB-1:0] sb_in,
@@ -74,9 +64,6 @@ module _zkf_normshift #(
         end
         if ((STAGE_SPLIT == 2) && (NL4 < 3)) begin : g_invalid_stage_split2_too_narrow
             _zkf_invalid_stage_split2_needs_wider_w u_invalid();
-        end
-        if ((STAGE_OUTPUT != 0) && (STAGE_OUTPUT != 1)) begin : g_invalid_stage_output
-            _zkf_invalid_stage_output u_invalid();
         end
     endgenerate
 
@@ -121,25 +108,12 @@ module _zkf_normshift #(
     endgenerate
 
     // Wire data[s] from the per-level combinational outputs; insert the register barrier at index SPLIT_AFTER+1 when
-    // STAGE_SPLIT != 0, breaking the cascade into two clock periods. STAGE_SPLIT=2 adds a SECOND barrier at index 1
-    // (right after the wide top level), captured by the separate `g_split_top` arm so the original `g_split` /
-    // `g_pass` decision for STAGE_SPLIT=0/1 stays bit-for-bit identical to the pre-modification version.
+    // STAGE_SPLIT != 0, breaking the cascade into two clock periods. STAGE_SPLIT=2 adds a second barrier at index 1
+    // (right after the wide top level).
     genvar t;
     generate
         for (t = 1; t <= NL4; t = t + 1) begin : g_data
-            // Original STAGE_SPLIT=1 arm with the original `(SS != 0) && (t == SPLIT_AFTER + 1)` condition is narrowed
-            // to STAGE_SPLIT==1 so its elaboration is bit-for-bit unchanged (the value the condition resolves to for
-            // SS=1 is identical, but Yosys is sensitive to the expression form). STAGE_SPLIT=2 arms are appended
-            // after, sharing the `g_split` label so the existing label stays the only one taken for SS=1.
-            if ((STAGE_SPLIT == 1) && (t == SPLIT_AFTER + 1)) begin : g_split
-                reg [W-1:0] data_r;
-                always @(posedge clk) data_r <= data_pre[t];
-                assign data[t] = data_r;
-            end else if ((STAGE_SPLIT == 2) && (t == SPLIT_AFTER + 1)) begin : g_split
-                reg [W-1:0] data_r;
-                always @(posedge clk) data_r <= data_pre[t];
-                assign data[t] = data_r;
-            end else if ((STAGE_SPLIT == 2) && (t == 1)) begin : g_split
+            if (((STAGE_SPLIT != 0) && (t == SPLIT_AFTER + 1)) || ((STAGE_SPLIT == 2) && (t == 1))) begin : g_split
                 reg [W-1:0] data_r;
                 always @(posedge clk) data_r <= data_pre[t];
                 assign data[t] = data_r;
@@ -149,7 +123,7 @@ module _zkf_normshift #(
         end
     endgenerate
 
-    wire [W-1:0] y_aligned = data[NL4];
+    assign y = data[NL4];
 
     // Count assembly. The digit for level K (= NL4-1-k) is computed at iteration s = k from data[s]; it has crossed
     // every barrier whose position is <= s. The aligned count must wait for the slowest digit, so digit k is delayed
@@ -158,22 +132,14 @@ module _zkf_normshift #(
     genvar k;
     generate
         for (k = 0; k < NL4; k = k + 1) begin : g_count
-            localparam integer S = NL4 - 1 - k;  // data level whose zero-detect produced this digit
-            // First arm narrowed from `(SS != 0) && ...` to `(SS == 1) && ...` so the SS=1 elaboration is bit-for-bit
-            // unchanged; SS=2 arms appended after. SS=2's top digit (k = NL4-1) needs two cycles of delay and lands in
-            // g_count_delay2; SS=2's mid digits share the original g_count_delay label.
-            if ((STAGE_SPLIT == 1) && (k >= (NL4 - 1 - SPLIT_AFTER))) begin : g_count_delay
-                reg [1:0] dig_r;
-                always @(posedge clk) dig_r <= dig_pre[2*k +: 2];
-                assign cnt[2*k +: 2] = dig_r;
-            end else if ((STAGE_SPLIT == 2) && (k == NL4 - 1)) begin : g_count_delay2
+            if ((STAGE_SPLIT == 2) && (k == NL4 - 1)) begin : g_count_delay2   // the top digit crosses both barriers
                 reg [1:0] dig_r1, dig_r2;
                 always @(posedge clk) begin
                     dig_r1 <= dig_pre[2*k +: 2];
                     dig_r2 <= dig_r1;
                 end
                 assign cnt[2*k +: 2] = dig_r2;
-            end else if ((STAGE_SPLIT == 2) && (k >= (NL4 - 1 - SPLIT_AFTER))) begin : g_count_delay
+            end else if ((STAGE_SPLIT != 0) && (k >= (NL4 - 1 - SPLIT_AFTER))) begin : g_count_delay
                 reg [1:0] dig_r;
                 always @(posedge clk) dig_r <= dig_pre[2*k +: 2];
                 assign cnt[2*k +: 2] = dig_r;
@@ -184,38 +150,33 @@ module _zkf_normshift #(
     endgenerate
 
     wire zero_pre = ~|x;
-    wire zero_aligned;
     generate
         if (STAGE_SPLIT == 1) begin : g_zero_delay
             reg zero_r;
             always @(posedge clk) zero_r <= zero_pre;
-            assign zero_aligned = zero_r;
+            assign zero = zero_r;
         end else if (STAGE_SPLIT == 2) begin : g_zero_delay2
             reg zero_r1, zero_r2;
             always @(posedge clk) begin
                 zero_r1 <= zero_pre;
                 zero_r2 <= zero_r1;
             end
-            assign zero_aligned = zero_r2;
+            assign zero = zero_r2;
         end else begin : g_zero_pass
-            assign zero_aligned = zero_pre;
+            assign zero = zero_pre;
         end
     endgenerate
 
-    wire [WSHAMT-1:0] count_aligned;
     generate
         if (WSHAMT > CNTW) begin : g_pad
-            assign count_aligned = {{(WSHAMT-CNTW){1'b0}}, cnt};
+            assign count = {{(WSHAMT-CNTW){1'b0}}, cnt};
         end else begin : g_no_pad
-            assign count_aligned = cnt[WSHAMT-1:0];
+            assign count = cnt[WSHAMT-1:0];
         end
     endgenerate
 
     // Sideband and valid ride the same STAGE_SPLIT-deep delay as `zero` (sampled off the inputs in the same cycle as
-    // x), so after the optional output register they are delayed by exactly STAGE_SPLIT + STAGE_OUTPUT cycles. sb is
-    // pure datapath (free-runs); valid is the only reset-bearing register, matching the project reset policy.
-    wire [WSB-1:0] sb_aligned;
-    wire           valid_aligned;
+    // x). sb is pure datapath (free-runs); valid is the only reset-bearing register, matching the project reset policy.
     generate
         if (STAGE_SPLIT == 1) begin : g_sb_delay
             reg [WSB-1:0] sb_r;
@@ -225,8 +186,8 @@ module _zkf_normshift #(
                 if (rst) valid_r <= 1'b0;
                 else     valid_r <= in_valid;
             end
-            assign sb_aligned    = sb_r;
-            assign valid_aligned = valid_r;
+            assign sb_out    = sb_r;
+            assign out_valid = valid_r;
         end else if (STAGE_SPLIT == 2) begin : g_sb_delay2
             reg [WSB-1:0] sb_r1, sb_r2;
             reg           valid_r1, valid_r2;
@@ -238,42 +199,11 @@ module _zkf_normshift #(
                 if (rst) begin valid_r1 <= 1'b0; valid_r2 <= 1'b0; end
                 else     begin valid_r1 <= in_valid; valid_r2 <= valid_r1; end
             end
-            assign sb_aligned    = sb_r2;
-            assign valid_aligned = valid_r2;
+            assign sb_out    = sb_r2;
+            assign out_valid = valid_r2;
         end else begin : g_sb_pass
-            assign sb_aligned    = sb_in;
-            assign valid_aligned = in_valid;
-        end
-    endgenerate
-
-    generate
-        if (STAGE_OUTPUT) begin : g_output_reg
-            reg              zero_r;
-            reg [WSHAMT-1:0] count_r;
-            reg      [W-1:0] y_r;
-            reg  [WSB-1:0]   sb_r;
-            reg              valid_r;
-            always @(posedge clk) begin
-                zero_r  <= zero_aligned;
-                count_r <= count_aligned;
-                y_r     <= y_aligned;
-                sb_r    <= sb_aligned;
-            end
-            always @(posedge clk) begin
-                if (rst) valid_r <= 1'b0;
-                else     valid_r <= valid_aligned;
-            end
-            assign zero      = zero_r;
-            assign count     = count_r;
-            assign y         = y_r;
-            assign sb_out    = sb_r;
-            assign out_valid = valid_r;
-        end else begin : g_output_pass
-            assign zero      = zero_aligned;
-            assign count     = count_aligned;
-            assign y         = y_aligned;
-            assign sb_out    = sb_aligned;
-            assign out_valid = valid_aligned;
+            assign sb_out    = sb_in;
+            assign out_valid = in_valid;
         end
     endgenerate
 endmodule

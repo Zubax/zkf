@@ -40,6 +40,7 @@ LATENCY_KIND_BY_HARNESS = {
     "zkf_absneg_eq": "absneg",
     "zkf_mul_eq": "mul",
     "zkf_add_eq": "add",
+    "zkf_fma_eq": "fma",
     "zkf_divsqrt_eq": "divsqrt",
 }
 

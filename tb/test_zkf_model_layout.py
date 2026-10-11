@@ -176,6 +176,23 @@ class ZkfModelLayoutTest(unittest.TestCase):
                 model = zkf.DivsqrtModel(ZkfFormat(8, wman), stage_decode=stage_decode, mode=mode)
                 self.assertEqual(model.timing, Timing(latency, 1))
                 self.assertEqual((model.params["LATENCY"], model.params["MODE"]), (latency, mode))
+        # zkf_exp2 / zkf_log2: the kernel takes the longer of the wide product and the chain behind its feeders.
+        products = ["stage_product"] + [f"stage_product_{term}" for term in ("square", "odd", "chain")]
+        for wman, knobs, kernel in (
+            (24, (0, 0, 0, 0), 1),
+            (24, (1, 0, 4, 1), 2),  # no product takes the odd knob at this degree
+            (24, (0, 2, 0, 1), 4),
+            (36, (3, 1, 2, 2), 5),
+            (36, (3, 1, 1, 2), 4),
+            (36, (0, 1, 3, 0), 4),
+            (36, (0, 2, 0, 3), 6),
+            (53, (0, 0, 0, 0), 2),
+            (53, (4, 0, 0, 0), 5),
+            (53, (4, 1, 2, 1), 6),
+        ):
+            config = dict(zip(products, knobs))
+            self.assertEqual(zkf.Exp2Model(ZkfFormat(8, wman), **config).timing, Timing(1 + kernel, 1))
+            self.assertEqual(zkf.Log2Model(ZkfFormat(8, wman), **config).timing, Timing(2 + kernel, 1))
         divsqrt = zkf.DivsqrtModel(fmt, stage_input=2, stage_pack=1, stage_output=1)
         self.assertEqual(divsqrt.timing, Timing(15, 1))
         for knob, value in (
@@ -230,12 +247,26 @@ class ZkfModelLayoutTest(unittest.TestCase):
         with self.assertRaises(UnsupportedFormat):
             zkf.Exp2Model(ZkfFormat(31, exp2_tabled))
         ZkfFormat(5, trig_tabled).encode(1).atan2(ZkfFormat(5, trig_tabled).encode(1))
+        # log2 of a power of two is exact however wide the exponent: no bit of it is dropped before the rounding.
+        for wexp, e in ((32, (1 << 30) + (1 << 14) + 1), (48, 1 - ZkfFormat(48, 16).bias)):
+            fmt = ZkfFormat(wexp, 16)
+            self.assertEqual(fmt.pack(0, fmt.bias + e, 0).log2().value, fmt.encode(e))
+        # A tie, which takes WEXP >= WMAN+2, rounds away from zero; the operator is not built for such a format.
+        fmt = ZkfFormat(20, 16)
+        for sign in (1, -1):
+            self.assertEqual(fmt.pack(0, fmt.bias + sign * 65537, 0).log2().value, fmt.encode(sign * 65538))
+        zkf.Log2Model(ZkfFormat(17, 16))
+        with self.assertRaises(UnsupportedFormat):
+            zkf.Log2Model(fmt)
 
     def test_knob_errors(self) -> None:
         fmt = ZkfFormat(8, 24)
         for make in (
             lambda: zkf.MulModel(fmt, stage_pack=3),
             lambda: zkf.CordicModel(fmt, unroll100=75),
+            lambda: zkf.CordicModel(fmt, divide_radix=3),
+            lambda: zkf.Exp2Model(ZkfFormat(11, 53), stage_product=5),
+            lambda: zkf.Log2Model(fmt, stage_product_odd=5),  # out of range also where no product takes it
             lambda: zkf.AddModel(ZkfFormat(8, 4), stage_normalize=2),  # _zkf_normshift too narrow to split twice
             lambda: zkf.PipeModel(fmt, w=0),
             lambda: zkf.Ilog2Model(fmt, wint=32.0),  # a non-integer width is a caller bug, not a format

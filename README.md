@@ -75,8 +75,9 @@ Pair `LATENCY` with `zkf_pipe` to delay your own control or sideband signals so 
 A zero `LATENCY` is a special value indicating that the latency should not be checked (the default).
 Some modules may have a separate latency parameter per operating mode, like `zkf_cordic`; see the model's `timing`.
 
-The `LATENCY` value is a sum of some constant baseline number of stages,
-plus optionally some WMAN-dependent stage count, plus the sum of all `STAGE_*` values (all zero by default).
+Each operator's header gives its `LATENCY` as a function of the module's parameters: as a rule, a constant baseline
+number of stages, plus optionally some WMAN-dependent stage count, plus `STAGE_*`, the sum of all STAGE knobs (all zero
+by default).
 Compute it like `zkf.MulModel(zkf.ZkfFormat(WEXP, WMAN), stage_product=1).timing.latency`.
 
 Generated lookup table ROMs are plain initialized Verilog arrays. If the macro `ZKF_ATTRIBUTE_ROM` is defined, it is
@@ -247,25 +248,14 @@ of certain basic operators.
 
 ### Accuracy of the transcendental functions
 
-The exp2 and log2 transcendentals deliver faithful rounding, meaning that every finite result is one of the two
-representable values bracketing the exact result, with a 0.5 ULP correctly-rounded target,
-enforced by two paired headroom budgets.
+The exp2 and log2 transcendentals deliver faithful rounding: every finite result is one of the two representable
+values bracketing the exact result.
 
-The per-segment Chebyshev fit + truncating Horner is sized to clear `< 2^-(WMAN+ERR_GUARD)` relative error with
-ERR_GUARD = 8, i.e. between `2^-(ERR_GUARD+1) = 1/512` and `2^-ERR_GUARD = 1/256` of an ULP absolute across the
-helper's `[1, 2)` interval — small enough that the round bit is structurally trustworthy,
-so faithful rounding is automatic.
-
-A mis-round against round-to-nearest-ties-to-even is possible only when the true value lies within `≈2^-ERR_GUARD`
-ULP of a midpoint between adjacent representable values, bounding the worst-case mis-round rate at `≈2^-7 ≈ 0.8%`;
-raising ERR_GUARD by one bit halves that rate at the cost of bumping the polynomial degree (and a Horner stage)
-at some WMAN, but the Table-Maker's Dilemma rules out correctly-rounded-everywhere at WMAN = 53 regardless of budget,
-so the 0.5 ULP target is best-effort while faithful rounding is the hard contract.
-
-The fixed-point datapath then carries GUARD = ERR_GUARD + 4 = 12 extra fractional bits below the WMAN significand
-— eight bits of polynomial-noise headroom plus four bits to host the guard/round/sticky positions and absorb the
-truncating Horner's LSB noise — which is the smallest split that keeps the round bit clear of the noise floor under
-truncating arithmetic; widening it further has no accuracy benefit and just pays in DSP/LUT/FF area.
+A result differs from round-to-nearest only when the exact value lies within `2^-ERR_GUARD` ULP of a midpoint between
+adjacent representable values: at most about `2^-7` of results spread evenly over a rounding interval; the measured
+rate is near `10^-4`.
+Rounding every result correctly would take far more precision at the hard cases (the Table-Maker's Dilemma), so the
+0.5 ULP target is best-effort while faithful rounding is the hard contract.
 
 `zkf_cordic` carries the same faithful-rounding contract.
 

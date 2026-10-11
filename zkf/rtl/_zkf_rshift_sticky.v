@@ -1,10 +1,9 @@
 // Sticky-folded right-shift barrel: y = x >> shamt, with y[0] OR-collecting every bit dropped by the shift plus
 // the bit that ends up at position 0. Output y[W-1:1] is the plain shifted value.
-// Used by the adder, the float-to-fixed reduction, etc.
 //
 // Saturation: when shamt >= W, the cascade naturally produces zero magnitude with sticky = |x.
-// Callers may either rely on that and clamp shamt to W (zkf_exp2 does this), or pass a WSHIFT wider than
-// $clog2(W) bits and let the module's own saturation check kick in for over-range values (zkf_add does this).
+// Callers may either rely on that and clamp shamt to W, or pass a WSHIFT wider than $clog2(W) bits and let the
+// module's own saturation check kick in for over-range values (_zkf_add_core does this).
 //
 // Implementation: radix-4 cascade. Each stage selects one of four shifts (0, 4^i, 2*4^i, 3*4^i) with a 4:1 mux;
 // slices commonly pack a 4:1 mux, so the cascade depth is half of the equivalent radix-2 version.
@@ -82,8 +81,8 @@ module _zkf_rshift_sticky #(
 
             // Each stage's 2-bit selector comes from shamt_use[2*i +: 2] when both bits are in range, from
             // {0, shamt_use[2*i]} when only the low bit is in range, or constant 0 when the stage sits above
-            // shamt's MSB. Slicing per-stage avoids an intermediate padded `shamt_ext` wire, which empirically
-            // confuses Yosys's flatten+ABC pipeline on wide configurations.
+            // shamt's MSB. Slicing per-stage avoids an intermediate padded `shamt_ext` wire, which synthesizes poorly
+            // on wide configurations.
             wire [1:0] sel;
             if (2*i + 1 < WSHIFT) begin : g_sel_full
                 assign sel = shamt_use[2*i +: 2];

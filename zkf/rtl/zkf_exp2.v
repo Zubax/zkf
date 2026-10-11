@@ -10,34 +10,57 @@
 //
 // Algorithm:
 //
-//  1. Split x = i + f with i = floor(x) and f in [0,1) by shifting the significand by the exponent into a fixed-point.
+//  1. _zkf_exp2_reduce splits x = i + f, i = floor(x), f in [0,1) at WCF fraction bits, to within an LSB that the
+//     table certificate accounts for.
 //
-//  2. Then 2**x = 2**f * 2**i, where 2**f in [1,2) is a normalized significand produced by the pipelined per-WMAN
-//     table+polynomial core selected by the generate-if below.
+//  2. 2**f in [1,2) comes from the per-WMAN table+polynomial core with half an ULP already added, so its truncation
+//     is the rounded significand. Rounding up to 2 selects the exponent i+1.
 //
-//  3. The result is packed with exponent i via _zkf_pack, which applies overflow->inf and tiny/MIN_NORMAL boundary.
+//  3. _zkf_exp2_pack assembles the float: both exponents are classified beside the core's last sum, whose top bit
+//     selects between them.
 //
-// The reduction is split across register stages (shift-amount computation, barrel shift, negate) and the evaluator's
-// ROM read is followed by a mandatory fabric register, so no single stage carries both a wide carry chain and a
-// multiply.
+// The half ULP rounds a tie of the computed value up, not to even as the other operators do. That costs no accuracy:
+// 2**x is irrational unless x is an integer, and then it is a power of two, so no normal result lies midway between
+// two floats (2**-BIAS, midway between zero and MIN_NORMAL, follows the class rule of _zkf_exp2_pack); a tie of the
+// computed value is an artifact of the kernel's own error, with both neighbors faithful.
 //
-// STAGE_PRODUCT selects product computation staging; see _zkf_pmul.
-// WMULTIPLIER optionally hints the native DSP tile argument width; see _zkf_pmul.
-// STAGE_PACK={0,1} forwards to _zkf_pack.STAGE_INPUT, registering the packer's input cone (+1 cycle).
-// STAGE_OUTPUT={0,1} registers the output.
+// The core evaluates a polynomial of the table's DEGREE in the low argument bits w, as c0 + c1*w beside the chain
+// w**2 * (c2 + c3*w + w**2 * (c4 + c5*w)). Each kind of product is a _zkf_pmul with a stage knob of its own:
+//
+//   STAGE_PRODUCT={0..4}         c1*w, the widest.
+//   STAGE_PRODUCT_SQUARE={0..5}  w**2.
+//   STAGE_PRODUCT_ODD={0..4}     c3*w and c5*w. No effect below DEGREE 3, which has neither.
+//   STAGE_PRODUCT_CHAIN={0..4}   each product of the chain by w**2; DEGREE/2 of them follow one another, a register
+//                                after each.
+//
+// The square and the odd products feed the chain, and c1*w has as long as the chain takes. The square's operands come
+// straight from a register, so its first stage is the register behind the multiplier and only the rest are the
+// multiplier's own; the other knobs are the multiplier's throughout. A knob is the widest product's of its kind: a
+// narrower one takes the stages that _zkf_pmul admits at its width and waits out the rest. WMULTIPLIER optionally
+// hints the native DSP tile argument width; see _zkf_pmul.
+//
+// DEGREE  = (((WMAN+18)/11)-1)
+// ODD     = (DEGREE < 3) ? 0 : STAGE_PRODUCT_ODD
+// FEED    = (STAGE_PRODUCT_SQUARE > ODD) ? STAGE_PRODUCT_SQUARE : ODD
+// CHAIN   = FEED + (DEGREE / 2) * (1 + STAGE_PRODUCT_CHAIN)
+// KERNEL  = (1 + STAGE_PRODUCT > CHAIN) ? (1 + STAGE_PRODUCT) : CHAIN
+// LATENCY = STAGE_INPUT + STAGE_REDUCE + 1 + KERNEL + STAGE_PACK + STAGE_OUTPUT
 
 `default_nettype none
 
 module zkf_exp2 #(
-    parameter WEXP          = 6,
-    parameter WMAN          = 18,   // significand precision including the hidden bit
-    parameter WMULTIPLIER   = 0,    // see _zkf_pmul
-    parameter STAGE_INPUT   = 0,    // number of input register stages (>=0); +STAGE_INPUT cycles
-    parameter STAGE_REDUCE  = 0,    // 0: direct fixed->ROM input; 1: register reduced i/f/flags, +1 stage
-    parameter STAGE_PRODUCT = 0,    // see _zkf_pmul
-    parameter STAGE_PACK    = 0,    // 0: comb pack input; 1: register pack input (+1 stage)
-    parameter STAGE_OUTPUT  = 0,    // 0: combinational outputs;  1: registered outputs, +1 stage
-    parameter LATENCY       = 0
+    parameter WEXP                 = 6,
+    parameter WMAN                 = 18,   // significand precision including the hidden bit
+    parameter WMULTIPLIER          = 0,    // see _zkf_pmul
+    parameter STAGE_INPUT          = 0,    // number of input register stages (>=0)
+    parameter STAGE_REDUCE         = 0,    // 1: registers the reduced argument in front of the table
+    parameter STAGE_PRODUCT        = 0,
+    parameter STAGE_PRODUCT_SQUARE = 0,
+    parameter STAGE_PRODUCT_ODD    = 0,
+    parameter STAGE_PRODUCT_CHAIN  = 0,
+    parameter STAGE_PACK           = 0,    // 1: registers the core's sum in front of the result assembly
+    parameter STAGE_OUTPUT         = 0,    // 0: combinational outputs;  1: registered outputs
+    parameter LATENCY              = 0
 ) (
     input wire clk,
     input wire rst,
@@ -48,138 +71,71 @@ module zkf_exp2 #(
     output wire                 out_valid,
     output wire [WEXP+WMAN-1:0] y
 );
-    localparam DEGREE = (((WMAN+18)/11)-1);
-    localparam LATENCY_REF = STAGE_INPUT + STAGE_REDUCE + 4 + DEGREE*(2+STAGE_PRODUCT) + STAGE_PACK + STAGE_OUTPUT;
+    localparam DEGREE = (((WMAN+18)/11)-1);                  // must match the generator's degree()
+    localparam ODD    = (DEGREE < 3) ? 0 : STAGE_PRODUCT_ODD;
+    localparam FEED   = (STAGE_PRODUCT_SQUARE > ODD) ? STAGE_PRODUCT_SQUARE : ODD;
+    localparam CHAIN  = FEED + (DEGREE / 2) * (1 + STAGE_PRODUCT_CHAIN);
+    localparam KERNEL = (1 + STAGE_PRODUCT > CHAIN) ? (1 + STAGE_PRODUCT) : CHAIN;  // core stages after the ROM's
+    localparam LATENCY_REF = STAGE_INPUT + STAGE_REDUCE + 1 + KERNEL + STAGE_PACK + STAGE_OUTPUT;
     generate
         if ((WEXP < 2) || (WMAN < 4)) begin : g_invalid_wman
             _zkf_invalid_wexp_or_wman u_invalid();
         end
-        // The reduction's constants use unsized integer shifts on WEXP; WEXP >= 31 would overflow Verilog's 32-bit
-        // integer constant arithmetic.
+        // The reduction and the result assembly use unsized integer shifts on WEXP; WEXP >= 31 would overflow
+        // Verilog's 32-bit integer constant arithmetic.
         if (WEXP >= 31) begin : g_invalid_wexp_too_wide
             _zkf_invalid_exp2_wexp_too_wide_unportable u_invalid();
         end
         if ((STAGE_REDUCE != 0) && (STAGE_REDUCE != 1)) begin : g_invalid_stage_reduce
             _zkf_invalid_stage_reduce u_invalid();
         end
+        if ((STAGE_PACK != 0) && (STAGE_PACK != 1)) begin : g_invalid_stage_pack
+            _zkf_invalid_stage_pack u_invalid();
+        end
+        if ((STAGE_OUTPUT != 0) && (STAGE_OUTPUT != 1)) begin : g_invalid_stage_output
+            _zkf_invalid_stage_output u_invalid();
+        end
         if ((LATENCY != 0) && (LATENCY != LATENCY_REF)) begin : g_invalid_latency
             _zkf_invalid_latency_mismatch u_invalid();
         end
     endgenerate
 
-    localparam WFRAC = WMAN - 1;
-    // FF: fraction bits kept for the reduced argument f. MUST equal the generator's GUARD_FF (zkf_transcendental.py).
-    localparam FF   = WMAN + 12;
-    localparam WEU  = WEXP;                // signed unbiased exponent fed to _zkf_pack
-    localparam SBW  = WEU + 4;             // evaluator sideband: {i, force_inf, force_zero, is_zero, lost_sticky}
+    localparam WFULL = WEXP + WMAN;
+    // WCF: fraction bits of the reduced argument and of the core's result; the core checks it against its own.
+    localparam WCF   = WMAN + 12;
 
-    wire              rb_valid;
-    wire [WEU+FF-1:0] rb_mag;
-    wire              rb_lost_sticky;
-    wire              rb_sign;
-    wire              rb_is_zero;
-    wire              rb_oor;
-    _zkf_exp2_reduce #(.WEXP(WEXP), .WMAN(WMAN), .FF(FF), .STAGE_INPUT(STAGE_INPUT)) u_reduce (
+    wire             in_valid_q;
+    wire [WFULL-1:0] x_q;
+    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT)) u_input_pipe (
         .clk(clk), .rst(rst),
-        .in_valid(in_valid), .x(x),
-        .out_valid(rb_valid),
-        .mag(rb_mag),
-        .lost_sticky(rb_lost_sticky),
-        .sign(rb_sign),
-        .is_zero(rb_is_zero),
-        .oor(rb_oor)
+        .in_valid(in_valid), .in(x),
+        .out_valid(in_valid_q), .out(x_q)
     );
 
-    // -- RB2 combinational: form the signed two's-complement value, then split into the signed integer part i and
-    // the unsigned fraction f. Negating an unsigned magnitude gives correct signed floor semantics for negative x:
-    // floor(-3.25) maps to -4 because the slice picks up the sign-extended integer bits. The OOR cases are routed
-    // via rb_oor downstream (force_inf for positive overflow, force_zero for negative), so the magnitude and split
-    // for those inputs are don't-care.
-    wire signed [WEU+FF:0]   v_signed = rb_sign ? (~{1'b0, rb_mag} + {{(WEU+FF){1'b0}}, 1'b1}) : {1'b0, rb_mag};
-    wire signed [WEU:0]      i_full   = v_signed[WEU+FF:FF];
-    wire [FF-1:0]            f_bits   = v_signed[FF-1:0];
-    wire signed [WEU-1:0]    i_clamped     = i_full[WEU-1:0];   // i fits in WEXP signed bits when oor=0
-    wire                     force_inf_in  = rb_oor & ~rb_sign; // +inf / positive overflow
-    wire                     force_zero_in = rb_oor &  rb_sign; // -inf / negative underflow
+    localparam WSB = WEXP + 2;   // {sign, zero, out of range, integer part}
+    wire [WSB-1:0] r_sb;
+    wire [WCF-1:0] r_f;
+    _zkf_exp2_reduce #(.WEXP(WEXP), .WMAN(WMAN), .WFF(WCF)) u_reduce (
+        .x(x_q), .sign(r_sb[WSB-1]), .zero(r_sb[WSB-2]), .oor(r_sb[WSB-3]), .ipart(r_sb[WEXP-2:0]), .f(r_f)
+    );
+    wire           f_valid;
+    wire [WSB-1:0] f_sb;
+    wire [WCF-1:0] f;
+    zkf_pipe #(.W(WSB + WCF), .N(STAGE_REDUCE)) u_reduce_pipe (
+        .clk(clk), .rst(rst), .in_valid(in_valid_q), .in({r_sb, r_f}), .out_valid(f_valid), .out({f_sb, f})
+    );
 
-    wire                     eval_in_valid;
-    wire signed [WEU-1:0]    eval_i;
-    wire [FF-1:0]            eval_f;
-    wire                     eval_force_inf;
-    wire                     eval_force_zero;
-    wire                     eval_is_zero;
-    wire                     eval_lost_sticky;
-
-    generate
-        if (STAGE_REDUCE != 0) begin : g_reduce_stage
-            reg                    r0_valid;
-            reg signed [WEU-1:0]   r0_i;
-            reg [FF-1:0]           r0_f;
-            reg                    r0_force_inf;
-            reg                    r0_force_zero;
-            reg                    r0_is_zero;
-            // Registered lost-sticky. At the per-PR STAGE_REDUCE=1 coverage format (w2m16, WEXP<=4) lost_sticky is
-            // structurally 0, so this store constant-folds to a line Verilator 5.048 cannot mark covered.
-            // verilator coverage_off
-            reg                    r0_lost_sticky;
-            // verilator coverage_on
-
-            always @(posedge clk) begin
-                if (rst) begin
-                    r0_valid <= 1'b0;
-                end else begin
-                    r0_valid <= rb_valid;
-                end
-
-                r0_i           <= i_clamped;
-                r0_f           <= f_bits;
-                r0_force_inf   <= force_inf_in;
-                r0_force_zero  <= force_zero_in;
-                r0_is_zero     <= rb_is_zero;
-                r0_lost_sticky <= rb_lost_sticky;
-            end
-
-            assign eval_in_valid    = r0_valid;
-            assign eval_i           = r0_i;
-            assign eval_f           = r0_f;
-            assign eval_force_inf   = r0_force_inf;
-            assign eval_force_zero  = r0_force_zero;
-            assign eval_is_zero     = r0_is_zero;
-            assign eval_lost_sticky = r0_lost_sticky;
-        end else begin : g_reduce_direct
-            assign eval_in_valid    = rb_valid;
-            assign eval_i           = i_clamped;
-            assign eval_f           = f_bits;
-            assign eval_force_inf   = force_inf_in;
-            assign eval_force_zero  = force_zero_in;
-            assign eval_is_zero     = rb_is_zero;
-            assign eval_lost_sticky = rb_lost_sticky;
-        end
-    endgenerate
-
-    // -- Pipelined evaluator: 2**f significand + GRS. The sideband {i, force_inf, force_zero, is_zero, lost} is delayed
-    // inside the generated evaluator by a plain pipe, aligned to the evaluator output.
-    wire [SBW-1:0]  sb_in_e = {
-        eval_i, eval_force_inf, eval_force_zero, eval_is_zero, eval_lost_sticky
-    };
-    wire            ev_valid;
-    wire [SBW-1:0]  sb_out_e;   // bit 0 = lost; high bits sliced into e_i/e_finf/e_fzero/e_is_zero below
-    wire [WMAN-1:0] eval_sig;
-    wire            eval_guard;
-    wire            eval_round;
-    wire            eval_sticky;
-    // The table+polynomial core is pre-generated per WMAN by zkf_transcendental.py as _zkf_exp2_m<WMAN>. We pass the
-    // closed-form degree D below; the core asserts it equals the degree its ROM was fitted for (mirrors the LATENCY
-    // parameter), so the Horner depth / latency cannot drift.
+    wire             c_valid;
+    wire [WSB-1:0]   c_sb;
+    wire [WCF+1:0]   s;
     // Intentional: unsupported in-range WMAN names missing _zkf_exp2_m<WMAN>, prompting table generation.
     `define ZKF_EXP2_TABLE(W) end else if (WMAN == W) begin \
         _zkf_exp2_m``W #( \
-            .D(DEGREE), .WSB(SBW), \
-            .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT) \
-        ) u_eval ( \
-            .clk(clk), .rst(rst), .in_valid(eval_in_valid), .sb_in(sb_in_e), .f(eval_f), \
-            .out_valid(ev_valid), .sb_out(sb_out_e), .significand(eval_sig), \
-            .guard(eval_guard), .round(eval_round), .sticky(eval_sticky));
+            .STAGES(KERNEL), .WCF(WCF), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT), \
+            .STAGE_PRODUCT_SQUARE(STAGE_PRODUCT_SQUARE), .STAGE_PRODUCT_ODD(STAGE_PRODUCT_ODD), \
+            .STAGE_PRODUCT_CHAIN(STAGE_PRODUCT_CHAIN) \
+        ) u_core ( \
+            .clk(clk), .rst(rst), .in_valid(f_valid), .f(f), .out_valid(c_valid), .s(s));
     // verilog_lint: waive-start generate-label  (macro-expanded selector blocks are intentionally unlabeled)
     generate
         if (1'b0) begin  // seed: the macro opens with "end else if", so every table line is uniform
@@ -239,171 +195,128 @@ module zkf_exp2 #(
     endgenerate
     `undef ZKF_EXP2_TABLE
     // verilog_lint: waive-stop generate-label
-    wire signed [WEU-1:0] e_i        = sb_out_e[SBW-1 -: WEU];
-    wire                  e_finf     = sb_out_e[3];
-    wire                  e_fzero    = sb_out_e[2];
-    wire                  e_is_zero  = sb_out_e[1];
-    wire                  e_lost     = sb_out_e[0];   // lost-sticky; see rb_lost_sticky above
 
-    // For x == +0, 2**0 = 1.0 (exp_unbiased 0, significand 1.0, no GRS); otherwise 2**f * 2**i.
-    wire signed [WEU-1:0] pack_exp = e_is_zero ? {WEU{1'b0}} : e_i;
-    wire [WMAN-1:0]       pack_sig = e_is_zero ? {1'b1, {WFRAC{1'b0}}} : eval_sig;
-    wire                  pack_g   = e_is_zero ? 1'b0 : eval_guard;
-    wire                  pack_r   = e_is_zero ? 1'b0 : eval_round;
-    wire                  pack_s   = e_is_zero ? 1'b0 : (eval_sticky | e_lost);
+    zkf_pipe #(.W(WSB), .N(1 + KERNEL)) u_side (
+        .clk(clk), .rst(1'b0), .in_valid(1'b0), .in(f_sb), .out_valid(), .out(c_sb)
+    );
 
-    _zkf_pack #(
-        .WEXP(WEXP), .WMAN(WMAN), .WEXP_UNBIASED(WEU),
-        .STAGE_INPUT(STAGE_PACK), .STAGE_OUTPUT(STAGE_OUTPUT)
-    ) u_pack (
-        .clk(clk),
-        .rst(rst),
-        .in_valid(ev_valid),
-        .sign(1'b0),
-        .force_zero(e_fzero),
-        .force_inf(e_finf),
-        .exp_unbiased(pack_exp),
-        .significand(pack_sig),
-        .guard(pack_g),
-        .round(pack_r),
-        .sticky(pack_s),
-        .out_valid(out_valid),
-        .y(y)
+    wire             p_valid;
+    wire [WSB-1:0]   p_sb;
+    wire [WCF+1:0]   p_s;
+    zkf_pipe #(.W(WSB + WCF + 2), .N(STAGE_PACK)) u_pack_pipe (
+        .clk(clk), .rst(rst), .in_valid(c_valid), .in({c_sb, s}), .out_valid(p_valid), .out({p_sb, p_s})
+    );
+    wire [WFULL-1:0] y_c;
+    _zkf_exp2_pack #(.WEXP(WEXP), .WMAN(WMAN), .WCF(WCF)) u_pack (
+        .sign(p_sb[WSB-1]), .zero(p_sb[WSB-2]), .oor(p_sb[WSB-3]), .ipart(p_sb[WEXP-2:0]), .s(p_s), .y(y_c)
+    );
+    zkf_pipe #(.W(WFULL), .N(STAGE_OUTPUT)) u_output_pipe (
+        .clk(clk), .rst(rst), .in_valid(p_valid), .in(y_c), .out_valid(out_valid), .out(y)
     );
 endmodule
 
-// The magnitude of x as a fixed-point number with FF fraction bits, two register stages after STAGE_INPUT.
-// The caller forms the signed value from {sign, mag}. lost_sticky is the OR of the bits dropped below mag's LSB, which
-// needs an exponent below -13. oor: |x| >= 2^(WEXP-1), inf included; the result exponent cannot represent it.
-// mag and lost_sticky are don't-care when oor or is_zero.
+
+// Range reduction of zkf_exp2: x = i + f with i = floor(x) and f in [0, 1) at WFF fraction bits.
+// mag = floor(|x| * 2**WFF) = {1, frac, 0..} >> (ETOP - exp) holds floor(|x|) above its WFF fraction bits. A negative x
+// takes the ones' complement of that fraction, which is floor(x * 2**WFF) or one below it, and i = -ipart-1: a
+// negative integer becomes the integer below it and the core's last argument.
+//
+// The shift amount is offset by PAD so that its low WFINE bits are the complement of the exponent's: the fine shift
+// starts with no carry chain in front of it, and only the coarse part waits for a short subtraction.
+//
+// ipart and f are meaningless when zero or oor is set.
 module _zkf_exp2_reduce #(
-    parameter WEXP        = 6,
-    parameter WMAN        = 18,
-    parameter FF          = WMAN + 12,
-    parameter STAGE_INPUT = 0
+    parameter WEXP = 6,
+    parameter WMAN = 18,
+    parameter WFF  = 30
 ) (
-    input  wire clk,
-    input  wire rst,
-
-    input  wire                 in_valid,
     input  wire [WEXP+WMAN-1:0] x,
-
-    output wire                 out_valid,
-    output wire   [WEXP+FF-1:0] mag,
-    output wire                 lost_sticky,
     output wire                 sign,
-    output wire                 is_zero,
-    output wire                 oor
+    output wire                 zero,
+    output wire                 oor,     // |x| >= 2**(WEXP-1)
+    output wire      [WEXP-2:0] ipart,   // floor(|x|)
+    output wire       [WFF-1:0] f
 );
-    localparam WFRAC   = WMAN - 1;
-    localparam WFULL   = WEXP + WMAN;
-    localparam WMAG    = WEXP + FF;
-    // One padding bit below the significand: _zkf_rshift_sticky's output bit 0 OR's the data bit at position 0
-    // together with the dropped sticky, and those must stay separate.
-    localparam RSH_MAX = WMAN + 1;                      // beyond this everything is sticky
-    localparam WRSH    = $clog2(RSH_MAX + 1);
-    localparam LSH_MAX = WMAG - WMAN;                   // beyond this the magnitude leaves the container
-    localparam WLSH    = $clog2(LSH_MAX + 1);
+    localparam WFRAC = WMAN - 1;
+    localparam WFULL = WEXP + WMAN;
+    localparam WMAG  = WEXP - 1 + WFF;  // |x| < 2**(WEXP-1) in range
+    localparam integer BIAS = (1 << (WEXP - 1)) - 1;
+    localparam integer ETOP = BIAS + WEXP - 2;  // largest in-range exponent: the significand sits at the top of mag
+    localparam WFINE = (WEXP < 3) ? WEXP : 3;
+    localparam integer PAD   = ((1 << WFINE) - ((ETOP + 1) % (1 << WFINE))) % (1 << WFINE);
+    localparam integer CTOP  = (ETOP + PAD) >> WFINE;
+    localparam integer NCRS  = ((WMAG + PAD - 1) >> WFINE) + 1;      // coarse amounts that leave bits
+    localparam WCRS  = $clog2(NCRS + 1);
+    localparam WHI   = (WEXP > WFINE) ? (WEXP - WFINE) : 1;
+    localparam WCO   = (WHI + 1 > WCRS) ? (WHI + 1) : WCRS;
 
-    // LEFT_SHIFT_BASE is the exponent at which the significand already sits at the binary point, the boundary between
-    // right and left shift; it is negative at small WEXP, where every shift is a left one. Below RIGHT_OVER_BASE the
-    // right shift exceeds RSH_MAX. At OOR_THRESHOLD and above, which covers inf, |x| >= 2^(WEXP-1).
-    localparam integer BIAS            = (1 << (WEXP - 1)) - 1;
-    localparam integer LEFT_SHIFT_BASE = BIAS + WFRAC - FF;
-    localparam integer RIGHT_OVER_BASE = LEFT_SHIFT_BASE - RSH_MAX;
-    localparam integer OOR_THRESHOLD   = BIAS + WEXP - 1;
-    // WD sizes the two shift-amount subtractions.
-    localparam integer MAX_EXP_IN      = (1 << WEXP) - 1;
-    localparam integer ABS_LSB         = (LEFT_SHIFT_BASE >= 0) ? LEFT_SHIFT_BASE : -LEFT_SHIFT_BASE;
-    localparam integer MAX_POS_DELTA   = MAX_EXP_IN - LEFT_SHIFT_BASE;
-    localparam integer WD              = $clog2(((ABS_LSB > MAX_POS_DELTA) ? ABS_LSB : MAX_POS_DELTA) + 1) + 1;
-    localparam signed [WD-1:0] LEFT_SHIFT_BASE_EXT = LEFT_SHIFT_BASE[WD-1:0];
+    wire     [WEXP-1:0] exp    = x[WFULL-2:WFRAC];
+    wire      [WHI-1:0] exp_hi = (WEXP > WFINE) ? exp[WEXP-1 -: WHI] : 1'b0;
+    wire      [WCO-1:0] coarse = CTOP[WCO-1:0] - {{(WCO-WHI){1'b0}}, exp_hi};   // non-negative in range
+    wire [WMAG+PAD-1:0] fine   = {1'b1, x[WFRAC-1:0], {(WMAG-WMAN+PAD){1'b0}}} >> ~exp[WFINE-1:0];
+    wire [WMAG+PAD-1:0] mag_p  = fine >> {coarse[WCRS-1:0], {WFINE{1'b0}}};
+    wire     [WMAG-1:0] mag    = (coarse >= NCRS) ? {WMAG{1'b0}} : mag_p[WMAG-1:0];
 
-    wire             in_valid_q;
-    wire [WFULL-1:0] x_q;
-    zkf_pipe #(.W(WFULL), .N(STAGE_INPUT)) u_input_pipe (
-        .clk(clk), .rst(rst),
-        .in_valid(in_valid), .in(x),
-        .out_valid(in_valid_q), .out(x_q)
-    );
+    assign sign  = x[WFULL-1];
+    assign zero  = ~|exp;
+    assign oor   = exp >= (BIAS + WEXP - 1);
+    assign ipart = mag[WMAG-1:WFF];
+    assign f     = mag[WFF-1:0] ^ {WFF{sign}};
+endmodule
 
-    // -- Stage 1: the shift amounts and the predicates. The barrel shifters sit in the next stage so that neither
-    // carries both a subtraction and a wide variable shift. The two amounts are separate folded-constant subtractions
-    // rather than one negated, which would put both on the same carry chain; the predicates are unsigned comparisons
-    // against constants for the same reason.
-    wire      [WEXP-1:0] exp_in = x_q[WFULL-2:WFRAC];
-    wire signed [WD-1:0] exp_s  = $signed({{(WD-WEXP){1'b0}}, exp_in});
-    wire signed [WD-1:0] left_shift_full  = exp_s - LEFT_SHIFT_BASE_EXT;
-    wire signed [WD-1:0] right_shift_full = LEFT_SHIFT_BASE_EXT - exp_s;
-    wire                 oor_in = exp_in >= OOR_THRESHOLD[WEXP-1:0];
-    wire is_left_shift;
-    wire right_too_big;
-    generate
-        if (LEFT_SHIFT_BASE <= 0) begin : g_lshift_always
-            assign is_left_shift = 1'b1;
-        end else begin : g_lshift_cmp
-            assign is_left_shift = exp_in >= LEFT_SHIFT_BASE[WEXP-1:0];
-        end
-        if (RIGHT_OVER_BASE <= 0) begin : g_rover_never
-            assign right_too_big = 1'b0;
-        end else begin : g_rover_cmp
-            assign right_too_big = exp_in < RIGHT_OVER_BASE[WEXP-1:0];
-        end
-    endgenerate
 
-    reg             s1_valid;
-    reg             s1_sign;
-    reg             s1_is_zero;
-    reg             s1_is_left_shift;
-    reg             s1_oor;
-    reg  [WMAN-1:0] s1_sig;
-    reg  [WRSH-1:0] s1_rshamt;
-    reg  [WLSH-1:0] s1_lshamt;
+// Result assembly of zkf_exp2: the float 2**i * v / 2**WCF, i = ipart for a positive x and -ipart-1 for a negative
+// one, for a core sum s = v + half an ULP in [2**WCF, 2**(WCF+2)). Equivalent to _zkf_pack of v rounding half up, v
+// taken as 1 where it falls short of 2**WCF and as 2 where s reaches 2**(WCF+1): s is truncated, and its late top bit
+// only selects between two exponent fields.
+//
+// Where s reaches 2**(WCF+1) its fraction bits are zero by themselves, and a negative integer x, the core's last
+// argument, gets there (zkf_trans_certify.py), which makes its 2**x exact: in the binade whose results are otherwise
+// zero that is x = -BIAS alone, MIN_NORMAL/2, which rounds up.
+//
+// z = i + BIAS + 1 for both signs, so the exponent field is z-1, or z after the round-up. A field of -1 is below
+// MIN_NORMAL/2 (zero), 0 is MIN_NORMAL, all ones is infinity.
+module _zkf_exp2_pack #(
+    parameter WEXP = 6,
+    parameter WMAN = 18,
+    parameter WCF  = 30    // fraction bits of s
+) (
+    input  wire                 sign,   // of x
+    input  wire                 zero,   // x = 0; overrides the rest
+    input  wire                 oor,    // |x| >= 2**(WEXP-1): +inf, or +0 for a negative x
+    input  wire      [WEXP-2:0] ipart,  // floor(|x|)
+    input  wire       [WCF+1:0] s,
+    output wire [WEXP+WMAN-1:0] y
+);
+    localparam WFRAC = WMAN - 1;
+    localparam integer BIAS = (1 << (WEXP - 1)) - 1;
 
-    // -- Stage 2: the right shift folds its discarded tail into a sticky bit; the left shift is exact.
-    wire [WMAN:0] rsh;
-    _zkf_rshift_sticky #(.W(WMAN + 1), .WSHIFT(WRSH), .STAGE_SPLIT(0)) u_rshift (
-        .clk(clk), .x({s1_sig, 1'b0}), .shamt(s1_rshamt), .y(rsh)
-    );
-    wire [WMAG-1:0] lsh = {{LSH_MAX{1'b0}}, s1_sig} << s1_lshamt;
-
-    reg            s2_valid;
-    reg            s2_sign;
-    reg            s2_is_zero;
-    reg            s2_oor;
-    reg [WMAG-1:0] s2_mag;
-    reg            s2_lost_sticky;
-
-    always @(posedge clk) begin
-        if (rst) begin
-            s1_valid <= 1'b0;
-            s2_valid <= 1'b0;
-        end else begin
-            s1_valid <= in_valid_q;
-            s2_valid <= s1_valid;
-        end
-        s1_sign          <= x_q[WFULL-1];
-        s1_is_zero       <= ~|exp_in;
-        s1_is_left_shift <= is_left_shift;
-        s1_oor           <= oor_in;
-        s1_sig           <= {1'b1, x_q[WFRAC-1:0]};
-        // An out-of-range magnitude is not shifted, which keeps it inside the container.
-        s1_lshamt        <= (is_left_shift && !oor_in) ? left_shift_full[WLSH-1:0] : {WLSH{1'b0}};
-        s1_rshamt        <= right_too_big ? RSH_MAX[WRSH-1:0] : right_shift_full[WRSH-1:0];
-
-        s2_sign        <= s1_sign;
-        s2_is_zero     <= s1_is_zero;
-        s2_oor         <= s1_oor;
-        s2_mag         <= s1_is_left_shift ? lsh : {{LSH_MAX{1'b0}}, rsh[WMAN:1]};
-        s2_lost_sticky <= ~s1_is_left_shift & rsh[0];
+    wire [WEXP-1:0] z = {~sign, ipart ^ {(WEXP-1){sign}}};
+    reg  [WEXP-1:0] e_lo, e_hi;       // without and with the round-up
+    reg             use_frac;
+    always @* begin
+        use_frac = 1'b0;
+        case (1'b1)
+            zero: begin
+                e_lo = BIAS[WEXP-1:0];
+                e_hi = BIAS[WEXP-1:0];
+            end
+            oor: begin
+                e_lo = {WEXP{~sign}};
+                e_hi = {WEXP{~sign}};
+            end
+            ~|z[WEXP-1:1]: begin
+                e_lo = z;
+                e_hi = {{(WEXP-1){1'b0}}, 1'b1};
+            end
+            default: begin
+                e_lo     = z - 1'b1;
+                e_hi     = z;
+                use_frac = 1'b1;
+            end
+        endcase
     end
-
-    assign out_valid   = s2_valid;
-    assign mag         = s2_mag;
-    assign lost_sticky = s2_lost_sticky;
-    assign sign        = s2_sign;
-    assign is_zero     = s2_is_zero;
-    assign oor         = s2_oor;
+    assign y = {1'b0, s[WCF+1] ? e_hi : e_lo, s[WCF-1 -: WFRAC] & {WFRAC{use_frac}}};
 endmodule
 
 `default_nettype wire

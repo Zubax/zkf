@@ -9,7 +9,8 @@ from typing import Iterable
 
 import cocotb
 
-VALID_KINDS = {"directed", "exhaustive", "random", "significands"}  # significands: zkf_divsqrt
+# significands: zkf_divsqrt; strata: zkf_exp2 / zkf_log2
+VALID_KINDS = {"directed", "exhaustive", "random", "significands", "strata"}
 
 
 @dataclass(frozen=True)
@@ -31,14 +32,17 @@ class TestContext:
     wman_out: int | None = None
     wk: int | None = None  # zkf_mul_ilog2: width of the signed runtime shift k
     stage_input: int = 0  # input-register knob for sequential float operators
-    stage_reduce: int = 0  # zkf_exp2: register the reduced fixed-point before the evaluator ROM
+    stage_reduce: int = 0  # zkf_exp2
     stage_product: int = 0  # zkf_mul / zkf_fma / zkf_exp2 / zkf_log2 / zkf_cordic
-    stage_product_final: int = 0  # zkf_log2 final f*C(f) multiply; defaults to stage_product in float_context()
-    stage_align: int = 0  # zkf_add / zkf_fma
-    stage_decode: int = 0  # zkf_add / zkf_mul_ilog2 / zkf_fma / zkf_log2 / zkf_divsqrt
-    stage_normalize: int = 0  # zkf_add / zkf_fma / zkf_log2 / zkf_from_int
-    stage_normalize_output: int = 0  # zkf_log2: register _zkf_normshift outputs before GRS/exponent combine
-    stage_pack: int = 0  # zkf_add / zkf_fma / zkf_log2 / zkf_exp2 / zkf_from_int (forwarded to _zkf_pack.STAGE_INPUT)
+    stage_product_square: int = 0  # zkf_exp2 / zkf_log2
+    stage_product_odd: int = 0  # zkf_exp2 / zkf_log2
+    stage_product_chain: int = 0  # zkf_exp2 / zkf_log2
+    stage_product_final: int = 0  # zkf_log2 final |f|*C(f) multiply
+    stage_align: int = 0  # zkf_add / zkf_fma / zkf_log2
+    stage_decode: int = 0  # zkf_add / zkf_mul_ilog2 / zkf_fma / zkf_divsqrt
+    divide_radix: int = 4  # zkf_cordic
+    stage_normalize: int = 0  # zkf_add / zkf_fma / zkf_from_int / zkf_cordic
+    stage_pack: int = 0  # forwarded to _zkf_pack.STAGE_INPUT; zkf_exp2 / zkf_log2: their own stage
     stage_shift: int = 0  # zkf_rint
     stage_round: int = 0  # zkf_rint
     stage_output: int = 0
@@ -60,16 +64,22 @@ class TestContext:
             knob_suffix += f" SR={self.stage_reduce}"
         if self.stage_product:
             knob_suffix += f" SP={self.stage_product}"
-        if self.stage_product_final != self.stage_product:
+        if self.stage_product_square:
+            knob_suffix += f" SQ={self.stage_product_square}"
+        if self.stage_product_odd:
+            knob_suffix += f" OD={self.stage_product_odd}"
+        if self.stage_product_chain:
+            knob_suffix += f" CH={self.stage_product_chain}"
+        if self.stage_product_final:
             knob_suffix += f" SPF={self.stage_product_final}"
         if self.stage_align:
             knob_suffix += f" SA={self.stage_align}"
         if self.stage_decode:
             knob_suffix += f" SD={self.stage_decode}"
+        if self.divide_radix != 4:
+            knob_suffix += f" DR={self.divide_radix}"
         if self.stage_normalize:
             knob_suffix += f" SN={self.stage_normalize}"
-        if self.stage_normalize_output:
-            knob_suffix += f" SNO={self.stage_normalize_output}"
         if self.stage_pack:
             knob_suffix += f" PA={self.stage_pack}"
         if self.stage_shift:
@@ -171,12 +181,6 @@ def _stage_product() -> int:
     return value
 
 
-def _stage_product_final(stage_product: int) -> int:
-    # Defaults to STAGE_PRODUCT when the plusarg is absent (the matrix always passes it; this fallback covers direct
-    # cocotb runs outside the matrix driver).
-    return plusarg_int("ZKF_STAGE_PRODUCT_FINAL", stage_product)
-
-
 def _stage_align() -> int:
     value = plusarg_int("ZKF_STAGE_ALIGN", 0)
     if value < 0:
@@ -195,13 +199,6 @@ def _stage_normalize() -> int:
     value = plusarg_int("ZKF_STAGE_NORMALIZE", 0)
     if value < 0:
         raise ValueError(f"ZKF_STAGE_NORMALIZE must be non-negative, got {value}")
-    return value
-
-
-def _stage_normalize_output() -> int:
-    value = plusarg_int("ZKF_STAGE_NORMALIZE_OUTPUT", 0)
-    if value not in (0, 1):
-        raise ValueError(f"ZKF_STAGE_NORMALIZE_OUTPUT must be 0 or 1, got {value}")
     return value
 
 
@@ -296,11 +293,14 @@ def float_context(suite: str, require_wexp_unbiased: bool = False) -> TestContex
         stage_input=_stage_input(),
         stage_reduce=_stage_reduce(),
         stage_product=stage_product,
-        stage_product_final=_stage_product_final(stage_product),
+        stage_product_square=plusarg_int("ZKF_STAGE_PRODUCT_SQUARE", 0),
+        stage_product_odd=plusarg_int("ZKF_STAGE_PRODUCT_ODD", 0),
+        stage_product_chain=plusarg_int("ZKF_STAGE_PRODUCT_CHAIN", 0),
+        stage_product_final=plusarg_int("ZKF_STAGE_PRODUCT_FINAL", 0),
         stage_align=_stage_align(),
         stage_decode=_stage_decode(),
+        divide_radix=plusarg_int("ZKF_DIVIDE_RADIX", 4),
         stage_normalize=_stage_normalize(),
-        stage_normalize_output=_stage_normalize_output(),
         stage_pack=_stage_pack(),
         stage_output=_stage_output(),
         unroll100=unroll100,

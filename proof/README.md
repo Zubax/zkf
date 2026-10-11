@@ -13,7 +13,7 @@ For each module we write:
   different style than the synthesisable RTL: single `always @(*)` blocks with blocking
   assignments, no pipeline, no shared helper modules. The intent is that a bug in the production
   RTL is unlikely to also be present in a fundamentally different implementation of the same
-  spec.
+  spec. `zkf_add` has none of its own: it is proved against the `zkf_fma` reference with b = 1.
 
 - An **equivalence harness** under `harness/` — wraps the DUT and the reference with a
   single-pulse driver: assume `rst=1` at cycle 0, `rst=0` and `in_valid=1` at cycle 1, then
@@ -61,8 +61,13 @@ Every `.sby` file under `sby/` is a primary proof and is exercised by `nox -s fo
 | `_zkf_pack` (biased)    | WEXP=6, WMAN=18 | yices     | EXP_IS_BIASED=1 port |
 | `_zkf_pack` (sat)       | WEXP=6, WMAN=18 | yices     | SATURATE_ROUND_CARRY=1: alone, with the biased port, and with STAGE_OUTPUT=1 |
 | `_zkf_pack` (narrow)    | WEXP=4, WMAN=5  | yices     | narrowest legal WEXP_UNBIASED: WEXP unbiased, WEXP+1 biased |
+| `_zkf_exp2_reduce`      | WEXP=2..11,17,30 at WMAN=16; 6/18, 8/36, 11/53 | yices | spec inlined; every residue of the shift offset. This and the next three are one proof, `zkf_trans_parts` |
+| `_zkf_exp2_pack`        | 6/18, 2/16, 8/36, 11/53, 17/16, 30/16 | yices | against `_zkf_pack` of the core sum without its half ULP, rounding half up, for every sum the table certificate allows |
+| `_zkf_log2_decode`      | WEXP=2..5,8,11,17,30 at WMAN=16; 6/18, 8/36, 11/53 | yices | spec inlined: a transliteration of the reference model's decode; without and with its register stage |
+| `_zkf_log2_pack`        | 6/18, 2/16, 8/36, 11/53, 17/16, 30/16 | yices | against `_zkf_pack` of the exact sum, rounding half up, inside the frame the operator guarantees; STAGE=1..3, and STAGE_SELECT=1 at 6/18 |
 | `zkf_mul`               | WEXP=5, WMAN=10 | yices     | one bit shy of binary16's mantissa; yices stalls indefinitely at WMAN=11 with no obvious progress past step 5; rounding heart still covered by the pack proof at full width |
-| `zkf_add`               | WEXP=4, WMAN=6  | yices     | 8-stage BMC; reference uses wide-integer summation |
+| `zkf_add`               | WEXP=4, WMAN=6  | yices     | against the `zkf_fma` reference with b = 1; lean, and with every stage on (STAGE_NORMALIZE=1) |
+| `zkf_fma`               | WEXP=3, WMAN=5  | yices     | reference adds the exact product and c in one wide integer; lean, and with every stage on (STAGE_PRODUCT=1, STAGE_NORMALIZE=1) |
 | `zkf_divsqrt`           | WEXP=4, WMAN=6,7,10 | yices | free-running stimulus instead of a single pulse: any interleaving of both operations, bubbles, reset at any cycle; MODE=0/1/2, STAGE_DECODE=1 and the other knobs |
 | `_zkf_divsqrt_step`     | WMAN=18,27,36,53; WW=18..88 | yices | MODE=1/2: every digit stage, maximal digit, remainder, D/D3 updates, reachable-state invariant preserved; MODE=0: the division step at any divisor, at zkf_divsqrt's and zkf_cordic's widths |
 | `_zkf_divsqrt_div0`     | WMAN=18,36,53   | yices     | the divider's stage 0, folded (18, 36) and plain (18, 53) |
@@ -84,14 +89,14 @@ on failure it embeds links to the SBY counter-example VCDs.
 
 ## Known limitations and design decisions
 
-- Heavy arithmetic (`zkf_mul`, `zkf_add`, `zkf_divsqrt`) is proved at reduced widths because
+- Heavy arithmetic (`zkf_mul`, `zkf_add`, `zkf_fma`, `zkf_divsqrt`) is proved at reduced widths because
   SBY's QF_BV instance at default `(WEXP=6, WMAN=18)` is currently intractable on yices in any reasonable wall-clock.
   The parameter-genericity gap is mitigated by:
-  1. The full-width `_zkf_pack` proof (rounding logic shared by every arithmetic module).
+  1. The full-width `_zkf_pack` proof (rounding logic shared by the arithmetic modules).
   2. `zkf_divsqrt`'s production-width proofs of its digit stages, both stages 0 and the last decision.
   3. The simulation matrix in `../tb/`, which spans default widths up to binary64.
   4. The `zkf_mul` proof at near-binary16 widths `(WEXP=5, WMAN=10)`, exercising the full
-     hidden-bit-product-high vs. product-low normalisation split that the reduced widths exercise
+     hidden-bit-product-high vs. product-low normalization split that the reduced widths exercise
      only narrowly.
 
 - `zkf_divsqrt`'s production-width proofs are local: each part is proved from the reachable-state invariant it assumes,

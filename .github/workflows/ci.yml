@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   tests:
-    name: tests
+    name: tests (${{ matrix.sim }})
     # Skipped by `#yolo` in the head commit message, and for a same-repo PR, which its head commit's push run covers.
     if: &run_ci >-
       !contains(github.event.head_commit.message, '#yolo') &&
@@ -39,11 +39,18 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-${{ runner.os }}-
-      - run: nox -s tests black
+      - run: ${{ matrix.run }}
+    # The matrix in two halves, one per runner slot. The Verilator rows carry the coverage gate, so they stay together.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { sim: verilator, run: "nox -s tests -- -k 'not icarus'" }
+          - { sim: icarus, run: "nox -s checks black && nox -s focused -- -k icarus" }
 
   deep:
     name: deep
-    if: contains(github.event.head_commit.message, '#ci-deep')
+    if: &run_deep contains(github.event.head_commit.message, '#ci-deep')
     runs-on: [self-hosted, ci-runner]
     container: *mega_toolchain_container
     steps:
@@ -53,7 +60,7 @@ jobs:
 
   accuracy:
     name: accuracy
-    if: *run_ci
+    if: *run_deep
     runs-on: [self-hosted, ci-runner]
     container: *mega_toolchain_container
     steps:

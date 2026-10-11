@@ -43,12 +43,20 @@ def clean(session):
 
 
 @nox.session
-def tests(session: nox.Session) -> None:
+def checks(session: nox.Session) -> None:
+    """The generated artifacts against a fresh run, the model's layout, and the standalone benches."""
     session.install("-e", ".[test]")
     session.run("python", "tools/zkf_trig.py", "--check-emit")
     session.run("python", "tools/zkf_transcendental.py", "--check-emit")
     session.run("python", "tb/test_zkf_model_layout.py")
     session.run("python", "tb/zkf_pmul_check.py")
+    session.run("python", "tb/zkf_trans_core_check.py", "--selftest")
+
+
+@nox.session
+def tests(session: nox.Session) -> None:
+    """The per-PR matrix and its line-coverage gate, which needs every Verilator row: filter with `focused` instead."""
+    session.install("-e", ".[test]")
     session.run("python", "-m", "pytest", "tb/test_float_matrix.py", *PYTEST_DIST, *session.posargs)
     session.run(
         "python",
@@ -84,6 +92,7 @@ def properties(session: nox.Session) -> None:
 @nox.session
 def deep(session: nox.Session) -> None:
     session.install("-e", ".[test]")
+    session.run("python", "tb/zkf_trans_core_check.py", "--deep")
     session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "deep", *PYTEST_DIST, *session.posargs)
     session.run(
         "python",
@@ -99,6 +108,7 @@ def deep(session: nox.Session) -> None:
 @nox.session
 def accuracy(session: nox.Session) -> None:
     session.install("-e", ".[test]")
+    session.run("python", "tools/zkf_trans_certify.py", "--selftest")
     session.run("python", "tools/zkf_transcendental.py", "--check")
     session.run("python", "tools/zkf_trig.py", "--check")
 
