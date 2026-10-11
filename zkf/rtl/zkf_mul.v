@@ -1,17 +1,19 @@
 // Streamed Zubax Kulibin float multiplier.
 //
 // STAGE_INPUT=0: operands feed the multiplier combinationally (default).
-// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths (+1 cycle).
-// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs (+STAGE_INPUT cycles).
+// STAGE_INPUT=1: latch the inputs before any combinational logic, isolating them from upstream paths.
+// STAGE_INPUT>1: add extra dummy stages; helps in routing-congested designs.
 //
-// STAGE_PRODUCT sets the pipeline depth of _zkf_pmul multiplier (1+STAGE_PRODUCT cycles). Refer to _zkf_pmul.
+// STAGE_PRODUCT sets the pipeline depth of _zkf_pmul multiplier. Refer to _zkf_pmul.
 // WMULTIPLIER is an optional hint of the native DSP tile argument width; forwaded to _zkf_pmul, refer there.
 //
 // STAGE_PACK=0: pack inputs are combinational (default).
-// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT) (+1 cycle).
+// STAGE_PACK=1: register pack inputs (forwarded to _zkf_pack.STAGE_INPUT).
 //
 // STAGE_OUTPUT=0: the result is combinational (default).
-// STAGE_OUTPUT=1: the result is registered; good if the module feeds long external combinational paths (+1 cycle).
+// STAGE_OUTPUT=1: the result is registered; good if the module feeds long external combinational paths.
+//
+// LATENCY = 1 + STAGE_*
 
 `default_nettype none
 
@@ -56,7 +58,7 @@ module zkf_mul #(
     localparam signed [WEXP_UNBIASED-1:0] ZERO_EXT = {WEXP_UNBIASED{1'b0}};
     localparam signed [WEXP_UNBIASED-1:0] ONE_EXT  = {{(WEXP_UNBIASED-1){1'b0}}, 1'b1};
 
-    // Optional input register stage(s): latch the operands before any combinational logic (+STAGE_INPUT cycles).
+    // Optional input register stage(s): latch the operands before any combinational logic.
     wire             in_valid_q;
     wire [WFULL-1:0] a_q;
     wire [WFULL-1:0] b_q;
@@ -86,8 +88,8 @@ module zkf_mul #(
     wire signed [WEXP_UNBIASED-1:0] b_exp_ext       = {{(WEXP_UNBIASED-WEXP){1'b0}}, b_exp};
     wire signed [WEXP_UNBIASED-1:0] bias_ext        = {{(WEXP_UNBIASED-WEXP){1'b0}}, EXP_BIAS};
     // Subtract a single bias so the base is already BIASED: _zkf_pack then runs EXP_IS_BIASED=1 and skips its own bias
-    // add, keeping that carry chain off the packer's exponent-overflow cone. Mirrors zkf_add/zkf_fma, which likewise
-    // pre-bias their exponent to avoid a -BIAS/+BIAS round trip across the pack boundary.
+    // add, keeping that carry chain off the packer's exponent-overflow cone. Mirrors _zkf_add_core, which likewise
+    // carries a biased exponent to avoid a -BIAS/+BIAS round trip across the pack boundary.
     wire signed [WEXP_UNBIASED-1:0] exp_biased_in = a_exp_ext + b_exp_ext - bias_ext;
 
     wire pre_sign       = a_sign ^ b_sign;
@@ -110,7 +112,7 @@ module zkf_mul #(
     wire                            s1_force_inf         = mul_sb_out[0];
 
     _zkf_pmul #(
-        .WA(WMAN), .WB(WMAN), .A_SIGNED(0), .B_SIGNED(0),
+        .WA(WMAN), .WB(WMAN), .SIGNED(0),
         .WSB(WSB_MUL), .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
     ) u_pmul (
         .clk(clk), .rst(rst), .in_valid(in_valid_q), .sb_in(mul_sb_in),

@@ -2,12 +2,12 @@
 """
 Standalone bench for the fused leading-zero-normalizing shifter _zkf_normshift.
 
-Embedded callers (zkf_add, zkf_from_int) drive it with narrow, zero-padded inputs over a limited leading-one range, so
-this bench sweeps x exhaustively at small widths -- every reachable cascade node toggles -- and checks (zero, count, y)
-against the model across STAGE_SPLIT and STAGE_OUTPUT.
+Embedded callers (zkf_add, zkf_fma, zkf_from_int, zkf_log2) drive it with narrow, zero-padded inputs over a limited
+leading-one range, so this bench sweeps x exhaustively at small widths -- every reachable cascade node toggles -- and
+checks (zero, count, y) against the model across STAGE_SPLIT.
 
 normshift_sideband_stream additionally pins the streaming sideband latency: it drives a fresh in_valid/sb_in every
-cycle and asserts out_valid/sb_out are delayed by EXACTLY STAGE_SPLIT + STAGE_OUTPUT (with valid gaps and a flush),
+cycle and asserts out_valid/sb_out are delayed by EXACTLY STAGE_SPLIT (with valid gaps and a flush),
 which an input-holding sweep cannot.
 """
 
@@ -59,7 +59,6 @@ def cases_for(width: int, kind: str, seed: int, count: int) -> list[int]:
 async def normshift_runtime_cases(dut) -> None:
     width = plusarg_int("ZKF_NS_W")
     split = plusarg_int("ZKF_NS_SPLIT", 0)
-    output = plusarg_int("ZKF_NS_OUTPUT", 0)
     kind = plusarg_str("ZKF_KIND", "exhaustive")
     seed = plusarg_int("ZKF_SEED", 0)
     count = plusarg_int("ZKF_COUNT", 0)
@@ -67,9 +66,8 @@ async def normshift_runtime_cases(dut) -> None:
     if len(dut.x) != width:
         raise AssertionError(f"{cfg}: x width {len(dut.x)} != ZKF_NS_W={width}")
 
-    # Output latency = STAGE_SPLIT cascade barriers + optional STAGE_OUTPUT register. (out_valid/sb_out latency is
-    # pinned separately by normshift_sideband_stream.)
-    latency = split + output
+    # out_valid/sb_out latency is pinned separately by normshift_sideband_stream.
+    latency = split
 
     cases = cases_for(width, kind, seed, count)
     start_clock(dut)
@@ -107,18 +105,17 @@ async def normshift_runtime_cases(dut) -> None:
 @cocotb.test()
 async def normshift_sideband_stream(dut) -> None:
     """
-    Pin the streaming sideband latency: out_valid/sb_out must be delayed by exactly STAGE_SPLIT + STAGE_OUTPUT. A
-    fresh in_valid/sb_in every cycle makes a wrong delay mismatch the alternating sb_out (or the gated out_valid).
+    Pin the streaming sideband latency: out_valid/sb_out must be delayed by exactly STAGE_SPLIT. A fresh
+    in_valid/sb_in every cycle makes a wrong delay mismatch the alternating sb_out (or the gated out_valid).
     """
     width = plusarg_int("ZKF_NS_W")
     split = plusarg_int("ZKF_NS_SPLIT", 0)
-    output = plusarg_int("ZKF_NS_OUTPUT", 0)
     seed = plusarg_int("ZKF_SEED", 0)
     cfg = plusarg_str("ZKF_CONFIG", "default")
     sbw = len(dut.sb_in)
-    latency = split + output
+    latency = split
 
-    context = TestContext(suite="normshift", config=cfg, seed=seed, stage_normalize=split, stage_output=output)
+    context = TestContext(suite="normshift", config=cfg, seed=seed, stage_normalize=split)
     start_clock(dut)
     rng = np.random.default_rng(seed ^ 0x5DEECE66D)
     sb_mask = (1 << sbw) - 1

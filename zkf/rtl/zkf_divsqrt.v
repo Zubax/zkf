@@ -3,8 +3,7 @@
 //   op_sqrt = 0:  y = a / b
 //   op_sqrt = 1:  y = sqrt(a)
 //
-// Both are correctly rounded (RNTE) and take the same latency, ceil(WMAN/2) - 1 cycles plus the knobs below, so one
-// result port serves them.
+// Both are correctly rounded (RNTE) and take the same latency, so one result port serves them.
 //
 // A fixed MODE drops the other operation's logic and ignores op_sqrt.
 //
@@ -23,7 +22,9 @@
 //     it in stage 0, in every MODE (the root then decides its last digit in the added stage); no effect at odd WMAN.
 // STAGE_PACK={0,1}: register the last digit decision ahead of the packer.
 // STAGE_OUTPUT={0,1}: register the results.
-// Each knob that takes effect costs as many cycles as its value.
+//
+// DECODE  = (WMAN % 2 == 0) ? STAGE_DECODE : 0
+// LATENCY = (WMAN + 1) / 2 - 1 + STAGE_INPUT + DECODE + STAGE_PACK + STAGE_OUTPUT
 
 `default_nettype none
 

@@ -46,9 +46,8 @@ DEFAULT_DEVICE_SIZE = "12k"  # LFE5U-12F/25F die; the representative small part.
 
 # -dff is intentionally NOT passed: it runs ABC in sequential mode, which retimes/moves flops across the
 # DSP multiplies. On this DSP-heavy float library that hurts the wide configs (the MULT18X18D is mapped
-# combinationally either way, so retiming just disturbs placement of the reg->DSP->reg cones). Disabling it
-# lifts the timing-critical wide transcendentals (e.g. zkf_log2_w8m36 +3.5 MHz, zkf_exp2_w8m36 +2.6 MHz) with
-# no module dropping below the 100 MHz gate. -abc2 (extra ABC pass) and -noabc9 are kept (both measured best).
+# combinationally either way, so retiming just disturbs placement of the reg->DSP->reg cones). -abc2 (extra ABC
+# pass) and -noabc9 are kept (both measured best).
 def _synth_command(spec: ModuleSpec, netlist) -> str:
     return f"synth_ecp5 -top {spec.top} -noabc9 -abc2 -json {netlist}"
 
@@ -63,11 +62,11 @@ def _nextpnr_args(target: yosys.YosysTarget, paths: yosys.NextpnrPaths) -> list:
         "--freq",
         f"{paths.target_freq_mhz:g}",
         "--timing-allow-fail",
-        "--lpf-allow-unconstrained",
+        # No pads: placed with them, a small module's registers follow the pads around the die, and its timing is
+        # the distance between them rather than its own logic.
+        "--out-of-context",
         "--json",
         paths.netlist,
-        "--textcfg",
-        paths.module_dir / f"{paths.name}.config",
         "--report",
         paths.report,
     ]
@@ -115,7 +114,7 @@ def _resource_row(result: dict, bounds_by_key: dict) -> str:
 
 _FLOW_DESCRIPTION = (
     "<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 (sequential -dff retiming disabled), "
-    f"nextpnr-ecp5 for LFE5U-12F {DEVICE_PACKAGE} speed grade "
+    f"nextpnr-ecp5 out of context (no I/O pads) for LFE5U-12F {DEVICE_PACKAGE} speed grade "
     f"{DEVICE_SPEED_GRADE} at {format_mhz(TARGET_FREQ_MHZ)}.</p>"
 )
 

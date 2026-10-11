@@ -5,6 +5,9 @@
 // Public utility for aligning a consumer's own control/sideband signals with the output of a Kulibin float operator:
 // compute the operator's LATENCY locally, pass it to the operator (which checks it) and to a zkf_pipe #(.N(LATENCY))
 // that delays the sideband by the same number of cycles. This avoids threading sideband ports through the operators.
+//
+// The stream control is optional: with rst and in_valid tied low and out_valid left open this is a plain payload delay
+// without a reset. It works for this module and this module only because it is a dumb delay line that does nothing.
 
 `default_nettype none
 

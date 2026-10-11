@@ -20,8 +20,8 @@
 //
 // EXP_IS_BIASED=0: The exp_unbiased port is unbiased and the bias is added here.
 // EXP_IS_BIASED=1: It already carries the signed biased exponent, so the bias add is skipped - for a caller that
-//     folded the bias into its own exponent arithmetic to shorten its critical path (e.g. zkf_add:
-//     large_exp - normalize_shift is already the biased exponent, avoiding a -BIAS/+BIAS round trip).
+//     folded the bias into its own exponent arithmetic to shorten its critical path (e.g. _zkf_add_core:
+//     its exponent less the normalize count is already biased, avoiding a -BIAS/+BIAS round trip).
 //
 // ASSUME_NO_OVERFLOW=0 (default): the biased exponent is range-checked and a value above the finite range maps to
 //     canonical signed infinity.
@@ -29,8 +29,7 @@
 //     for every valid input, so the overflow detector is pruned at elaboration. The force_inf path (still mapped to
 //     infinity) and the zero / MIN_NORMAL underflow paths are unaffected, and a round-carry from EXP_MAX_FINITE to
 //     EXP_INF still produces canonical infinity (it rides the rounding adder, not the detector) unless
-//     SATURATE_ROUND_CARRY says otherwise. Used by bounded-output transcendentals such as zkf_log2, whose result is
-//     always representable for finite x.
+//     SATURATE_ROUND_CARRY says otherwise.
 //
 // SATURATE_ROUND_CARRY=0 (default): a round-carry out of the finite range becomes canonical infinity.
 // SATURATE_ROUND_CARRY=1: that carry saturates to max-finite instead; a value whose exponent is already out of
@@ -77,8 +76,8 @@ module _zkf_pack #(
         if ((SATURATE_ROUND_CARRY < 0) || (SATURATE_ROUND_CARRY > 1)) begin : g_invalid_saturate_round_carry
             _zkf_invalid_saturate_round_carry_out_of_range u_invalid();
         end
-        // Narrowest signed port spanning every valid value: an unbiased exponent fits in WEXP bits (zkf_exp2 ships
-        // exactly that), while a biased one reaches EXP_INF and needs one more.
+        // Narrowest signed port spanning every valid value: an unbiased exponent fits in WEXP bits, while a biased
+        // one reaches EXP_INF and needs one more.
         if (WEXP_UNBIASED < WEXP + ((EXP_IS_BIASED != 0) ? 1 : 0)) begin : g_invalid_wexp_unbiased
             _zkf_invalid_wexp_unbiased_too_narrow u_invalid();
         end

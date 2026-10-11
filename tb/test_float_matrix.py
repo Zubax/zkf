@@ -46,8 +46,9 @@ from zkf_results import check_results  # noqa: E402
 from zkf_targets import FILESETS, TARGETS  # noqa: E402
 
 # Per-tool build flags. -DSIMULATION=1 is passed as a define (below) so it applies to both tools; these lists
-# mirror the historical FuseSoC flow_options. Verilator collects line+toggle coverage; the runtime coverage file
-# is selected per run via a +verilator+coverage+file+... plusarg pointing inside the build dir.
+# mirror the historical FuseSoC flow_options. Verilator collects line coverage, and toggle coverage at the deep tier;
+# the runtime coverage file is selected per run via a +verilator+coverage+file+... plusarg pointing inside the build
+# dir.
 ICARUS_BUILD_ARGS = ["-Wall", "-Wno-timescale"]
 VERILATOR_BUILD_ARGS = [
     "--timing",
@@ -57,7 +58,6 @@ VERILATOR_BUILD_ARGS = [
     "-Wno-DECLFILENAME",
     "-Wno-UNOPTFLAT",
     "--coverage-line",
-    "--coverage-toggle",
 ]
 
 # Environment for the simulator subprocess. Disabling cocotb's pytest-based assertion rewriting keeps a
@@ -81,7 +81,8 @@ def _run_cocotb(run) -> None:
     defines = {"SIMULATION": 1, **{name: value for name, value in run.defines}}
     plusargs = [f"+{name}={value}" for name, value in run.plus]
     if run.sim == "verilator":
-        build_args = VERILATOR_BUILD_ARGS
+        # Toggle coverage is advisory and costs build time.
+        build_args = VERILATOR_BUILD_ARGS + (["--coverage-toggle"] if run.tier == "deep" else [])
         plusargs.append(f"+verilator+coverage+file+{build_dir / 'coverage.dat'}")
     else:
         build_args = ICARUS_BUILD_ARGS
@@ -236,8 +237,9 @@ def test_rtl_bundle(tmp_path) -> None:
 _CORDIC_LATENCY_KNOBS = [
     ((6, 18), {}),
     ((5, 16), {"unroll100": 50, "stage_input": 1, "stage_product": 1}),
-    ((8, 36), {"unroll100": 50, "stage_product": 4, "wmultiplier": 18, "stage_normalize": 2, "stage_pack": 1}),
+    ((8, 36), {"unroll100": 50, "divide_radix": 2, "stage_product": 3, "wmultiplier": 18, "stage_normalize": 3}),
     ((5, 16), {"stage_pack": 2, "stage_output": 1}),
+    ((5, 16), {"unroll100": 50, "stage_product": 4}),
 ]
 
 
@@ -265,6 +267,8 @@ def test_cordic_latency_guard(tmp_path, mode, field, knobs, delta) -> None:
         ("STAGE_PACK", -1, "_zkf_invalid_stage_input"),
         ("STAGE_INPUT", 2, None),
         ("STAGE_OUTPUT", 2, "_zkf_invalid_stage_output"),
+        ("DIVIDE_RADIX", 2, None),
+        ("DIVIDE_RADIX", 3, "_zkf_invalid_divide_radix"),
     ],
 )
 def test_cordic_stage_range(tmp_path, mode, knob, value, marker) -> None:
@@ -338,6 +342,7 @@ _DIVSQRT_KNOBS = [
     ((6, 18), {}),
     ((6, 18), {"stage_decode": 1}),
     ((8, 27), {"stage_input": 2, "stage_decode": 1}),
+    ((8, 36), {"stage_input": 1, "stage_decode": 1}),
     ((2, 4), {"stage_pack": 1, "stage_output": 1}),
 ]
 
@@ -362,7 +367,8 @@ def test_divsqrt_latency_guard(tmp_path, mode, knobs, delta) -> None:
         ({"STAGE_DECODE": 2}, "_zkf_invalid_stage_decode"),
         ({"STAGE_OUTPUT": 2}, "_zkf_invalid_stage_output"),
         ({"MODE": 0, "STAGE_INPUT": 3, "STAGE_DECODE": 1}, None),
-        ({"MODE": 1, "WMAN": 5, "STAGE_DECODE": 1}, None),
+        ({"MODE": 1, "WMAN": 5, "STAGE_DECODE": 1}, None),  # no effect at odd WMAN
+        ({"MODE": 1, "WMAN": 6, "STAGE_DECODE": 1}, None),
     ],
 )
 def test_divsqrt_parameter_range(tmp_path, params, marker) -> None:
@@ -370,7 +376,7 @@ def test_divsqrt_parameter_range(tmp_path, params, marker) -> None:
 
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
-@pytest.mark.parametrize("wman,stage_decode", [(4, 0), (4, 1), (5, 0), (18, 0), (18, 1), (27, 0), (53, 0)])
+@pytest.mark.parametrize("wman,stage_decode", [(4, 0), (4, 1), (5, 0), (5, 1), (18, 0), (18, 1), (27, 0), (53, 0)])
 def test_divsqrt_lints_clean(tmp_path, mode, wman, stage_decode) -> None:
     """Every elaboration: no undriven net, no out-of-range select (a simulator or synthesis lets either pass)."""
     result = subprocess.run(
@@ -437,6 +443,7 @@ def _format_bounds() -> list:
 
     exp2, exp2_absent = span({w for f, w in trans_specs() if f == "exp2"})
     log2, log2_absent = span({w for f, w in trans_specs() if f == "log2"})
+    log2_wide = min(w for f, w in trans_specs() if f == "log2" and w >= 30)
     trig, trig_absent = span(set(trig_specs()))
     wexp_or_wman = "_zkf_invalid_wexp_or_wman"
     rows = [
@@ -444,8 +451,10 @@ def _format_bounds() -> list:
         ("Exp2Model", 30, exp2, {}, None),
         ("Exp2Model", 31, exp2, {}, "_zkf_invalid_exp2_wexp_too_wide_unportable"),
         ("Exp2Model", 8, exp2_absent, {}, f"_zkf_exp2_m{exp2_absent}"),
-        ("Log2Model", 30, log2, {}, None),
-        ("Log2Model", 31, log2, {}, wexp_or_wman),
+        ("Log2Model", log2 + 1, log2, {}, None),  # the widest exponent whose results cannot tie
+        ("Log2Model", log2 + 2, log2, {}, "_zkf_invalid_log2_wexp_admits_ties"),
+        ("Log2Model", 30, log2_wide, {}, None),
+        ("Log2Model", 31, log2_wide, {}, wexp_or_wman),
         ("Log2Model", 8, log2_absent, {}, f"_zkf_log2_m{log2_absent}"),
         ("FromIntModel", 30, 16, {"wint": 2}, None),
         ("FromIntModel", 31, 16, {}, "_zkf_invalid_from_int_wexp_too_wide_unportable"),
@@ -494,6 +503,175 @@ def test_generator_module_entry_point(generator) -> None:
     cmd = [sys.executable, "-m", f"tools.{generator}", "--help"]
     result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+# zkf_exp2 / zkf_log2: the model's latency is the RTL's at every degree, whichever of the wide product and the chain is
+# the longer and whichever feeder of the chain the later, and with each other stage knob.
+_PRODUCT_KNOBS = ["stage_product"] + [f"stage_product_{term}" for term in ("square", "odd", "chain")]
+
+
+def _products(*stages: int) -> dict[str, int]:
+    return dict(zip(_PRODUCT_KNOBS, stages, strict=True))
+
+
+_TRANS_KNOBS = [
+    ("exp2", (6, 18), {}),
+    ("exp2", (6, 18), _products(1, 0, 3, 1)),  # no product takes the odd knob at this degree
+    (
+        "exp2",
+        (8, 36),
+        {"stage_input": 2, "stage_pack": 1, "stage_output": 1, "wmultiplier": 18} | _products(4, 1, 2, 1),
+    ),
+    ("exp2", (11, 53), {"stage_reduce": 1} | _products(1, 2, 0, 1)),
+    ("log2", (6, 18), _products(0, 2, 0, 1)),
+    ("log2", (8, 36), {"stage_input": 1, "stage_align": 1, "stage_product_final": 3} | _products(2, 3, 1, 2)),
+    ("log2", (11, 53), {"stage_product_final": 1, "stage_pack": 1, "stage_output": 1} | _products(4, 0, 1, 0)),
+]
+
+
+@pytest.mark.parametrize("knobs", range(len(_TRANS_KNOBS)))
+@pytest.mark.parametrize("delta", [0, -1, 1])
+def test_trans_latency_guard(tmp_path, knobs, delta) -> None:
+    import zkf
+
+    func, fmt, config = _TRANS_KNOBS[knobs]
+    m = zkf.ZkfFormat(*fmt).model_of(func)(**config)
+    params = {**m.params, "LATENCY": m.params["LATENCY"] + delta}
+    sources = TARGETS[f"sim_{func}"].sources()
+    _elaborate(tmp_path, m.module, params, sources, valid=delta == 0, marker="_zkf_invalid_latency_mismatch")
+
+
+def test_log2_final_product_default(tmp_path) -> None:
+    """STAGE_PRODUCT alone leaves the final multiply at its own default depth of zero."""
+    _elaborate(tmp_path, "zkf_log2", {"STAGE_PRODUCT": 1, "LATENCY": 4}, TARGETS["sim_log2"].sources())
+
+
+@pytest.mark.parametrize("func", ["exp2", "log2"])
+@pytest.mark.parametrize("wman", [18, 27, 53])
+@pytest.mark.parametrize("knob", _PRODUCT_KNOBS)
+def test_trans_product_knob_range(tmp_path, func, wman, knob) -> None:
+    """
+    Each product knob has one range at every degree, the RTL's and the model's, also where no product takes it. On a
+    grid that WMULTIPLIER shapes: the symmetric one refuses the products too narrow for it.
+    """
+    import zkf
+
+    model = zkf.ZkfFormat(8, wman).model_of(func)
+    sources = TARGETS[f"sim_{func}"].sources()
+    top = 5 if knob == "stage_product_square" else 4
+    _elaborate(tmp_path, f"zkf_{func}", model(**{knob: top}, wmultiplier=18).params, sources)
+    with pytest.raises(ValueError):
+        model(**{knob: top + 1})
+    params = {"WEXP": 8, "WMAN": wman, "WMULTIPLIER": 18, knob.upper(): top + 1}
+    _elaborate(tmp_path, f"zkf_{func}", params, sources, valid=False, marker="_zkf_invalid_stage_product_out_of_range")
+    params = {"WEXP": 8, "WMAN": wman, "WMULTIPLIER": 18, knob.upper(): -1}
+    _elaborate(tmp_path, f"zkf_{func}", params, sources, valid=False, marker="_zkf_invalid_stage_product_out_of_range")
+
+
+@pytest.mark.parametrize(
+    "wa,wb,sp,wm,valid",
+    [
+        (8, 8, 2, 0, True),
+        (7, 8, 2, 0, False),
+        (40, 7, 2, 0, False),
+        (7, 7, 1, 0, True),
+        (12, 12, 4, 0, True),
+        (12, 11, 3, 0, False),
+        (11, 40, 4, 0, False),
+        (2, 18, 4, 18, True),
+        (9, 70, 2, 8, True),
+    ],
+)
+def test_pmul_slice_floor(tmp_path, wa, wb, sp, wm, valid) -> None:
+    """A split leaves each operand 4 bits per slice at least, which a grid that WMULTIPLIER shapes always does."""
+    params = {"WA": wa, "WB": wb, "STAGE_PRODUCT": sp, "WMULTIPLIER": wm}
+    sources = ["zkf/rtl/zkf_pipe.v", "zkf/rtl/_zkf_pmul.v"]
+    _elaborate(tmp_path, "_zkf_pmul", params, sources, valid=valid, marker="_zkf_invalid_pmul_slice_too_narrow")
+
+
+@pytest.mark.parametrize(
+    "func,wman,knobs,valid",
+    [
+        ("exp2", 16, {"STAGE_PRODUCT": 4}, True),  # c1*w is 20x18; the side product beside it is 4x1
+        ("exp2", 27, {"STAGE_PRODUCT_SQUARE": 5}, True),  # the square's tiles are 18x18 and 18x2
+        ("exp2", 48, {"STAGE_PRODUCT_ODD": 4}, True),  # c3*w is 30x30, c5*w 7x7
+        ("log2", 16, {"STAGE_PRODUCT": 2}, False),  # c1*w is 19x6
+        ("exp2", 16, {"STAGE_PRODUCT_CHAIN": 3}, False),  # c2 * w**2 is 9x9
+        ("exp2", 27, {"STAGE_PRODUCT_ODD": 3}, False),  # c3*w is 9x18
+        ("log2", 16, {"STAGE_PRODUCT": 2, "WMULTIPLIER": 18}, True),
+    ],
+)
+def test_trans_narrow_product(tmp_path, func, wman, knobs, valid) -> None:
+    """A knob is refused where the widest product of its kind is too narrow to split, and only there."""
+    import zkf
+
+    params = {"WEXP": 8, "WMAN": wman} | knobs
+    names = {k.lower(): v for k, v in knobs.items()}
+    params["LATENCY"] = zkf.ZkfFormat(8, wman).model_of(func)(**names).timing.latency
+    sources = TARGETS[f"sim_{func}"].sources()
+    _elaborate(tmp_path, f"zkf_{func}", params, sources, valid=valid, marker="_zkf_invalid_pmul_slice_too_narrow")
+
+
+def _latency_models() -> list:
+    from zkf._format import _operator_model_descendants
+
+    return [cls for cls in _operator_model_descendants() if getattr(cls, "module", "_").startswith("zkf_")]
+
+
+@pytest.mark.parametrize("cls", _latency_models(), ids=lambda cls: cls.module)
+def test_header_latency_formula(tmp_path, cls) -> None:
+    """The LATENCY formula that ends an operator's header, if it has one, is the model's latency at every knob."""
+    import dataclasses
+    import zkf
+
+    variants = {"unroll100": (50, 200), "divide_radix": (2,), "mode": (0, 1)}
+    models = []
+    for wexp, wman in ((8, 24), (8, 27), (11, 53)):
+        try:
+            bases = [cls(zkf.ZkfFormat(wexp, wman))]
+        except zkf.UnsupportedFormat:
+            continue
+        names = [f.name for f in dataclasses.fields(cls)]
+        bases += [dataclasses.replace(bases[0], **{k: v}) for k in names if k in variants for v in variants[k]]
+        models += bases
+        for base, knob in itertools.product(bases, [k for k in names if k.startswith("stage_")]):
+            for step in (1, 2, 3):  # the smallest step the model accepts
+                try:
+                    models.append(dataclasses.replace(base, **{knob: step}))
+                except ValueError:
+                    continue
+                break
+        # Two knobs at once, in either order: a formula that takes the longer of two paths needs both.
+        for a, b in itertools.permutations([k for k in names if k.startswith("stage_")], 2):
+            try:
+                models.append(dataclasses.replace(bases[0], **{a: 2, b: 1}))
+            except ValueError:
+                continue
+    if not any(name.startswith("LATENCY") for name in models[0].params):
+        return  # zkf_pipe
+    source = (REPO_ROOT / "zkf" / "rtl" / f"{cls.module}.v").read_text()
+    header, _, body = source.partition("`default_nettype")
+    if not re.search(r"^// LATENCY\w* += ", header, re.M):
+        return
+    formula = re.findall(r"^// (\w+) += (.+)$", header.rstrip().rsplit("\n//\n", 1)[1], re.M)
+    defaults = re.findall(r"^ +parameter +(\w+) *= *(.+?),? *(?://.*)?$", body.partition("\n) (")[0], re.M)
+    text, wanted = [], {}
+    for index, model in enumerate(models):
+        latency = {k: v for k, v in model.params.items() if k.startswith("LATENCY")}
+        given = {k: v for k, v in model.params.items() if k not in latency}
+        given |= {k: v for k, v in defaults if k not in model.params and not k.startswith("LATENCY")}
+        text.append(f"module t{index};")
+        stages = "(" + " + ".join(k for k in given if k.startswith("STAGE_")) + ")"  # what STAGE_* stands for
+        text += [f"    localparam integer {k} = {v};" for k, v in given.items()]
+        text += [f"    localparam integer {k} = {v.replace('STAGE_*', stages)};" for k, v in formula]
+        text += [f'    initial $display("{index} {k} %0d", {k});' for k in latency]
+        text.append("endmodule")
+        wanted |= {(str(index), k): str(v) for k, v in latency.items()}
+    (tmp_path / "t.v").write_text("\n".join(text) + "\n")
+    tops = [arg for index in range(len(models)) for arg in ("-s", f"t{index}")]
+    subprocess.run(["iverilog", "-o", str(tmp_path / "t.vvp"), *tops, str(tmp_path / "t.v")], check=True)
+    out = subprocess.run(["vvp", "-n", str(tmp_path / "t.vvp")], check=True, capture_output=True, text=True).stdout
+    assert {tuple(line.split()[:2]): line.split()[2] for line in out.splitlines()} == wanted
 
 
 # _zkf_pack's WEXP_UNBIASED floor at WEXP=4: 4 bits unbiased, 5 biased.

@@ -8,21 +8,18 @@ from fractions import Fraction
 import cocotb
 import numpy as np
 
-from zkf import ZkfFormat
+from zkf import RoundMode, ZkfFormat
 from zkf_bits import hex_bits, mask, pow2_fraction, signed_to_bits
 from zkf_operands import directed_numbers, random_inf, random_normal, random_normal_near, random_operand, random_zero
 from zkf_params import cast_context, check_width
 from zkf_stream import RegisterStageScoreboard, check_combinational, drive_unsigned, run_stream_cases, start_clock
-
-# round_mode port codes -> the Zkf methods modeling the float and the integer result of each.
-_METHODS_BY_MODE = (("round", "round_int"), ("floor", "floor_int"), ("ceil", "ceil_int"), ("trunc", "trunc_int"))
 
 
 @dataclass(frozen=True)
 class RintCase:
     label: str
     a: int
-    mode: int
+    mode: RoundMode
     y_float: int
     y_int: int
 
@@ -40,8 +37,8 @@ def add_unique(cases: list[RintCase], seen: set[int], label: str, fmt: ZkfFormat
         return
     seen.add(key)
     value = fmt.wrap(key)
-    for mode, (to_float, to_int) in enumerate(_METHODS_BY_MODE):
-        cases.append(RintCase(label, key, mode, getattr(value, to_float)().bits, getattr(value, to_int)(wint)))
+    for mode in RoundMode:
+        cases.append(RintCase(label, key, mode, value.rint(mode).bits, value.rint_int(wint, mode)))
 
 
 def directed_case_inputs(fmt: ZkfFormat, wint: int) -> list[tuple[str, int]]:

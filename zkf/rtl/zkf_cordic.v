@@ -61,11 +61,11 @@
 //     results (magnitude then theta of the single in-flight transaction, time-multiplexed).
 //
 // Vectoring's arithmetic reuse: ONE folded radix-4 divider (zkf_divsqrt's digit step _zkf_divsqrt_step,
-// STEPS = ceil(XF/2) cycles, 2 quotient bits each) computes Q = floor(num*2**F/den) + sticky for BOTH the residual
-// (num=|y_K|, den=x_K) and the bypass (num=sig_y, den=sig_x); they are mutually exclusive per transaction. The
-// multiplier it shares with rotation computes the magnitude product x_K*KINV (issued DURING the divide, so it costs
-// no latency) and the post-divide Q*INV_TAU (the residual correction, and the bypass theta -- single-rounded via the
-// divide sticky).
+// STEPS = ceil(XF/2) cycles, 2 quotient bits each; see DIVIDE_RADIX) computes Q = floor(num*2**F/den) + sticky for
+// BOTH the residual (num=|y_K|, den=x_K) and the bypass (num=sig_y, den=sig_x); they are mutually exclusive per
+// transaction. The multiplier it shares with rotation computes the magnitude product x_K*KINV (issued DURING the
+// divide, so it costs no latency) and the post-divide Q*INV_TAU (the residual correction, and the bypass theta --
+// single-rounded via the divide sticky).
 //
 // Tuning knobs:
 //
@@ -77,21 +77,34 @@
 // UNROLL100={50,100,200,...}: CORDIC iterations per engine cycle x100. Values <100 split operations across cycles.
 //     Choose the maximum value that closes timings. It is forwarded to _zkf_cordic_core; refer there for details.
 //
+// DIVIDE_RADIX={4,2}: 2 makes vectoring's divider take one quotient bit per cycle instead of two: one subtraction per
+//     step, not three.
+//
 // STAGE_INPUT: Register the inputs before the decode; values >1 add dummy stages for routing-congested designs.
-//     Value = latency cycle cost.
 //
-// STAGE_PRODUCT: Pipeline depth of the shared multiplier; see _zkf_pmul. Each unit costs one cycle in vectoring and
-//     up to two in rotation, which issues two dependent products.
+// STAGE_PRODUCT: Pipeline depth of the shared multiplier; see _zkf_pmul. A rotation passes through it twice, for its
+//     two dependent products.
 //
-// STAGE_NORMALIZE={0,1,2}: Register barriers inside the shared normalizer. Value = latency cycle cost.
+// STAGE_NORMALIZE={0,1,2,3}: Register barriers inside the shared normalizer; 3 also registers its input, behind the
+//     select of the result it takes.
 //
-// STAGE_PACK={0,1,2}: 1 registers the shared rounder's input, 2 also its rounded output. Value = latency cycle cost.
+// STAGE_PACK={0,1,2}: 1 registers the shared rounder's input, 2 also its rounded output.
 //
-// STAGE_OUTPUT={0,1}: Register the results ahead of the out_ready hold (+1 cycle).
-//
-// LATENCY_ROTATION, LATENCY_VECTORING: each mode's accept-to-out_valid latency, checked like LATENCY elsewhere.
+// STAGE_OUTPUT={0,1}: Register the results ahead of the out_ready hold.
 //
 // PARALLEL: Testing-only knob, DO NOT override.
+//
+// Each mode's accept-to-out_valid latency, checked like LATENCY elsewhere:
+//
+// N                 = ((WMAN + 1) / 2) + 2
+// XYCYC             = (N * 100 + UNROLL100 - 1) / UNROLL100
+// SAVED             = (PARALLEL == 0) ? 0 : (((XYCYC - N) < (1 + STAGE_PRODUCT)) ? (XYCYC - N) : (1 + STAGE_PRODUCT))
+// XF                = ((3 * WMAN + 1) / 2) + 6
+// STEPS             = (XF + 1) / 2
+// DVCYC             = (DIVIDE_RADIX == 2) ? (2 * STEPS) : STEPS
+// STAGES            = STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT
+// LATENCY_ROTATION  = 11 + (2 * STAGE_PRODUCT) + XYCYC - SAVED + STAGES
+// LATENCY_VECTORING = 7 + XYCYC + (DVCYC + 1) + STAGE_PRODUCT + STAGES
 
 `default_nettype none
 
@@ -108,6 +121,7 @@ module zkf_cordic #(
     parameter LATENCY_ROTATION  = 0,
     parameter LATENCY_VECTORING = 0,
     parameter MODE              = 2,
+    parameter DIVIDE_RADIX      = 4,
     parameter PARALLEL          = (MODE != 1) && (UNROLL100 < 100)
 ) (
     input  wire                 clk,
@@ -185,14 +199,18 @@ module zkf_cordic #(
     localparam integer SAVED  = (PARALLEL == 0) ? 0
                               : (((XYCYC - N) < (1 + STAGE_PRODUCT)) ? (XYCYC - N) : (1 + STAGE_PRODUCT));
     localparam integer STAGES = STAGE_INPUT + STAGE_NORMALIZE + STAGE_PACK + STAGE_OUTPUT;
+    localparam integer DVCYC  = (DIVIDE_RADIX == 2) ? F : STEPS;
     localparam LATENCY_ROTATION_REF  = 11 + (2 * STAGE_PRODUCT) + XYCYC - SAVED + STAGES;
-    localparam LATENCY_VECTORING_REF = 7 + XYCYC + (STEPS + 1) + STAGE_PRODUCT + STAGES;
+    localparam LATENCY_VECTORING_REF = 7 + XYCYC + (DVCYC + 1) + STAGE_PRODUCT + STAGES;
     generate
         // Vectoring: turn8's octant constants are normal only while BIAS-3 >= 1, and at WEXP 2 theta's codomain sits
         // below min_normal; WEXP 4 is out of scope. BIAS's unsized integer shift caps WEXP at 30, and nothing
         // downstream refuses more.
         if (((MODE != 0) && (WEXP < 5)) || (WEXP >= 31)) begin : g_invalid_wexp_or_wman
             _zkf_invalid_wexp_or_wman u_invalid();
+        end
+        if ((DIVIDE_RADIX != 4) && (DIVIDE_RADIX != 2)) begin : g_invalid_divide_radix
+            _zkf_invalid_divide_radix u_invalid();
         end
         if (((MODE != 1) && (LATENCY_ROTATION != 0) && (LATENCY_ROTATION != LATENCY_ROTATION_REF)) ||
             ((MODE != 0) && (LATENCY_VECTORING != 0) && (LATENCY_VECTORING != LATENCY_VECTORING_REF)))
@@ -478,7 +496,7 @@ module zkf_cordic #(
 
         if (MODE != 0) begin : g_vec
             localparam integer GUARD_DIV = 8;                  // zkf_trig.py's GUARD_DIV
-            localparam integer WCNT      = $clog2(STEPS + 1);
+            localparam integer WCNT      = $clog2(DVCYC + 1);
             localparam integer WPMUL     = WA_MUL + WKINV_MAG;
             localparam signed [WZ+1:0] QUARTER = {{(WZ+2-(ZF-1)){1'b0}}, 1'b1, {(ZF-2){1'b0}}};
             localparam signed [WZ+1:0] HALF    = {{(WZ+2-ZF){1'b0}}, 1'b1, {(ZF-1){1'b0}}};
@@ -588,15 +606,24 @@ module zkf_cordic #(
             reg                  dv_yneg;
             reg [WCNT-1:0]       dv_cnt;
             reg [WX-1:0]         dv_rem, dv_den;
-            reg [WX+1:0]         dv_den3;
             reg [WQUO-1:0]       dv_quo;
             wire [WX-1:0] den_arm = d_bypass ? {{(WX-WMAN){1'b0}}, d_den_sig} : ce_xn;
-            wire [WX-1:0] step_rem_next;
-            wire [1:0]      step_digit;
-            _zkf_divsqrt_step #(.WW(WX), .MODE(0)) u_step (
-                .sqrt(1'b0), .w(dv_rem), .d(dv_den), .d3(dv_den3), .inj(3'b000),
-                .digit(step_digit), .w_next(step_rem_next), .d_next(), .d3_next()
-            );
+            wire [WX-1:0]   step_rem_next;
+            wire [WQUO-1:0] step_quo_next;
+            if (DIVIDE_RADIX != 2) begin : g_radix4
+                reg  [WX+1:0] dv_den3;
+                wire [1:0]    step_digit;
+                always @(posedge clk) if (cd_done) dv_den3 <= {1'b0, den_arm, 1'b0} + {2'b00, den_arm};
+                _zkf_divsqrt_step #(.WW(WX), .MODE(0)) u_step (
+                    .sqrt(1'b0), .w(dv_rem), .d(dv_den), .d3(dv_den3), .inj(3'b000),
+                    .digit(step_digit), .w_next(step_rem_next), .d_next(), .d3_next()
+                );
+                assign step_quo_next = {dv_quo[WQUO-3:0], step_digit};
+            end else begin : g_radix2
+                wire [WX:0] t = {dv_rem, 1'b0} - {1'b0, dv_den};
+                assign step_rem_next = t[WX] ? {dv_rem[WX-2:0], 1'b0} : t[WX-1:0];
+                assign step_quo_next = {dv_quo[WQUO-2:0], ~t[WX]};
+            end
             always @(posedge clk) begin
                 if (rst) begin
                     dv_valid <= 1'b0;
@@ -608,7 +635,7 @@ module zkf_cordic #(
                     if (cd_done) begin
                         dv_run   <= 1'b1;
                     end else if (dv_run) begin
-                        if (dv_cnt == (STEPS - 1)) begin
+                        if (dv_cnt == (DVCYC - 1)) begin
                             dv_run   <= 1'b0;
                             dv_valid <= 1'b1;
                         end
@@ -621,10 +648,9 @@ module zkf_cordic #(
                     dv_rem <= d_bypass ? {{(WX-WMAN){1'b0}}, d_byp_irem} : be_ykabs;
                     dv_den <= den_arm;
                     dv_quo <= {{(WQUO-1){1'b0}}, d_bypass & d_byp_ibit};
-                    dv_den3 <= {1'b0, den_arm, 1'b0} + {2'b00, den_arm};
                 end else if (dv_run) begin
                     dv_rem <= step_rem_next;
-                    dv_quo <= {dv_quo[WQUO-3:0], step_digit};
+                    dv_quo <= step_quo_next;
                     dv_cnt <= dv_cnt + 1'b1;
                 end
             end
@@ -647,11 +673,11 @@ module zkf_cordic #(
                 if (!rst && cd_done && !d_special && (ce_xn == {WX{1'b0}}))
                     $fatal(1, "%m: residual divisor x_K == 0 for a non-special transaction");
                 if (!rst && cd_done && !d_special && !d_bypass && ({1'b0, be_ykabs} >= {1'b0, ce_xn}))
-                    $fatal(1, "%m: residual |y_K| >= x_K at arm -- radix-4 divide precondition violated");
+                    $fatal(1, "%m: residual |y_K| >= x_K at arm -- divide precondition violated");
             end
 `endif
 
-            // MAG and QT are issued STEPS cycles apart, so they never collide in the multiplier.
+            // MAG and QT are issued a divide apart, so they never collide in the multiplier.
             localparam [0:0] TAG_MAG = 1'b0, TAG_QT = 1'b1;
             assign vec_pm_iv = mag_issue | dv_valid;
             assign vec_pm_sb = dv_valid ? TAG_QT : TAG_MAG;
@@ -803,23 +829,34 @@ module zkf_cordic #(
     endgenerate
     `undef ZKF_CORDIC_TABLE
     _zkf_pmul #(
-        .WA(WA_PM), .WB(WB_PM), .A_SIGNED(MODE != 1), .B_SIGNED(MODE != 1), .WSB(WSB_PM),
+        .WA(WA_PM), .WB(WB_PM), .SIGNED(MODE != 1), .WSB(WSB_PM),
         .WMULTIPLIER(WMULTIPLIER), .STAGE_PRODUCT(STAGE_PRODUCT)
     ) u_pmul (
         .clk(clk), .rst(rst), .in_valid(rot_pm_iv | vec_pm_iv), .sb_in(own_vec ? vec_pm_sb : rot_pm_sb),
         .a(own_vec ? vec_pm_a : rot_pm_a), .b(own_vec ? vec_pm_b : rot_pm_b),
         .out_valid(pm_valid), .sb_out(pm_sb), .p(pm_p)
     );
+    wire                     pi_valid, pi_sign, pi_inf;
+    wire signed [WEU_PK-1:0] pi_exp;
+    wire [WMAG_PK-1:0]       pi_mag;
+    wire [WSB_PK-1:0]        pi_sb;
+    zkf_pipe #(.W(2 + WEU_PK + WMAG_PK + WSB_PK), .N(STAGE_NORMALIZE == 3)) u_pack_input (
+        .clk(clk), .rst(rst), .in_valid(rot_pk_iv | vec_pk_iv),
+        .in({
+            own_vec ? vec_pk_sign : rot_pk_sign, ~own_vec & rot_pk_inf, own_vec ? vec_pk_exp : rot_pk_exp,
+            own_vec ? vec_pk_mag : rot_pk_mag, own_vec ? vec_pk_sb : rot_pk_sb
+        }),
+        .out_valid(pi_valid), .out({pi_sign, pi_inf, pi_exp, pi_mag, pi_sb})
+    );
     _zkf_fixed_to_float #(
         .WEXP(WEXP), .WMAN(WMAN), .WMAG(WMAG_PK), .WEU(WEU_PK), .EXP_IS_BIASED(MODE != 0),
         .ASSUME_NO_OVERFLOW(MODE == 0), .SATURATE_ROUND_CARRY(MODE != 0), .WSB(WSB_PK),
-        .STAGE_NORMALIZE(STAGE_NORMALIZE), .STAGE_PACK((STAGE_PACK == 2) ? 1 : STAGE_PACK),
-        .STAGE_OUTPUT(STAGE_PACK == 2)
+        .STAGE_NORMALIZE((STAGE_NORMALIZE == 3) ? 2 : STAGE_NORMALIZE),
+        .STAGE_PACK((STAGE_PACK == 2) ? 1 : STAGE_PACK), .STAGE_OUTPUT(STAGE_PACK == 2)
     ) u_f2f (
         .clk(clk), .rst(rst),
-        .in_valid(rot_pk_iv | vec_pk_iv), .sign(own_vec ? vec_pk_sign : rot_pk_sign), .force_zero(1'b0),
-        .force_inf(~own_vec & rot_pk_inf), .exp_offset(own_vec ? vec_pk_exp : rot_pk_exp),
-        .mag(own_vec ? vec_pk_mag : rot_pk_mag), .sb_in(own_vec ? vec_pk_sb : rot_pk_sb),
+        .in_valid(pi_valid), .sign(pi_sign), .force_zero(1'b0), .force_inf(pi_inf), .exp_offset(pi_exp),
+        .mag(pi_mag), .sb_in(pi_sb),
         .out_valid(pk_valid), .y(pk_y), .sb_out(pk_sb)
     );
 

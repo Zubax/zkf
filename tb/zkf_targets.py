@@ -28,6 +28,7 @@ FILESETS: dict[str, list[str]] = {
         "zkf/rtl/zkf_pipe.v",
         "zkf/rtl/_zkf_normshift.v",
         "zkf/rtl/_zkf_rshift_sticky.v",
+        "zkf/rtl/_zkf_add_core.v",
         "zkf/rtl/zkf_add.v",
     ],
     "rtl_fma": [
@@ -36,6 +37,7 @@ FILESETS: dict[str, list[str]] = {
         "zkf/rtl/_zkf_pmul.v",
         "zkf/rtl/_zkf_normshift.v",
         "zkf/rtl/_zkf_rshift_sticky.v",
+        "zkf/rtl/_zkf_add_core.v",
         "zkf/rtl/zkf_fma.v",
     ],
     "rtl_divsqrt": [
@@ -50,15 +52,6 @@ FILESETS: dict[str, list[str]] = {
     "rtl_absneg": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_absneg.v"],
     "rtl_finite": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_finite.v"],
     "rtl_cmp": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_cmp.v"],
-    "rtl_sort": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_cmp.v", "zkf/rtl/zkf_sort.v"],
-    "rtl_addsub": [
-        "zkf/rtl/_zkf_pack.v",
-        "zkf/rtl/zkf_pipe.v",
-        "zkf/rtl/_zkf_normshift.v",
-        "zkf/rtl/_zkf_rshift_sticky.v",
-        "zkf/rtl/zkf_add.v",
-        "zkf/rtl/zkf_addsub.v",
-    ],
     "rtl_ilog2": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_ilog2.v"],
     "rtl_mul_ilog2": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_mul_ilog2.v"],
     "rtl_from_int": [
@@ -71,21 +64,15 @@ FILESETS: dict[str, list[str]] = {
     "rtl_resize": ["zkf/rtl/_zkf_pack.v", "zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_resize.v"],
     "rtl_rint": ["zkf/rtl/zkf_pipe.v", "zkf/rtl/zkf_rint.v"],
     "rtl_exp2": [
-        "zkf/rtl/_zkf_pack.v",
         "zkf/rtl/zkf_pipe.v",
         "zkf/rtl/_zkf_pmul.v",
-        "zkf/rtl/_zkf_rshift_sticky.v",
-        "zkf/rtl/_zkf_horner.v",
         *_EXP2_TABLES,
         "zkf/rtl/zkf_exp2.v",
     ],
     "rtl_log2": [
-        "zkf/rtl/_zkf_pack.v",
         "zkf/rtl/zkf_pipe.v",
         "zkf/rtl/_zkf_pmul.v",
         "zkf/rtl/_zkf_normshift.v",
-        "zkf/rtl/_zkf_fixed_to_float.v",
-        "zkf/rtl/_zkf_horner.v",
         *_LOG2_TABLES,
         "zkf/rtl/zkf_log2.v",
     ],
@@ -132,13 +119,11 @@ TARGETS: dict[str, Target] = {
     "sim_pack": _t("_zkf_pack", "test_pack", "rtl_pack"),
     "sim_mul": _t("zkf_mul", "test_mul", "rtl_mul"),
     "sim_add": _t("zkf_add", "test_add", "rtl_add"),
-    "sim_addsub": _t("zkf_addsub", "test_addsub", "rtl_addsub"),
     "sim_fma": _t("zkf_fma", "test_fma", "rtl_fma"),
     "sim_divsqrt": _t("zkf_divsqrt", "test_divsqrt", "rtl_divsqrt"),
     "sim_absneg": _t("zkf_absneg", "test_absneg", "rtl_absneg"),
     "sim_finite": _t("zkf_finite", "test_finite", "rtl_finite"),
     "sim_cmp": _t("zkf_cmp", "test_cmp", "rtl_cmp"),
-    "sim_sort": _t("zkf_sort", "test_sort", "rtl_sort"),
     "sim_pipe": _t("zkf_pipe", "test_pipe", "rtl_pipe"),
     "sim_normshift": _t("_zkf_normshift", "test_normshift", "rtl_normshift"),
     "sim_rshift": _t("_zkf_rshift_sticky", "test_rshift", "rtl_rshift"),
@@ -154,5 +139,4 @@ TARGETS: dict[str, Target] = {
     # Algebraic-property suite: same RTL as the direct operator targets, but the test_properties cocotb module.
     "sim_properties_mul": _t("zkf_mul", "test_properties", "rtl_mul"),
     "sim_properties_add": _t("zkf_add", "test_properties", "rtl_add"),
-    "sim_properties_addsub": _t("zkf_addsub", "test_properties", "rtl_addsub"),
 }

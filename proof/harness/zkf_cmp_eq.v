@@ -1,4 +1,4 @@
-// Formal harness: zkf_cmp DUT vs. zkf_cmp_ref (case-analysis reference).
+// Formal harness: zkf_cmp DUT vs. zkf_cmp_ref (case-analysis reference); min/max must order the operands by it.
 // LATENCY is supplied by run_proofs.py from the shared Python model. At LATENCY 0 the DUT is checked as combinational
 // logic under any rst and in_valid; otherwise through the single-pulse driver against the shadowed operands.
 
@@ -27,14 +27,15 @@ module zkf_cmp_eq #(
         b_shadow <= b;
     end
 
-    wire dut_valid, dut_gt, dut_eq, dut_lt;
+    wire             dut_valid, dut_gt, dut_eq, dut_lt;
+    wire [WFULL-1:0] dut_min, dut_max;
     zkf_cmp #(
         .WEXP(WEXP), .WMAN(WMAN), .STAGE_INPUT(STAGE_INPUT), .STAGE_OUTPUT(STAGE_OUTPUT), .LATENCY(LATENCY)
     ) u_dut (
         .clk(clk), .rst(rst), .in_valid(in_valid),
         .a(a), .b(b),
         .out_valid(dut_valid),
-        .a_gt_b(dut_gt), .a_eq_b(dut_eq), .a_lt_b(dut_lt)
+        .a_gt_b(dut_gt), .a_eq_b(dut_eq), .a_lt_b(dut_lt), .min(dut_min), .max(dut_max)
     );
 
     // Second DUT instance with the operands swapped. Lets the harness prove anti-symmetry
@@ -47,7 +48,7 @@ module zkf_cmp_eq #(
         .clk(clk), .rst(rst), .in_valid(in_valid),
         .a(b), .b(a),
         .out_valid(dut_swap_valid),
-        .a_gt_b(dut_swap_gt), .a_eq_b(dut_swap_eq), .a_lt_b(dut_swap_lt)
+        .a_gt_b(dut_swap_gt), .a_eq_b(dut_swap_eq), .a_lt_b(dut_swap_lt), .min(), .max()
     );
 
     wire dut_self_valid, dut_self_gt, dut_self_eq, dut_self_lt;
@@ -57,16 +58,19 @@ module zkf_cmp_eq #(
         .clk(clk), .rst(rst), .in_valid(in_valid),
         .a(a), .b(a),
         .out_valid(dut_self_valid),
-        .a_gt_b(dut_self_gt), .a_eq_b(dut_self_eq), .a_lt_b(dut_self_lt)
+        .a_gt_b(dut_self_gt), .a_eq_b(dut_self_eq), .a_lt_b(dut_self_lt), .min(), .max()
     );
 
+    wire [WFULL-1:0] a_ref = (LATENCY == 0) ? a : a_shadow;
+    wire [WFULL-1:0] b_ref = (LATENCY == 0) ? b : b_shadow;
     wire ref_gt, ref_eq, ref_lt;
     zkf_cmp_ref #(.WEXP(WEXP), .WMAN(WMAN)) u_ref (
-        .a((LATENCY == 0) ? a : a_shadow), .b((LATENCY == 0) ? b : b_shadow),
+        .a(a_ref), .b(b_ref),
         .a_gt_b(ref_gt), .a_eq_b(ref_eq), .a_lt_b(ref_lt)
     );
 
     wire results_ok = (dut_gt == ref_gt) && (dut_eq == ref_eq) && (dut_lt == ref_lt) &&
+                      (dut_min == (ref_lt ? a_ref : b_ref)) && (dut_max == (ref_lt ? b_ref : a_ref)) &&
                       ((dut_gt + dut_eq + dut_lt) == 3'd1) &&
                       (dut_gt == dut_swap_lt) && (dut_lt == dut_swap_gt) && (dut_eq == dut_swap_eq) &&
                       dut_self_eq && !dut_self_gt && !dut_self_lt;

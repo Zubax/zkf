@@ -39,6 +39,19 @@ class CmpResult(NamedTuple):
     lt: bool
     eq: bool
     gt: bool
+    min: Zkf
+    max: Zkf
+
+
+def _pack_fixed(fmt: ZkfFormat, sign: int, exp: int, v: int, point: int) -> int:
+    """
+    The float nearest to (-1)**sign * 2**exp * v / 2**point, v > 0, a tie rounding away from zero (zkf_exp2.v and
+    zkf_log2.v say why), classified as _zkf_pack does.
+    """
+    drop = v.bit_length() - fmt.wman  # bits below the significand
+    assert drop >= 1
+    # With its round bit set the packer rounds up exactly when the guard bit is.
+    return pack_reference(fmt, sign, 0, 0, exp + v.bit_length() - 1 - point, v >> drop, (v >> (drop - 1)) & 1, 1, 0)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -101,33 +114,27 @@ class Zkf:
 
     def round_int(self, wint: int) -> int:
         """Round to the nearest signed wint-bit integer, ties to even, with saturation."""
-        return self._round_to_int(wint, RoundMode.NEAREST_EVEN)
+        return self.rint_int(wint, RoundMode.NEAREST_EVEN)
 
     def floor_int(self, wint: int) -> int:
         """Round toward -inf to a signed wint-bit integer with saturation."""
-        return self._round_to_int(wint, RoundMode.FLOOR)
+        return self.rint_int(wint, RoundMode.FLOOR)
 
     def ceil_int(self, wint: int) -> int:
         """Round toward +inf to a signed wint-bit integer with saturation."""
-        return self._round_to_int(wint, RoundMode.CEIL)
+        return self.rint_int(wint, RoundMode.CEIL)
 
     def trunc_int(self, wint: int) -> int:
         """Round toward zero to a signed wint-bit integer with saturation."""
-        return self._round_to_int(wint, RoundMode.TRUNC)
+        return self.rint_int(wint, RoundMode.TRUNC)
 
-    def _round_to_int(self, wint: int, mode: RoundMode) -> int:
+    def rint_int(self, wint: int, mode: RoundMode) -> int:
+        """Round per mode to a signed wint-bit integer with saturation (zkf_rint's y_int)."""
         int_max = signed_int_max(wint)
         int_min = signed_int_min(wint)
         if self.is_inf:
             return int_min if self.negative else int_max
-        if self.is_zero:
-            return 0
-        rounded = round_signed_fraction_to_int(self.to_fraction(), mode)
-        if rounded > int_max:
-            return int_max
-        if rounded < int_min:
-            return int_min
-        return rounded
+        return max(int_min, min(int_max, round_signed_fraction_to_int(self.to_fraction(), mode)))
 
     def __float__(self) -> float:
         if self.is_inf:
@@ -351,46 +358,33 @@ class Zkf:
 
     def round(self) -> Zkf:
         """Round to the nearest integral value, ties to even (the zkf_rint RNTE mode)."""
-        return self._round_to_integral(RoundMode.NEAREST_EVEN)
+        return self.rint(RoundMode.NEAREST_EVEN)
 
     def floor(self) -> Zkf:
         """Round toward -inf to an integral value (the zkf_rint floor mode)."""
-        return self._round_to_integral(RoundMode.FLOOR)
+        return self.rint(RoundMode.FLOOR)
 
     def ceil(self) -> Zkf:
         """Round toward +inf to an integral value (the zkf_rint ceil mode)."""
-        return self._round_to_integral(RoundMode.CEIL)
+        return self.rint(RoundMode.CEIL)
 
     def trunc(self) -> Zkf:
         """Round toward zero to an integral value (the zkf_rint trunc mode)."""
-        return self._round_to_integral(RoundMode.TRUNC)
+        return self.rint(RoundMode.TRUNC)
 
-    def _round_to_integral(self, mode: RoundMode) -> Zkf:
-        """Round to an integral value in the same format per mode (zkf_rint's y_float)."""
-        fmt = self.fmt
+    def rint(self, mode: RoundMode) -> Zkf:
+        """Round per mode to an integral value in the same format (zkf_rint's y_float)."""
         if self.is_inf:
-            return Zkf(fmt, canonical_inf(fmt, self.negative))
-        if self.is_zero:
-            return Zkf(fmt, zero(fmt))
-        rounded = round_signed_fraction_to_int(self.to_fraction(), mode)
-        if rounded == 0:
-            return Zkf(fmt, zero(fmt))
-        return Zkf(fmt, round_fraction_to_zkf(fmt, int(rounded < 0), Fraction(abs(rounded))))
+            return self.fmt.inf(self.negative)
+        return self.fmt.encode(round_signed_fraction_to_int(self.to_fraction(), mode))
 
     def cmp(self, other: Zkf) -> CmpResult:
         """Numeric comparison mirroring the RTL zkf_cmp (total order over the format)."""
         self._require_same(other)
         a_key = ordered_key(self.fmt, self.bits)
         b_key = ordered_key(self.fmt, other.bits)
-        return CmpResult(a_key < b_key, a_key == b_key, a_key > b_key)
-
-    def sort(self, other: Zkf) -> tuple[Zkf, Zkf]:
-        """Return (min, max) of the pair by numeric order (the zkf_sort operator)."""
-        self._require_same(other)
-        lt = self.cmp(other).lt
-        a_bits, b_bits = self.bits, other.bits
-        lo, hi = (a_bits, b_bits) if lt else (b_bits, a_bits)
-        return Zkf(self.fmt, lo), Zkf(self.fmt, hi)
+        lt = a_key < b_key
+        return CmpResult(lt, a_key == b_key, a_key > b_key, self if lt else other, other if lt else self)
 
     def exp2(self) -> Zkf:
         """2 ** self (the zkf_exp2 operator)."""
@@ -407,30 +401,24 @@ class Zkf:
             return Zkf(fmt, canonical_inf(fmt, 0) if not d.negative else zero(fmt))
 
         cf, rw = spec["cf"], spec["rw"]
-        ff = spec["k"] + rw  # full reduced-argument width FF = K + RW
+        ff = spec["k"] + rw  # fraction bits of the reduced argument
         sig = significand(fmt, bits)
         shift = e - fmt.wfrac + ff
-        if shift >= 0:
-            mfix = sig << shift
-            lost_sticky = 0
-        else:
-            rs = -shift
-            mfix = sig >> rs
-            lost_sticky = 1 if (sig & mask(rs)) else 0
-        v = -mfix if d.negative else mfix
-        i = v >> ff  # arithmetic floor -> integer part of x
-        f = v & mask(ff)  # fractional part in [0, 2^FF)
-
-        acc = horner_eval(spec["coeffs"][(f >> rw) - spec.get("seg_base", 0)], f & mask(rw), rw)
-        significand_value = (acc >> (cf - fmt.wfrac)) & mask(fmt.wman)
-        guard = (acc >> (cf - fmt.wman)) & 1
-        round_bit = (acc >> (cf - fmt.wman - 1)) & 1
-        sticky = (1 if (acc & mask(cf - fmt.wman - 1)) else 0) | lost_sticky
-        return Zkf(fmt, pack_reference(fmt, 0, 0, 0, i, significand_value, guard, round_bit, sticky))
+        mag = (sig << shift) if shift >= 0 else (sig >> -shift)  # floor(|x| * 2**FF)
+        # x = i + f, f in [0, 1), as _zkf_exp2_reduce forms them.
+        i, f = mag >> ff, mag & mask(ff)
+        if d.negative:
+            i, f = -i - 1, f ^ mask(ff)
+        s = trans_kernel("exp2", spec, spec["coeffs"][f >> rw], f & mask(rw))  # 2**f, half an ULP included
+        assert 1 <= s >> cf < 4, "exp2 kernel range"
+        assert not (s >> (cf + 1) and (s >> (cf - fmt.wfrac)) & fmt.frac_mask), "exp2 round-up with a nonzero fraction"
+        # Without the half ULP; 2**f is 1 at least, and 2 where it rounds up to it, as 2**x of a negative integer.
+        v = 1 << (cf + 1) if s >> (cf + 1) else max(s - (1 << (cf - fmt.wman)), 1 << cf)
+        return Zkf(fmt, _pack_fixed(fmt, 0, i, v, cf))
 
     def log2(self) -> Log2Result:
         """log2(self) plus the domain-error (self<0) and pole (self==0) status flags."""
-        fmt, bits = self.fmt, self.bits
+        fmt = self.fmt
         spec = trans_spec("log2", fmt.wman)
         d = self
         if d.is_inf and not d.negative:
@@ -440,36 +428,40 @@ class Zkf:
         if d.negative:
             return Log2Result(Zkf(fmt, canonical_inf(fmt, 1)), True, False)  # log2(x<0) = -inf, domain error
 
-        e = d.exp - fmt.bias
-        cf, rw = spec["cf"], spec["rw"]
-
-        # Symmetric argument reduction (mirrors the phase-2 RTL re-center; defines the bit-exact contract). x = m*2^e,
-        # m = sig/2^WFRAC in [1,2). If m >= sqrt(2), halve m and increment e so m' in [sqrt(1/2), sqrt(2)). At scale
-        # 2^-(WFRAC+1): v = f + 1/2 is the unsigned segment index, f_signed = m'-1 (= f) the signed combine operand.
-        sig = significand(fmt, bits)  # WMAN-bit significand, m = sig / 2^WFRAC in [1,2)
-        if sig >= trans_sqrt2_threshold(fmt.wfrac):  # m >= sqrt(2): re-center into [sqrt(1/2), sqrt(2))
-            e += 1
-            v = d.frac  # = sig - 2^WFRAC
-            f_signed = d.frac - (1 << fmt.wfrac)  # < 0
+        # x = m' * 2**e with the significand re-centered around 1 (see zkf_log2.v), f = m' - 1, log2(m') = f * C(f).
+        cf, rw, wfrac, wexp = spec["cf"], spec["rw"], fmt.wfrac, fmt.wexp
+        seg = d.frac >> rw
+        rc = int(seg >= spec["thr"])
+        e = d.exp - fmt.bias + rc
+        fmag = ((1 << wfrac) - d.frac) if rc else d.frac  # |f| at scale 2**-(WFRAC + rc)
+        c = trans_kernel("log2", spec, spec["coeffs"][seg], d.frac & mask(rw))  # C(f) at scale 2**-CF
+        assert c >> cf == 1, "log2 kernel range"
+        # The alignment of zkf_log2.v: the result leads at bit FB of the final sum or one below it.
+        g2, gb = spec["g2"], spec["gb"]
+        fb = wfrac + cf + g2
+        if e == 0:
+            if fmag == 0:
+                return Log2Result(Zkf(fmt, zero(fmt)), False, False)  # log2(1) = +0
+            lz = wfrac - fmag.bit_length()
+            operand, shift, e_al, at, e_hi, sub, sign = fmag << lz, 1, 0, fb, -lz - rc, False, rc
         else:
-            v = (1 << fmt.wfrac) + (d.frac << 1)  # = 2*sig - 2^WFRAC
-            f_signed = d.frac << 1  # = 2*frac, >= 0
-
-        acc = horner_eval(spec["coeffs"][(v >> rw) - spec.get("seg_base", 0)], v & mask(rw), rw)
-        f2 = fmt.wfrac + 1 + cf  # f is at scale 2^-(WFRAC+1)
-        l_signed = f_signed * acc  # log2(m') = f * C(f), signed, at scale 2^-f2
-        r = (e << f2) + l_signed  # signed fixed point e + log2(m')
-        sign_out = 1 if r < 0 else 0
-        magnitude = -r if r < 0 else r
-        w_norm = fmt.wexp + f2 + 1
-        zero_flag, count, aligned = normshift_reference(w_norm, magnitude)
-        significand_value = (aligned >> (w_norm - fmt.wman)) & mask(fmt.wman)
-        guard = (aligned >> (w_norm - fmt.wman - 1)) & 1
-        round_bit = (aligned >> (w_norm - fmt.wman - 2)) & 1
-        sticky = 1 if (aligned & mask(w_norm - fmt.wman - 2)) else 0
-        exp_unbiased = (w_norm - 1 - count) - f2
-        y = pack_reference(fmt, sign_out, zero_flag, 0, exp_unbiased, significand_value, guard, round_bit, sticky)
-        return Log2Result(Zkf(fmt, y), False, False)
+            sub, sign = (e > 0) == bool(rc), int(e < 0)
+            if abs(e) == 1 << (wexp - 1):
+                p = wexp - 2
+            elif sub and abs(e) == 1 and fmag:
+                p = -1
+            else:
+                p = abs(e).bit_length() - 1
+            operand, shift, e_al, at, e_hi = fmag, rc + p + 1, abs(e), fb - p, p
+        # The sum keeps GB bits below the lower of the two rounding positions, and every bit of |e|: only an exponent
+        # wider than zkf_log2 can be built for has any below them.
+        low = min(cf + g2 - 2 - gb, at)
+        prod = operand * ((c << (g2 + 1)) >> shift)
+        prod = prod >> low if low >= 0 else prod << -low
+        e_al, fb = e_al << (at - low), fb - low
+        v = (e_al - prod) if sub else (e_al + prod)
+        assert 1 << (fb - 1) <= v <= 1 << (fb + 1), "log2 leading-one prediction"
+        return Log2Result(Zkf(fmt, _pack_fixed(fmt, sign, e_hi, v, fb)), False, False)
 
     def sincos(self) -> SinCos:
         """(sin(2*pi*self), cos(2*pi*self), quadrant) -- zkf_cordic's rotation."""

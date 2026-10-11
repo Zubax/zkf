@@ -226,22 +226,46 @@ def trans_spec(func: str, wman: int) -> dict:
         raise UnsupportedFormat(f"no {func} table for WMAN={wman}; supported: {supported}") from None
 
 
-def trans_sqrt2_threshold(wfrac: int) -> int:
+def trans_kernel(func: str, spec: dict, row: list[int], w: int) -> int:
     """
-    Integer significand threshold for the log2 symmetric-reduction re-center test m >= sqrt(2) (m = sig/2^WFRAC,
-    sig the WMAN-bit significand): re-center iff sig >= THR with THR = round(sqrt(2) * 2**WFRAC). Computed
-    exactly with integer isqrt (round-to-nearest), and MUST equal the generator's log2_sqrt2_threshold and the phase-2
-    RTL constant. round(sqrt(S)) for S = 2**(2*WFRAC+1) is (floor(sqrt(4*S)) + 1) // 2 = (isqrt(4*S) + 1) // 2.
+    The table+polynomial kernel of zkf_exp2 / zkf_log2, bit-identical to the generated cores: the segment polynomial
+    c0 +- c1*wn + c2*wn**2 +- ... in wn = w / 2**rw at scale 2**-cf, as c0 +- c1*wn beside the pairs
+    c[2i] +- c[2i+1]*wn chained by wn**2, which is formed once. Every product takes a fixed number of operand bits and
+    is floored; the constants that center those floors, and exp2's half ULP, are part of c0. log2's odd coefficients
+    subtract (the table stores magnitudes).
+
+      t[i]    argument bits (from the top of w) multiplying c[2i+1]
+      tc, sc  degree 2: the argument bits below t[0] multiply c1 >> sc, so the wide product is one tile wide
+      t2, q   argument bits squared; bits of the square taken by each wn**2 product, outermost first
+      th, sg  degree 3, t2 wider than a multiplier tile: the top th bits are squared and multiplied by the rest, the
+              square of the rest is left out, and the sum carries sg bits below the bits taken
+      z3      degree 3: low bits, all zero, that the stored c3 lacks, so that c3*wn is one tile wide
     """
-    return (math.isqrt(1 << (2 * wfrac + 3)) + 1) // 2  # 4*S = 2**(2*wfrac+3)
+    rw, d, t, q, t2 = spec["rw"], spec["d"], spec["t"], spec["q"], spec["t2"]
+    sub = func == "log2"
+    q2 = max(q)
+    wt = w >> (rw - t2)
+    if "th" in spec:
+        tl, base = t2 - spec["th"], 2 * t2 - q2 - spec["sg"]
+        wh, wl = wt >> tl, wt & mask(tl)
+        w2 = (((wh * wh) >> (base - 2 * tl)) + ((wh * wl) >> (base - tl - 1))) >> spec["sg"]
+    else:
+        w2 = (wt * wt) >> (2 * t2 - q2)
 
+    def odd(i: int) -> int:
+        return (row[2 * i + 1] * (w >> (rw - t[i]))) >> t[i]
 
-def horner_eval(coeffs_idx: list[int], w: int, rw: int) -> int:
-    """Truncating fixed-point Horner, bit-identical to zkf/rtl/_zkf_horner.v and the generator."""
-    acc = coeffs_idx[-1]
-    for j in range(len(coeffs_idx) - 2, -1, -1):
-        acc = coeffs_idx[j] + ((acc * w) >> rw)  # Python >> floors, matching arithmetic >>> on signed
-    return acc
+    def signed(x: int) -> int:
+        return -x if sub else x
+
+    lin = odd(0)
+    if "tc" in spec:
+        lin += ((row[1] >> spec["sc"]) * (w & mask(spec["tc"]))) >> (rw - spec["sc"])
+    m = d // 2
+    v = row[2 * m] + (signed(odd(m)) if 2 * m + 1 <= d else 0)
+    for i in range(m - 1, 0, -1):
+        v = row[2 * i] + signed(odd(i)) + ((v * (w2 >> (q2 - q[i]))) >> q[i])
+    return row[0] + signed(lin) + ((v * w2) >> q2)
 
 
 @functools.cache

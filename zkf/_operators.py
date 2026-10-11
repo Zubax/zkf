@@ -131,26 +131,8 @@ class AbsNegModel(_InOutStagedModel):
 
 
 @dataclass(frozen=True)
-class SortModel(OperatorModel):
-    module = "zkf_sort"
-    stage_input: int = 0
-
-    def __post_init__(self) -> None:
-        _check_int_range(self.stage_input, 0, None)
-
-    @property
-    def params(self) -> dict[str, int]:
-        return self._params_with_latency(
-            {"WEXP": self.fmt.wexp, "WMAN": self.fmt.wman, "STAGE_INPUT": self.stage_input}
-        )
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(1 + self.stage_input, 1)
-
-
-@dataclass(frozen=True)
-class _AdderModel(OperatorModel):
+class AddModel(OperatorModel):
+    module = "zkf_add"
     stage_input: int = 0
     stage_decode: int = 0
     stage_align: int = 0
@@ -194,16 +176,6 @@ class _AdderModel(OperatorModel):
             + self.stage_output
         )
         return Timing(latency, 1)
-
-
-@dataclass(frozen=True)
-class AddModel(_AdderModel):
-    module = "zkf_add"
-
-
-@dataclass(frozen=True)
-class AddSubModel(_AdderModel):
-    module = "zkf_addsub"
 
 
 @dataclass(frozen=True)
@@ -328,7 +300,7 @@ class MulIlog2Model(OperatorModel):
         if self.wk is not None:
             _check_format(self, "WK", self.wk, 1)
         _check_int_range(self.stage_input, 0, None)
-        _check_int_range(self.stage_decode, 0, 1)
+        _check_int_range(self.stage_decode, 0, None)
 
     @property
     def _wk(self) -> int:
@@ -520,6 +492,25 @@ class RintModel(OperatorModel):
         return Timing(self.stage_input + self.stage_shift + self.stage_round + self.stage_output, 1)
 
 
+def _trans_kernel_stages(degree: int, product: int, square: int, odd: int, chain: int) -> int:
+    """Stages of a table+polynomial kernel after the ROM's own register; the header of zkf_exp2.v explains the count."""
+    feed = max(square, odd if degree >= 3 else 0)
+    return max(1 + product, feed + (degree // 2) * (1 + chain))
+
+
+def _trans_core_stages(func: str, model: OperatorModel) -> int:
+    """The same for the table of a zkf_exp2 or zkf_log2 model, its product knobs checked."""
+    knobs = (
+        model.stage_product,
+        model.stage_product_square,
+        model.stage_product_odd,
+        model.stage_product_chain,
+    )
+    for value, top in zip(knobs, (4, 5, 4, 4)):
+        _check_int_range(value, 0, top)
+    return _trans_kernel_stages(trans_spec(func, model.fmt.wman)["d"], *knobs)
+
+
 @dataclass(frozen=True)
 class Exp2Model(OperatorModel):
     module = "zkf_exp2"
@@ -529,12 +520,14 @@ class Exp2Model(OperatorModel):
     stage_pack: int = 0
     stage_output: int = 0
     wmultiplier: int = 0
+    stage_product_square: int = 0
+    stage_product_odd: int = 0
+    stage_product_chain: int = 0
 
     def __post_init__(self) -> None:
         _check_format(self, "WEXP", self.fmt.wexp, 2, 30)  # zkf_exp2.v's guard
-        trans_spec("exp2", self.fmt.wman)
+        _trans_core_stages("exp2", self)
         _check_int_range(self.stage_input, 0, None)
-        _check_int_range(self.stage_product, 0, 4)
         for value in (self.stage_reduce, self.stage_pack, self.stage_output):
             _check_int_range(value, 0, 1)
         _check_int_range(self.wmultiplier, 0, None)
@@ -549,6 +542,9 @@ class Exp2Model(OperatorModel):
                 "STAGE_INPUT": self.stage_input,
                 "STAGE_REDUCE": self.stage_reduce,
                 "STAGE_PRODUCT": self.stage_product,
+                "STAGE_PRODUCT_SQUARE": self.stage_product_square,
+                "STAGE_PRODUCT_ODD": self.stage_product_odd,
+                "STAGE_PRODUCT_CHAIN": self.stage_product_chain,
                 "STAGE_PACK": self.stage_pack,
                 "STAGE_OUTPUT": self.stage_output,
             }
@@ -556,64 +552,32 @@ class Exp2Model(OperatorModel):
 
     @property
     def timing(self) -> Timing:
-        degree = trans_spec("exp2", self.fmt.wman)["d"]
-        latency = (
-            self.stage_input
-            + self.stage_reduce
-            + 4
-            + degree * (2 + self.stage_product)
-            + self.stage_pack
-            + self.stage_output
-        )
-        return Timing(latency, 1)
+        core = _trans_core_stages("exp2", self)
+        return Timing(self.stage_input + self.stage_reduce + 1 + core + self.stage_pack + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
 class Log2Model(OperatorModel):
     module = "zkf_log2"
     stage_input: int = 0
-    stage_decode: int = 0
     stage_product: int = 0
-    stage_product_final: int | None = None
-    stage_normalize: int = 0
-    stage_normalize_output: int = 0
+    stage_align: int = 0
+    stage_product_final: int = 0
     stage_pack: int = 0
     stage_output: int = 0
     wmultiplier: int = 0
+    stage_product_square: int = 0
+    stage_product_odd: int = 0
+    stage_product_chain: int = 0
 
     def __post_init__(self) -> None:
-        _check_format(self, "WEXP", self.fmt.wexp, 2, 30)  # zkf_log2.v's guard
-        spec = trans_spec("log2", self.fmt.wman)
+        _check_format(self, "WEXP", self.fmt.wexp, 2, min(30, self.fmt.wman + 1))  # zkf_log2.v's guards
+        _trans_core_stages("log2", self)
         _check_int_range(self.stage_input, 0, None)
-        _check_int_range(self.stage_product, 0, 4)
-        if self.stage_product_final is not None:
-            _check_int_range(self.stage_product_final, 0, 4)
-        _check_int_range(self.stage_decode, 0, 1)
-        norm_width = self.fmt.wexp + self.fmt.wfrac + spec["cf"]
-        _check_int_range(self.stage_normalize, 0, 2)
-        if self.stage_normalize == 2 and norm_width < 17:
-            raise ValueError(f"STAGE_NORMALIZE=2 needs _zkf_normshift W>=17 (got {norm_width}); split=2 needs NL4>=3")
-        for value in (self.stage_normalize_output, self.stage_pack, self.stage_output):
+        _check_int_range(self.stage_product_final, 0, 4)
+        for value in (self.stage_align, self.stage_pack, self.stage_output):
             _check_int_range(value, 0, 1)
         _check_int_range(self.wmultiplier, 0, None)
-
-    @property
-    def _stage_product_final(self) -> int:
-        return self.stage_product if self.stage_product_final is None else self.stage_product_final
-
-    @property
-    def config(self) -> dict[str, int]:
-        return {
-            "stage_input": self.stage_input,
-            "stage_decode": self.stage_decode,
-            "stage_product": self.stage_product,
-            "stage_product_final": self._stage_product_final,
-            "stage_normalize": self.stage_normalize,
-            "stage_normalize_output": self.stage_normalize_output,
-            "stage_pack": self.stage_pack,
-            "stage_output": self.stage_output,
-            "wmultiplier": self.wmultiplier,
-        }
 
     @property
     def params(self) -> dict[str, int]:
@@ -623,11 +587,12 @@ class Log2Model(OperatorModel):
                 "WMAN": self.fmt.wman,
                 "WMULTIPLIER": self.wmultiplier,
                 "STAGE_INPUT": self.stage_input,
-                "STAGE_DECODE": self.stage_decode,
                 "STAGE_PRODUCT": self.stage_product,
-                "STAGE_PRODUCT_FINAL": self._stage_product_final,
-                "STAGE_NORMALIZE": self.stage_normalize,
-                "STAGE_NORMALIZE_OUTPUT": self.stage_normalize_output,
+                "STAGE_PRODUCT_SQUARE": self.stage_product_square,
+                "STAGE_PRODUCT_ODD": self.stage_product_odd,
+                "STAGE_PRODUCT_CHAIN": self.stage_product_chain,
+                "STAGE_ALIGN": self.stage_align,
+                "STAGE_PRODUCT_FINAL": self.stage_product_final,
                 "STAGE_PACK": self.stage_pack,
                 "STAGE_OUTPUT": self.stage_output,
             }
@@ -635,19 +600,9 @@ class Log2Model(OperatorModel):
 
     @property
     def timing(self) -> Timing:
-        degree = trans_spec("log2", self.fmt.wman)["d"]
-        latency = (
-            self.stage_input
-            + self.stage_decode
-            + 5
-            + self._stage_product_final
-            + self.stage_normalize
-            + self.stage_normalize_output
-            + self.stage_pack
-            + degree * (2 + self.stage_product)
-            + self.stage_output
-        )
-        return Timing(latency, 1)
+        core = _trans_core_stages("log2", self)
+        stages = self.stage_input + 2 + core + self.stage_align + self.stage_product_final
+        return Timing(stages + self.stage_pack + self.stage_output, 1)
 
 
 @dataclass(frozen=True)
@@ -663,14 +618,17 @@ class CordicModel(OperatorModel):
     stage_output: int = 0
     wmultiplier: int = 0
     mode: int = 2
+    divide_radix: int = 4
 
     def __post_init__(self) -> None:
         _check_int_range(self.mode, 0, 2)  # ahead of the format, whose floor it sets
         _check_format(self, "WEXP", self.fmt.wexp, 2 if self.mode == 0 else 5, 30)  # zkf_cordic.v's guard
         trig_spec(self.fmt.wman)
         _check_int_range(self.unroll100, 100, None, {50})
+        if self.divide_radix not in (4, 2):
+            raise ValueError(f"divide_radix={self.divide_radix} is neither 4 nor 2")
         _check_int_range(self.stage_product, 0, 4)
-        _check_int_range(self.stage_normalize, 0, 2)
+        _check_int_range(self.stage_normalize, 0, 3)
         _check_int_range(self.stage_pack, 0, 2)
         _check_int_range(self.stage_input, 0, None)
         _check_int_range(self.stage_output, 0, 1)
@@ -684,6 +642,7 @@ class CordicModel(OperatorModel):
             "WMAN": self.fmt.wman,
             "WMULTIPLIER": self.wmultiplier,
             "UNROLL100": self.unroll100,
+            "DIVIDE_RADIX": self.divide_radix,
             "STAGE_INPUT": self.stage_input,
             "STAGE_PRODUCT": self.stage_product,
             "STAGE_NORMALIZE": self.stage_normalize,
@@ -709,7 +668,7 @@ class CordicModel(OperatorModel):
             latency = 11 + (2 * self.stage_product) + xycyc - saved + stages
         else:
             xycyc = (spec["n_atan2"] * 100 + self.unroll100 - 1) // self.unroll100
-            divide = (spec["xf_atan2"] + 1) // 2 + 1
+            divide = ((spec["xf_atan2"] + 1) // 2) * (4 // self.divide_radix) + 1
             latency = 7 + xycyc + divide + self.stage_product + stages
         return Timing(latency, latency + 1)
 

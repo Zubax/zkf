@@ -11,9 +11,10 @@ read -formal _zkf_normshift.v
 read -formal _zkf_rshift_sticky.v
 read -formal _zkf_pack.v
 read -formal zkf_pipe.v
+read -formal _zkf_add_core.v
 read -formal zkf_add.v
 read -formal zkf_pack_ref.v
-read -formal zkf_add_ref.v
+read -formal zkf_fma_ref.v
 read -formal zkf_add_eq.v
 chparam -set WEXP 4 -set WMAN 6 zkf_add_eq
 prep -top zkf_add_eq
@@ -23,7 +24,8 @@ zkf/rtl/_zkf_normshift.v
 zkf/rtl/_zkf_rshift_sticky.v
 zkf/rtl/_zkf_pack.v
 zkf/rtl/zkf_pipe.v
+zkf/rtl/_zkf_add_core.v
 zkf/rtl/zkf_add.v
 proof/refs/zkf_pack_ref.v
-proof/refs/zkf_add_ref.v
+proof/refs/zkf_fma_ref.v
 proof/harness/zkf_add_eq.v

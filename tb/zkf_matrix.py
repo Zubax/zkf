@@ -7,7 +7,7 @@ vlog parameters, plusargs, and a tier. The tiers gate selection:
 
   pr          per-PR set (runs by default; what `nox -s tests` exercises)
   deep        full parameter-equivalence-class sweep (correctness on icarus, coverage on verilator)
-  properties  algebraic-property tests (test_properties.py) on the add/addsub/mul toplevels
+  properties  algebraic-property tests (test_properties.py) on the add/mul toplevels
   fast        the smallest-config smoke set
 
 test_float_matrix.py parametrizes pytest over build_matrix(), tagging each Run with its tier and
@@ -31,11 +31,13 @@ CORE = "zubax:kulibin:float"
 PACK = [
     ("w2_m4_u4_exhaustive", 2, 4, 4, "exhaustive", 0),
     ("w3_m4_u5_exhaustive", 3, 4, 5, "exhaustive", 0),
-    ("w4_m5_u4_exhaustive", 4, 5, 4, "exhaustive", 0),  # WEXP_UNBIASED == WEXP, the narrowest legal (zkf_exp2's)
+    ("w4_m5_u4_exhaustive", 4, 5, 4, "exhaustive", 0),  # WEXP_UNBIASED == WEXP, the narrowest legal
     ("w5_m8_u8_random", 5, 8, 8, "random", 768),
     ("w8_m24_u12_random", 8, 24, 12, "random", 2048),
 ]
 # binary:   (config, wexp, wman, kind, count)
+CORDIC_W8M36 = dict(un=50, dr=2, sp=3, wm=18, sn=3, pa=2)  # the synthesized 8/36 vectoring and mode-2 knobs
+TRANS_W8M36 = dict(sp=3, sq=1, od=2, ch=2)  # the synthesized 8/36 kernel knobs of exp2 and log2
 BINARY = [
     ("w2_m4_exhaustive", 2, 4, "exhaustive", 0),
     ("w3_m4_exhaustive", 3, 4, "exhaustive", 0),
@@ -73,7 +75,7 @@ FMA = [
     ("w8_m36_random", 8, 36, "random", 1024),
     ("w11_m53_random", 11, 53, "random", 512),
     # Small WEXP, large WMAN: the close-cancellation corrected exponent underflows far below the product exponent
-    # range, so this guards the sub-path exponent width (directed w4m30 cancellation witnesses run here).
+    # range, so this guards the width of _zkf_add_core's exponent (directed w4m30 cancellation witnesses run here).
     ("w4_m30_random", 4, 30, "random", 512),
 ]
 # unary:    (config, wexp, wman, kind, count)
@@ -93,12 +95,14 @@ TRANS_EXPLOG = [
     ("w8_m24_random", 8, 24, "random", 1024),
     ("w8_m32_random", 8, 32, "random", 768),
     ("w11_m53_random", 11, 53, "random", 384),
-    # Wide-exponent guard: min WMAN keeps the datapath small while WEXP=20 and the directed overflow/underflow/inf/
-    # pow2 corners exercise the wide-exponent reduction, OOR threshold, and clamp. The random supplement is kept small
-    # on purpose -- extreme-exponent inputs cost ~0.5 s/vector in the high-precision oracle, so the directed corners
-    # (not this sweep) carry the coverage here.
-    ("w20_m16_random", 20, 16, "random", 128),
 ]
+# Wide exponents: min WMAN keeps the datapath small while the directed overflow/underflow/inf/pow2 corners exercise
+# exp2's reduction up to WEXP=30, the widest it elaborates at, and log2's placement of |e| up to WEXP=WMAN+1, the
+# widest zkf_log2 is built for.
+TRANS_EXPLOG_WIDE = {
+    "exp2": [("w20_m16_random", 20, 16, "random", 128), ("w30_m16_random", 30, 16, "random", 128)],
+    "log2": [("w17_m16_random", 17, 16, "random", 128)],
+}
 TRANS_EXPLOG_EXT = [
     (2, 16, "exhaustive", 0),
     (3, 16, "exhaustive", 0),
@@ -483,11 +487,14 @@ def _trans(
     *,
     si=None,
     sr=None,
-    sd=None,
     sp=None,
+    sq=None,
+    od=None,
+    ch=None,
+    sa=None,
     spf=None,
+    dr=None,
     sn=None,
-    sno=None,
     pa=None,
     so=None,
     un=None,
@@ -495,10 +502,11 @@ def _trans(
     wm=None,
     mode=None,
 ) -> Run:
-    # Each module takes only its own knobs (the driver passes only a module.s own declared parameters). Knob legend: si/sp/so =
-    # STAGE_INPUT/PRODUCT/OUTPUT, wm = WMULTIPLIER (_zkf_pmul DSP-tile-grid hint), sr = STAGE_REDUCE (exp2),
-    # sd/spf/sno = STAGE_DECODE/PRODUCT_FINAL/NORMALIZE_OUTPUT (log2), un = UNROLL100, parallel = PARALLEL
-    # (decoupled z-path), sn = STAGE_NORMALIZE, pa = STAGE_PACK, mode = MODE (cordic).
+    # Each module takes only its own knobs (the driver passes only a module's own declared parameters). Knob legend:
+    # si/sp/so = STAGE_INPUT/PRODUCT/OUTPUT, sq/od/ch = STAGE_PRODUCT_SQUARE/ODD/CHAIN (exp2, log2),
+    # wm = WMULTIPLIER (_zkf_pmul DSP-tile-grid hint), sa/spf = STAGE_ALIGN/PRODUCT_FINAL (log2), sr = STAGE_REDUCE
+    # (exp2), un = UNROLL100, parallel = PARALLEL (decoupled z-path), dr = DIVIDE_RADIX, sn = STAGE_NORMALIZE,
+    # pa = STAGE_PACK, mode = MODE.
     vlog = [("WEXP", w), ("WMAN", m)]
     suffix = ""
     if mode is not None:
@@ -513,29 +521,36 @@ def _trans(
     if si is not None:
         vlog.append(("STAGE_INPUT", si))
         suffix += f"_si{si}"
-    if module == "exp2" and sr is not None:
+    if sr is not None:
         vlog.append(("STAGE_REDUCE", sr))
         suffix += f"_sr{sr}"
-    if module == "log2" and sd is not None:
-        vlog.append(("STAGE_DECODE", sd))
-        suffix += f"_sd{sd}"
     if sp is not None:
         vlog.append(("STAGE_PRODUCT", sp))
         suffix += f"_sp{sp}"
-    if module == "log2":
-        spf_eff = sp if spf is None else spf
-        if spf_eff is not None:
-            vlog.append(("STAGE_PRODUCT_FINAL", spf_eff))
-            suffix += f"_spf{spf_eff}" if spf is not None else ""
+    if sq is not None:
+        vlog.append(("STAGE_PRODUCT_SQUARE", sq))
+        suffix += f"_sq{sq}"
+    if od is not None:
+        vlog.append(("STAGE_PRODUCT_ODD", od))
+        suffix += f"_od{od}"
+    if ch is not None:
+        vlog.append(("STAGE_PRODUCT_CHAIN", ch))
+        suffix += f"_ch{ch}"
+    if sa is not None:
+        vlog.append(("STAGE_ALIGN", sa))
+        suffix += f"_sa{sa}"
+    if module == "log2" and spf is not None:  # a shared exp2/log2 row may name it; exp2 has no such knob
+        vlog.append(("STAGE_PRODUCT_FINAL", spf))
+        suffix += f"_spf{spf}"
     if wm is not None:
         vlog.append(("WMULTIPLIER", wm))
         suffix += f"_wm{wm}"
+    if dr is not None:
+        vlog.append(("DIVIDE_RADIX", dr))
+        suffix += f"_dr{dr}"
     if sn is not None:
         vlog.append(("STAGE_NORMALIZE", sn))
         suffix += f"_sn{sn}"
-    if module == "log2" and sno is not None:
-        vlog.append(("STAGE_NORMALIZE_OUTPUT", sno))
-        suffix += f"_sno{sno}"
     if pa is not None:
         vlog.append(("STAGE_PACK", pa))
         suffix += f"_pa{pa}"
@@ -558,31 +573,29 @@ def _per_pr(sim, out: list) -> None:
     _cordic_modes(sim, "pr", out)
     for cfg, w, m, u, k, c in PACK:
         out.append(_pack(sim, "pr", cfg, w, m, u, k, c))
-    for op in ("cmp", "sort"):
-        for cfg, w, m, k, c in BINARY:
-            out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
-        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+    for cfg, w, m, k, c in BINARY:
+        out.append(_binary("cmp", sim, "pr", cfg, w, m, k, c))
+    out.append(_binary("cmp", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     # Output stages alone and behind input stages (si=0 and si=1/2 alone are covered by the rows above and the
     # STAGE_INPUT>1 sweep).
     for knobs in ({"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}, {"so": 2}, {"si": 2, "so": 2}):
         out.append(_binary("cmp", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, **knobs))
-    for op in ("add", "addsub"):
-        for sd in (0, 1):
-            for sa in (0, 1):
-                for cfg, w, m, k, c in BINARY:
-                    out.append(_binary(op, sim, "pr", cfg, w, m, k, c, sd=sd, sa=sa))
-        # si/pa knobs plus the all-on maxpipe row guard the latency bookkeeping against a register-stage change.
-        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
-        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
-        out.append(_binary(op, sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1, si=2, so=1))
-        # STAGE_INPUT>1 (dummy input stages) exercises the counted-latency bookkeeping and the multi-stage input pipe.
-        out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
-        out.append(_binary(op, sim, "pr", "w8_m18", 8, 18, "random", 256, si=2))
-        # STAGE_NORMALIZE forwards to _zkf_normshift.STAGE_SPLIT (close-cancel path); SN=2 adds an s2x catch-up cycle
-        # and needs NL4 >= 3, i.e. NINPUT = WMAN+3 >= 11 -> WMAN >= 8 (hence the w8_m18 sn2 row).
-        for sn in (1,):
-            out.append(_binary(op, sim, "pr", "w4_m6_sn", 4, 6, "random", 256, sn=sn))
-        out.append(_binary(op, sim, "pr", "w8_m18_sn2", 8, 18, "random", 256, sd=1, sa=1, sn=2))
+    for sd in (0, 1):
+        for sa in (0, 1):
+            for cfg, w, m, k, c in BINARY:
+                out.append(_binary("add", sim, "pr", cfg, w, m, k, c, sd=sd, sa=sa))
+    # si/pa knobs plus the all-on maxpipe row guard the latency bookkeeping against a register-stage change.
+    out.append(_binary("add", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
+    out.append(_binary("add", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
+    out.append(_binary("add", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sd=1, sa=1, sn=1, pa=1, si=2, so=1))
+    # STAGE_INPUT>1 (dummy input stages) exercises the counted-latency bookkeeping and the multi-stage input pipe.
+    out.append(_binary("add", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
+    out.append(_binary("add", sim, "pr", "w8_m18", 8, 18, "random", 256, si=2))
+    # STAGE_NORMALIZE forwards to _zkf_normshift.STAGE_SPLIT (the difference's normalizer); 2 needs a normalizer of
+    # 17 bits at least, i.e. WMAN >= 14 (hence the w8_m18 sn2 row).
+    out.append(_binary("add", sim, "pr", "w4_m6_sn", 4, 6, "random", 256, sn=1))
+    out.append(_binary("add", sim, "pr", "w8_m18_sn2", 8, 18, "random", 256, sd=1, sa=1, sn=2))
+    out.append(_binary("add", sim, "pr", "w8_m36_synth", 8, 36, "random", 768, sn=2))
     for sp in (0, 1):
         for si in (0, 1):
             for cfg, w, m, k, c in BINARY:
@@ -590,9 +603,15 @@ def _per_pr(sim, out: list) -> None:
     # STAGE_PACK forwards to _zkf_pack.STAGE_INPUT.
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, pa=1))
     out.append(_binary("mul", sim, "pr", "w3_m4_maxpipe", 3, 4, "exhaustive", 0, sp=1, si=1, pa=1, so=1))
-    # STAGE_PRODUCT 2/3 forward to _zkf_pmul's 2x2 / 3x3 split grids (bit-exact; checks latency bookkeeping).
-    out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sp=2))
-    out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sp=3))
+    # STAGE_PRODUCT 2/3 forward to _zkf_pmul's 2x2 / 3x3 split grids (bit-exact; checks latency bookkeeping), at the
+    # narrowest significands it splits that way: 4 bits per slice.
+    out.append(_binary("mul", sim, "pr", "w3_m8", 3, 8, "random", 512, sp=2))
+    out.append(_binary("mul", sim, "pr", "w3_m12", 3, 12, "random", 512, sp=3))
+    # The synthesized configurations not covered above (kept in sync with synth/modules.py).
+    out.append(_binary("mul", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, so=1))
+    for knobs in ({}, {"so": 1}, {"si": 1}):
+        out.append(_binary("mul", sim, "pr", "w8_m36_synth", 8, 36, "random", 512, sp=2, wm=18, **knobs))
+    out.append(_binary("mul", sim, "pr", "w8_m25_synth", 8, 25, "random", 512, sp=2, pa=1))
     # zkf_divsqrt: BINARY at MODE=0, UNARY plus root-exhaustive formats to 4/7 at MODE=1, DIVSQRT at MODE=2;
     # STAGE_DECODE=1 unfolds the divider's first digit, at even WMAN only.
     roots = UNARY + [(f"w{w}_m{m}_exhaustive", w, m, "exhaustive", 0) for w, m in ((3, 5), (4, 6), (4, 7))]
@@ -625,41 +644,57 @@ def _per_pr(sim, out: list) -> None:
     ]:
         out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=sp, si=si, sd=sd, sa=sa, sn=sn, pa=pa, so=so))
     # STAGE_PRODUCT 2/3 forward to _zkf_pmul's 2x2 / 3x3 split grids (bit-exact; checks latency bookkeeping).
-    out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=2))
-    out.append(_fma(sim, "pr", "w4_m6_stage", 4, 6, "random", 256, sp=3))
-    # STAGE_NORMALIZE=2 (FMA-local 3-segment normalizer) needs NL4 >= 3, i.e. WMAN >= 7 (smaller is rejected at
-    # elaboration), so it cannot use the w4/m6 format above: run the WMAN=7 guard edge and a wider WMAN=18.
+    out.append(_fma(sim, "pr", "w4_m8_stage", 4, 8, "random", 256, sp=2))
+    out.append(_fma(sim, "pr", "w4_m12_stage", 4, 12, "random", 256, sp=3))
+    # STAGE_NORMALIZE=2 needs a normalizer of 17 bits at least, here WMAN >= 7 (smaller is rejected at elaboration),
+    # so it cannot use the w4/m6 format above: run the WMAN=7 guard edge and a wider WMAN=18.
     out.append(_fma(sim, "pr", "w4m7_sn2", 4, 7, "random", 384, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(sim, "pr", "w6m18_sn2", 6, 18, "random", 384, sp=1, sd=1, sa=1, sn=2))
-    # sn=2 with so=1 is otherwise untested (other sn=2 rows have so=0): all-on guards the 3-segment normalizer's
+    # sn=2 with so=1 is otherwise untested (other sn=2 rows have so=0): all-on guards the twice-split normalizer's
     # payload realignment feeding the registered packer output.
     out.append(_fma(sim, "pr", "w6m18_maxpipe", 6, 18, "random", 384, sp=1, si=1, sd=1, sa=1, sn=2, so=1))
-    # Shipped narrow synth config: si=1 + sa=1 + sn=2 (closes the W6/M18 cones on Yosys and Diamond/LSE with one
-    # MULT18X18D; sp=1 would split the 18x18 into a 2x2 grid = 4 DSPs for no timing gain). Gated so it is tested
-    # directly, not just inferred from the per-knob sweeps.
-    out.append(_fma(sim, "pr", "w6m18_si1_sa1_sn2", 6, 18, "random", 384, si=1, sa=1, sn=2))
+    # The synthesized configurations, tested directly rather than inferred from the per-knob sweeps.
+    out.append(_fma(sim, "pr", "w6m18_synth", 6, 18, "random", 384, sd=1, sn=2))
+    for si in (None, 1):
+        out.append(_fma(sim, "pr", "w8m36_synth", 8, 36, "random", 384, si=si, sp=2, wm=18, sd=1, sa=1, sn=2, pa=1))
     for op in ("absneg", "finite"):
         for cfg, w, m, k, c in UNARY:
             out.append(_binary(op, sim, "pr", cfg, w, m, k, c))
         for knobs in ({"si": 1}, {"so": 1}, {"si": 1, "so": 1}, {"si": 2, "so": 1}, {"so": 2}, {"si": 2, "so": 2}):
             out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, **knobs))
     for op in ("exp2", "log2"):
-        for cfg, w, m, k, c in TRANS_EXPLOG:
+        for cfg, w, m, k, c in TRANS_EXPLOG + TRANS_EXPLOG_WIDE[op]:
             out.append(_trans(op, sim, "pr", cfg, w, m, k, c))
     for cfg, w, m, k, c in TRANS_TRIG:
         out.append(_trans("cordic", sim, "pr", cfg, w, m, k, c, mode=0))
     for op in ("exp2", "log2"):
-        # STAGE_INPUT/PRODUCT/OUTPUT timing on the cheapest exhaustive format; results are staging-independent, so
-        # these only exercise the register-stage bookkeeping. cordic's own knobs (UNROLL100/NORMALIZE/PACK) are below.
-        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, si=1))
-        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, so=1))
-        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sp=1))
-        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sp=2))
-        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sp=3))
-        out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, si=1, sp=1, so=1))
-    out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sr=1))
-    out.append(_trans("log2", sim, "pr", "w6_m16_decode", 6, 16, "random", 256, sd=1))
+        # Stage timing on the cheapest exhaustive format; results are staging-independent, so these only exercise the
+        # register-stage bookkeeping: the wide product alone, the chain longer than it, every product on a grid, the
+        # knob no product takes at this degree. cordic's own knobs (UNROLL100/NORMALIZE/PACK) are below.
+        wm = {} if op == "exp2" else {"wm": 18}  # log2's c1*w and square are too narrow here for a symmetric split
+        staging = ({"si": 1}, {"so": 1}, {"sp": 1}, {"sq": 1, "ch": 1}, {"sp": 2, "sq": 3, "ch": 2} | wm)
+        for knobs in (*staging, {"sp": 3, "od": 3} | wm, {"si": 1, "sp": 1, "ch": 1, "so": 1}):
+            out.append(_trans(op, sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, **knobs))
+    # log2's final multiply has its own depth; its side path is scheduled by the core's (1, 2, 3+ stages).
     out.append(_trans("log2", sim, "pr", "w6_m16_split_final", 6, 16, "random", 256, sp=1, spf=2))
+    out.append(_trans("log2", sim, "pr", "w6_m16_split_final", 6, 16, "random", 256, sp=2, spf=0, wm=18))
+    out.append(_trans("log2", sim, "pr", "w6_m16_split_final", 6, 16, "random", 256, sp=0, spf=3))
+    out.append(_trans("log2", sim, "pr", "w6_m16_split_final", 6, 16, "random", 256, sp=1, sa=1, spf=1))
+    out.append(_trans("log2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sa=1))
+    out.append(_trans("log2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
+    out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, sr=1))
+    out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
+    # Degree 3 (one chain product behind c3*w and the square: c3*w ready last, the square ready last, the wide product
+    # the longest, the chain the longest, the two alike) and degree 5 (two chain products in a row); WMAN 36 and 53 on
+    # the 18-bit tile grid.
+    deg3 = ((1, 0, 2, 1), (2, 1, 0, 3), (4, 2, 1, 1), (3, 1, 2, 2), (3, 1, 1, 2))
+    for op in ("exp2", "log2"):
+        for sp, sq, od, ch in deg3:
+            knobs = dict(sp=sp, sq=sq, od=od, ch=ch)
+            out.append(_trans(op, sim, "pr", "w8_m36_deg3", 8, 36, "random", 256, spf=sp, wm=18, **knobs))
+        out.append(_trans(op, sim, "pr", "w8_m27_deg3", 8, 27, "random", 256, sp=2, sq=1, od=1, ch=1, spf=2))
+        out.append(_trans(op, sim, "pr", "w8_m48_deg5", 8, 48, "random", 256, sp=4, sq=1, od=2, ch=1, spf=1, wm=24))
+        out.append(_trans(op, sim, "pr", "w11_m53_deg5", 11, 53, "random", 256, sp=2, sq=2, od=1, ch=2, spf=2, wm=18))
     # UNROLL100 (iterations/cycle x100): 50 = half-rate, 100 = synthesized M18 rate, 200 = 2/cycle. Each changes the
     # published latency; the test asserts measured == model.
     out.append(_trans("cordic", sim, "pr", "w5_m16_unroll", 5, 16, "random", 256, un=50, mode=0))
@@ -685,26 +720,25 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("cordic", sim, "pr", "w5_m16_dec", 5, 16, "random", 256, un=50, parallel=1, sp=2, mode=0))
     out.append(_trans("cordic", sim, "pr", "w5_m16_dec", 5, 16, "random", 256, un=50, parallel=1, sp=3, mode=0))
     out.append(_trans("cordic", sim, "pr", "w5_m16_dec", 5, 16, "random", 256, un=50, parallel=0, sp=3, mode=0))
-    # STAGE_NORMALIZE (log2/cordic) drives the normalizer's STAGE_SPLIT.
-    out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1))
-    out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sp=1, sn=1))
-    out.append(_trans("log2", sim, "pr", "w8_m24_sncheck", 8, 24, "random", 256, sn=2, pa=1))
-    # log2 STAGE_NORMALIZE_OUTPUT: registered _zkf_normshift output + pole/domain sideband alignment; no other row
-    # drives sno.
-    out.append(_trans("log2", sim, "pr", "w6_m16_sno", 6, 16, "random", 256, sn=1, sno=1, pa=1))
-    out.append(_trans("cordic", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=1, mode=0))
-    out.append(_trans("cordic", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=2, mode=0))
-    # STAGE_PACK forwards to _zkf_pack.STAGE_INPUT (exp2/log2/cordic), standalone and combined with other knobs.
-    out.append(_trans("exp2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
-    out.append(_trans("log2", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1))
+    # STAGE_NORMALIZE drives the normalizer's STAGE_SPLIT.
+    for sn in (1, 2, 3):
+        out.append(_trans("cordic", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=sn, mode=0))
+    # STAGE_PACK forwards to _zkf_pack.STAGE_INPUT, standalone and combined with other knobs.
     out.append(_trans("cordic", sim, "pr", "w2_m16_exhaustive", 2, 16, "exhaustive", 0, pa=1, mode=0))
-    out.append(_trans("log2", sim, "pr", "w6_m16_sncheck", 6, 16, "random", 256, sn=1, pa=1))
     out.append(_trans("cordic", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=1, pa=1, mode=0))
     out.append(_trans("cordic", sim, "pr", "w5_m16_sncheck", 5, 16, "random", 256, sn=1, pa=2, mode=0))
-    # Shipped small log2 synth preset (6/18: sn=1 + STAGE_PRODUCT_FINAL=1): pins the latency and pole/domain-error
-    # sideband alignment under the exact shipped knobs.
-    out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sn=1, spf=1))
-    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sn=2, spf=1, so=1))
+    # Shipped synth presets: pin the latency and log2's pole/domain-error alignment under the exact knobs.
+    out.append(_trans("exp2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sp=1, ch=1))
+    out.append(_trans("log2", sim, "pr", "w6_m18_synth", 6, 18, "random", 512, sp=1, ch=1, spf=2, wm=18))
+    out.append(_trans("log2", sim, "pr", "w6_m18_synth_so1", 6, 18, "random", 512, sp=1, ch=1, spf=2, wm=18, so=1))
+    out.append(_trans("exp2", sim, "pr", "w8_m24_synth", 8, 24, "random", 512, sp=1, ch=1))
+    out.append(_trans("log2", sim, "pr", "w8_m24_synth", 8, 24, "random", 512, sp=1, ch=1, spf=2, wm=18))
+    out.append(_trans("exp2", sim, "pr", "w8_m36_synth", 8, 36, "random", 512, wm=18, **TRANS_W8M36))
+    out.append(_trans("log2", sim, "pr", "w8_m36_synth", 8, 36, "random", 512, sa=1, spf=2, pa=1, wm=18, **TRANS_W8M36))
+    # The directed strata of the accuracy check through the RTL; at 17/16 log2's |e| fills the significand.
+    for op in ("exp2", "log2"):
+        out.append(_trans(op, sim, "pr", "w6_m18_strata", 6, 18, "strata", 0, sp=1, ch=1))
+    out.append(_trans("log2", sim, "pr", "w17_m16_strata", 17, 16, "strata", 0, sp=1, ch=1))
     # Vectoring (two inputs): directed pair table + random, then the shared knob sweeps. Each row
     # checks bit-exactness + latency; directed alone hits every special/axis/diagonal/bypass-boundary pair.
     for cfg, w, m, k, c in TRANS_ATAN2:
@@ -723,6 +757,9 @@ def _per_pr(sim, out: list) -> None:
     out.append(_trans("cordic", sim, "pr", "w5_m16_stage", 5, 16, "random", 256, si=1, so=1, mode=1))
     out.append(_trans("cordic", sim, "pr", "w5_m16_norm", 5, 16, "random", 256, sn=1, mode=1))
     out.append(_trans("cordic", sim, "pr", "w5_m16_norm", 5, 16, "random", 256, sn=2, mode=1))
+    out.append(_trans("cordic", sim, "pr", "w5_m16_norm", 5, 16, "random", 256, sn=3, pa=1, mode=1))
+    out.append(_trans("cordic", sim, "pr", "w5_m16_div", 5, 16, "random", 256, dr=2, mode=1))
+    out.append(_trans("cordic", sim, "pr", "w6_m18_div", 6, 18, "random", 256, dr=2, un=50, sp=2, mode=1))
     out.append(_trans("cordic", sim, "pr", "w5_m16_pack", 5, 16, "random", 256, pa=1, mode=1))
     out.append(_trans("cordic", sim, "pr", "w5_m16_pack", 5, 16, "random", 256, pa=2, mode=1))
     out.append(_trans("cordic", sim, "pr", "w5_m16_full", 5, 16, "random", 256, si=1, sn=2, pa=1, so=1, mode=1))
@@ -730,14 +767,17 @@ def _per_pr(sim, out: list) -> None:
     # each adds STAGE_PRODUCT cycles. Native (sp=1), 2x2 (sp=2), plus the synthesized 6/18 operating point.
     out.append(_trans("cordic", sim, "pr", "w5_m16_prod", 5, 16, "random", 256, sp=1, mode=1))
     out.append(_trans("cordic", sim, "pr", "w5_m16_prod", 5, 16, "random", 256, sp=2, wm=16, mode=1))
+    for mode in (0, 1):
+        out.append(
+            _trans("cordic", sim, "pr", "w6_m18_synth", 6, 18, "random", 256, sp=2, wm=18, sn=2, pa=1, mode=mode)
+        )
+    # The synthesized 8/36 configurations tested directly (correctness + data-independent latency, not just inferred
+    # from the knob sweeps); vectoring's counts leave room for random pairs past the directed ones.
+    out.append(_trans("cordic", sim, "pr", "w8_m36_synth", 8, 36, "random", 1024, mode=1, **CORDIC_W8M36))
     out.append(
-        _trans("cordic", sim, "pr", "w6_m18_synth", 6, 18, "random", 256, un=100, sp=2, wm=18, sn=2, pa=1, mode=1)
+        _trans("cordic", sim, "pr", "w8_m36_synth", 8, 36, "random", 256, un=50, sp=3, wm=18, sn=2, pa=2, mode=0)
     )
-    # Shipped zkf_cordic_vec_w8m36 synth config tested directly (correctness + data-independent latency, not just
-    # inferred from the knob sweeps).
-    out.append(
-        _trans("cordic", sim, "pr", "w8_m36_synth", 8, 36, "random", 256, un=50, sp=4, wm=18, sn=2, pa=1, so=1, mode=1)
-    )
+    out.append(_trans("cordic", sim, "pr", "w8_m36_synth", 8, 36, "random", 1024, **CORDIC_W8M36))
     # zkf_cordic: w5_m18 lets rotation reach its underflow decision through the shared packer (BIAS < WFRAC); at w8_m48
     # the union magnitude crosses a power of two for rotation (normalizer count 7 -> 8 bits).
     for cfg, w, m, knobs in [
@@ -749,9 +789,10 @@ def _per_pr(sim, out: list) -> None:
         ("w5_m16_stage", 5, 16, {"si": 1, "so": 1}),
         ("w5_m16_prod", 5, 16, {"sp": 1}),
         ("w5_m16_prod", 5, 16, {"sp": 3, "wm": 16}),
+        ("w5_m16_prod", 5, 16, {"un": 50, "sp": 4}),
         ("w5_m16_full", 5, 16, {"si": 1, "sp": 2, "sn": 2, "pa": 1, "so": 1}),
         ("w5_m16_pack", 5, 16, {"pa": 2}),
-        ("w8_m36_synth", 8, 36, {"un": 50, "si": 1, "sp": 4, "wm": 18, "sn": 2, "pa": 2, "so": 1}),
+        ("w5_m16_full", 5, 16, {"si": 1, "un": 50, "dr": 2, "sp": 1, "sn": 3, "pa": 2, "so": 1}),
         ("w8_m48", 8, 48, {"un": 50}),
         ("w11_m53", 11, 53, {}),
         ("w4_m16", 4, 16, {"mode": 0}),  # below vectoring's WEXP floor
@@ -766,6 +807,7 @@ def _per_pr(sim, out: list) -> None:
     # the saturating boundaries).
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=1, sd=1))
+    out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, sd=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=2))
     out.append(_ilog2(sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, wk=6, sd=1))
@@ -796,7 +838,7 @@ def _per_pr(sim, out: list) -> None:
         out.append(_pipe(sim, "pr", cfg, w, n, c))
     # STAGE_INPUT>1 across the generalized public modules: si=2 per module (+ si=3 on mul) checks widened input
     # pipes in the latency model.
-    for op in ("mul", "cmp", "sort"):
+    for op in ("mul", "cmp"):
         out.append(_binary(op, sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=2))
     out.append(_binary("mul", sim, "pr", "w3_m4", 3, 4, "exhaustive", 0, si=3))
     out.append(_fma(sim, "pr", "w4_m6", 4, 6, "random", 256, si=2))
@@ -811,22 +853,22 @@ def _per_pr(sim, out: list) -> None:
 def _deep_correctness(out: list) -> None:
     # Full Cartesian product of each module's structural knobs across every format in its deep list (correctness;
     # coverage closure lives in _deep_coverage under merged-union). Knob axes: mul = STAGE_INPUT x PRODUCT x OUTPUT;
-    # add/addsub = STAGE_DECODE x ALIGN x OUTPUT; from_int/resize = STAGE_INPUT x OUTPUT; pack = STAGE_OUTPUT x
+    # add = STAGE_DECODE x ALIGN x OUTPUT; from_int/resize = STAGE_INPUT x OUTPUT; pack = STAGE_OUTPUT x
     # EXP_IS_BIASED.
     s = "icarus"
     for w, m, k, c in BIN_EXT:
         base = f"w{w}m{m}_{k}"
         for sp in (0, 1, 2, 3):  # _zkf_pmul depth: single / capture+native / 2x2 / 3x3
+            if sp >= 2 and m < 4 * sp:
+                continue  # _zkf_pmul refuses a split that leaves less than 4 bits per slice
             for si in (0, 1):
                 for so in (0, 1):
                     out.append(_binary("mul", s, "deep", base, w, m, k, c, sp=sp, si=si, so=so))
-        for op in ("add", "addsub"):
-            for sd in (0, 1):
-                for sa in (0, 1):
-                    for so in (0, 1):
-                        out.append(_binary(op, s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
+        for sd in (0, 1):
+            for sa in (0, 1):
+                for so in (0, 1):
+                    out.append(_binary("add", s, "deep", base, w, m, k, c, sd=sd, sa=sa, so=so))
         out.append(_binary("cmp", s, "deep", base, w, m, k, c))
-        out.append(_binary("sort", s, "deep", base, w, m, k, c))
     w, m, k, c = BIN_EXT[0]
     out.append(_binary("cmp", s, "deep", f"w{w}m{m}_{k}", w, m, k, c, so=1))
     # fma: each deep format once (results are staging-independent), the full pipeline-knob cartesian on one fast
@@ -859,7 +901,7 @@ def _deep_correctness(out: list) -> None:
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=1, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36_si1", 8, 36, "random", 768, sp=1, si=1, sd=1, sa=1, sn=2))
     # STAGE_PRODUCT 2/3 (2x2/3x3) on wide WMAN=36 with WMULTIPLIER=18 so _zkf_pmul derives the 18-bit DSP-tile grid.
-    # sp=2 is what zkf_fma_w8m36 ships; sp=3 also exercises the 3x3 grid end to end.
+    # sp=3 also exercises the 3x3 grid end to end.
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=2, wm=18, sd=1, sa=1, sn=2))
     out.append(_fma(s, "deep", "w8m36", 8, 36, "random", 768, sp=3, wm=18, sd=1, sa=1, sn=2))
     for si, sp, sd, sa, sn, so in ((0, 0, 0, 0, 0, 0), (1, 1, 1, 1, 1, 1)):
@@ -894,8 +936,9 @@ def _deep_correctness(out: list) -> None:
         for op in ("exp2", "log2"):
             for si, sp, so in ((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)):
                 out.append(_trans(op, s, "deep", base, w, m, k, c, si=si, sp=sp, so=so))
-        out.append(_trans("exp2", s, "deep", base, w, m, k, c, sr=1))
-        out.append(_trans("log2", s, "deep", base + "_decode", w, m, k, c, sd=1))
+        out.append(_trans("exp2", s, "deep", base, w, m, k, c, sp=2, sq=1, od=1, ch=1))
+        wm = {"wm": 18} if m == 16 else {}  # log2's c1*w is too narrow there for a symmetric split
+        out.append(_trans("log2", s, "deep", base, w, m, k, c, sp=2, sq=1, od=1, ch=1, **wm))
         out.append(_trans("log2", s, "deep", base + "_split_final", w, m, k, c, sp=1, spf=2))
 
     # Rotation: STAGE_PRODUCT (_zkf_pmul split), UNROLL100, STAGE_NORMALIZE/PACK; the testbench asserts latency.
@@ -906,15 +949,19 @@ def _deep_correctness(out: list) -> None:
         for sp in (1, 2, 3):
             out.append(_trans("cordic", s, "deep", base, w, m, k, c, sp=sp, mode=0))
         out.append(_trans("cordic", s, "deep", base, w, m, k, c, si=1, so=1, sn=1, pa=1, mode=0))
-        # Synthesized wide profile: half-rate + 3x3 split pinned to WMULTIPLIER=18 (as zkf_cordic_rot_w8m36 ships),
-        # bit-transparent, across the deep wide formats; focus is the wide multiplier grid.
+        # Wide profile: half-rate + registered row sums over WMULTIPLIER=18, bit-transparent, across the deep wide
+        # formats; focus is the wide multiplier grid.
         out.append(_trans("cordic", s, "deep", base, w, m, k, c, un=50, sp=3, wm=18, mode=0))
-    # Exact synthesized WEXP=8/WMAN=36 operating points with WMULTIPLIER=18 (the 18-bit DSP-tile grid the Diamond/LSE
-    # flow needs). WMULTIPLIER is bit-transparent, but pinning the shipped grid exercises the full datapath at the
-    # operating point synthesis actually builds, not just the symmetric default.
-    out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18, pa=1))
-    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, wm=18))
-    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, sp=3, spf=3, wm=18, sn=2, pa=1, so=1))
+    # Exact synthesized WEXP=8/WMAN=36 operating points with WMULTIPLIER=18. WMULTIPLIER is bit-transparent, but pinning
+    # the shipped grid exercises the full datapath at the operating point synthesis actually builds, not just the
+    # symmetric default.
+    out.append(_binary("mul", s, "deep", "w8m36", 8, 36, "random", 512, sp=2, wm=18))
+    out.append(_trans("exp2", s, "deep", "w8m36", 8, 36, "random", 512, wm=18, **TRANS_W8M36))
+    out.append(_trans("log2", s, "deep", "w8m36", 8, 36, "random", 512, sa=1, spf=2, pa=1, wm=18, **TRANS_W8M36))
+    # The same strata at every table.
+    for w, m in [(8, 16), (8, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53), (11, 53)]:
+        for op in ("exp2", "log2"):
+            out.append(_trans(op, s, "deep", f"w{w}m{m}_strata", w, m, "strata", 0, sp=1, sq=1, od=1, ch=1))
     # Vectoring deep: baseline per format, UNROLL100 sweep + full staging on 5/16, and the synthesized 6/18 + 8/36
     # operating points. Each asserts latency.
     for cfg, w, m, k, c in TRANS_ATAN2:
@@ -922,14 +969,15 @@ def _deep_correctness(out: list) -> None:
     for un in (50, 100, 200, 400):
         out.append(_trans("cordic", s, "deep", "w5m16_un", 5, 16, "random", 512, un=un, mode=1))
     out.append(_trans("cordic", s, "deep", "w5m16_stage", 5, 16, "random", 512, si=1, so=1, sn=2, pa=1, mode=1))
-    out.append(_trans("cordic", s, "deep", "w6m18_op", 6, 18, "random", 512, un=100, sp=2, wm=18, sn=2, pa=1, mode=1))
-    synth = dict(un=50, sp=4, wm=18, sn=2, so=1)
-    out.append(_trans("cordic", s, "deep", "w8m36_op", 8, 36, "random", 512, si=0, pa=1, mode=1, **synth))
+    out.append(_trans("cordic", s, "deep", "w5m16_stage", 5, 16, "random", 512, dr=2, sn=3, mode=1))
+    out.append(_trans("cordic", s, "deep", "w5m16_stage", 5, 16, "random", 512, sn=3, mode=0))
+    out.append(_trans("cordic", s, "deep", "w6m18_op", 6, 18, "random", 512, sp=2, wm=18, sn=2, pa=1, mode=1))
+    out.append(_trans("cordic", s, "deep", "w8m36_op", 8, 36, "random", 2048, mode=1, **CORDIC_W8M36))
     # MODE 2 deep: both functions interleaved on one instance.
     for cfg, w, m, k, c in TRANS_ATAN2:
         out.append(_trans("cordic", s, "deep", cfg, w, m, k, c))
     out.append(_trans("cordic", s, "deep", "w5m16_un", 5, 16, "random", 512, un=50))
-    out.append(_trans("cordic", s, "deep", "w8m36_op", 8, 36, "random", 512, si=1, pa=2, **synth))
+    out.append(_trans("cordic", s, "deep", "w8m36_op", 8, 36, "random", 2048, **CORDIC_W8M36))
     # pack: STAGE_OUTPUT x EXP_IS_BIASED. EXP_IS_BIASED=1 is exhaustive-only (test_pack iterates the biased field);
     # random formats stay EXP_IS_BIASED=0 (also exercised transitively via add/from_int).
     for w, m, u, k, c in [
@@ -1001,10 +1049,7 @@ def _deep_coverage(out: list) -> None:
         out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, sd=0, sa=0))
         out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
         out.append(_binary("add", s, "deep", base, w, m, "exhaustive", 0, si=2))
-        out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, sd=1, sa=1))
-        out.append(_binary("addsub", s, "deep", base, w, m, "exhaustive", 0, si=2))
         out.append(_binary("cmp", s, "deep", base, w, m, "exhaustive", 0))
-        out.append(_binary("sort", s, "deep", base, w, m, "exhaustive", 0))
     # fma coverage: W2/M4 exhaustive (the only feasible ternary-exhaustive) at default + all-on toggles the
     # product/decode/align/normalize/output split registers; wider random runs toggle the wide shifters and the
     # far-shift saturation path the tiny W2/M4 exponent range cannot reach.
@@ -1030,25 +1075,29 @@ def _deep_coverage(out: list) -> None:
         for si in (0, 1, 2):
             for wint in (w + 1, 32):
                 out.append(_cast("ilog2", s, "deep", f"{base}_i{wint}", w, m, wint, "exhaustive", 0, si))
-    # exp2/log2 coverage: WMAN=16 exhaustive toggles the ROM/Horner; so=1 covers the registered pack output;
-    # sp=2/3/4 toggle the shared _zkf_pmul split-product paths; split-final exercises log2's final f*C(f) multiply.
+    # exp2/log2 coverage: WMAN=16 exhaustive toggles the ROM and the kernel; so=1 covers the registered output; every
+    # multiplier at depth 2/3/4 toggles the shared _zkf_pmul split-product paths; split-final exercises log2's final
+    # |f|*C(f) multiply.
     for w, m in [(2, 16), (3, 16)]:
         for op in ("exp2", "log2"):
             out.append(_trans(op, s, "deep", f"w{w}m{m}", w, m, "exhaustive", 0))
     out.append(_trans("exp2", s, "deep", "w2m16", 2, 16, "exhaustive", 0, so=1))
-    out.append(_trans("exp2", s, "deep", "w2m16", 2, 16, "exhaustive", 0, sr=1))
     out.append(_trans("log2", s, "deep", "w2m16", 2, 16, "exhaustive", 0, so=1))
+    # The symmetric grid takes of each knob what exp2's products admit at this width; log2's are narrower still and
+    # go on a grid of 8-bit tiles.
     for sp in (2, 3, 4):
-        out.append(_trans("exp2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp))
-        out.append(_trans("log2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp))
-    out.append(_trans("log2", s, "deep", "w3m16_split_final", 3, 16, "exhaustive", 0, sp=2, spf=3))
-    # Wide-format split-product coverage (bona fide): w3m16 sp=2/3/4 instruments _zkf_pmul's g_flat/g_rows/g_rows2
-    # trees but leaves the high accumulator bits (csum/r_p/rowc/s_row/s_col MSB) dark; w8m36 fills the full WP.
-    # exp2 drives the unsigned grids, log2 the signed grids. Also widens the significand so the hidden-bit MSB toggles.
+        out.append(_trans("exp2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp, sq=3, ch=2))
+        out.append(_trans("log2", s, "deep", "w3m16", 3, 16, "exhaustive", 0, sp=sp, sq=sp + 1, ch=sp, spf=sp, wm=8))
+    out.append(_trans("log2", s, "deep", "w3m16_split_final", 3, 16, "exhaustive", 0, sp=1, spf=3))
+    # Wide-format split-product coverage (bona fide): w3m16 sp=2/3/4 instruments _zkf_pmul's sums but leaves their high
+    # bits dark; w8m36 fills the full product width. Both drive the unsigned grids (the signed ones belong to
+    # zkf_cordic). Also widens the significand so the hidden-bit MSB toggles.
     for sp in (2, 3, 4):
-        out.append(_trans("exp2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18))
+        knobs = dict(sp=sp, sq=1, od=1, ch=sp)
+        out.append(_trans("exp2", s, "deep", "w8m36_grid", 8, 36, "random", 512, wm=18, **knobs))
     for sp in (3, 4):
-        out.append(_trans("log2", s, "deep", "w8m36_grid", 8, 36, "random", 512, sp=sp, wm=18))
+        knobs = dict(sp=sp, sq=2, od=sp, ch=sp)
+        out.append(_trans("log2", s, "deep", "w8m36_grid", 8, 36, "random", 512, spf=sp, wm=18, **knobs))
     # Rotation WMAN=16 coverage via the CORDIC table family (WMAN=11 dropped); w5_m16 also reaches the tiny-input
     # bypass (e <= -(GUARD_FF+2), needs a wide enough exponent field). w2_m16 stays exhaustive (2**18 codes); the
     # wider-WEXP rows are random because the total code space 2**(WEXP+WMAN) grows past exhaustive reach.
@@ -1079,6 +1128,7 @@ def _deep_coverage(out: list) -> None:
     out.append(_trans("cordic", s, "deep", "w5m16", 5, 16, "random", 2000, un=200, mode=1))
     out.append(_trans("cordic", s, "deep", "w6m18", 6, 18, "random", 2000, un=300, mode=1))  # the only UNROLL100=300
     out.append(_trans("cordic", s, "deep", "w5m16", 5, 16, "random", 2000, sn=1, pa=1, mode=1))
+    out.append(_trans("cordic", s, "deep", "w5m16", 5, 16, "random", 2000, dr=2, sn=3, mode=1))
     # Wide-format vectoring: at the small format some divider / shamt / significand / magnitude high bits sit above the
     # format ceiling; w8m24 makes them ordinary toggling mid-bits. (The exact net set shifts with WMAN, so this row
     # contributes advisory-toggle coverage, not a fixed net contract.)
@@ -1088,19 +1138,16 @@ def _deep_coverage(out: list) -> None:
     # w56s1 (wide directed): one-hot/low-magnitude vectors drive the full leading-zero-count range, toggling the high
     # count bits, the split digit registers, and the top-level z3 detect (its group only fits for W>=49). w130s1
     # pushes the radix-4 count to cnt[7] (CNTW=8 only for clog2(W) in {7,8}; count W-1=129 sets it, unreachable at
-    # narrower W or any embedded instance). STAGE_OUTPUT and standalone STAGE_SPLIT=2 (w32s2, NL4>=3); the bench
-    # checks out_valid/sb_out are delayed by STAGE_SPLIT + STAGE_OUTPUT.
-    for cfg, w, split, output, kind in [
-        ("w8s0", 8, 0, 0, "exhaustive"),
-        ("w8s1", 8, 1, 0, "exhaustive"),
-        ("w9s1", 9, 1, 0, "exhaustive"),
-        ("w32s1", 32, 1, 0, "directed"),
-        ("w56s1", 56, 1, 0, "directed"),
-        ("w130s1", 130, 1, 0, "directed"),
-        ("w8s0o1", 8, 0, 1, "exhaustive"),
-        ("w8s1o1", 8, 1, 1, "exhaustive"),
-        ("w32s2o0", 32, 2, 0, "directed"),
-        ("w32s2o1", 32, 2, 1, "directed"),
+    # narrower W or any embedded instance). Standalone STAGE_SPLIT=2 (w32s2, NL4>=3); the bench checks out_valid/sb_out
+    # are delayed by STAGE_SPLIT.
+    for cfg, w, split, kind in [
+        ("w8s0", 8, 0, "exhaustive"),
+        ("w8s1", 8, 1, "exhaustive"),
+        ("w9s1", 9, 1, "exhaustive"),
+        ("w32s1", 32, 1, "directed"),
+        ("w56s1", 56, 1, "directed"),
+        ("w130s1", 130, 1, "directed"),
+        ("w32s2", 32, 2, "directed"),
     ]:
         out.append(
             _run(
@@ -1108,10 +1155,10 @@ def _deep_coverage(out: list) -> None:
                 s,
                 "deep",
                 cfg,
-                [("W", w), ("STAGE_SPLIT", split), ("STAGE_OUTPUT", output)],
+                [("W", w), ("STAGE_SPLIT", split)],
                 kind=kind,
                 count=0,
-                plus_names={"W": "ZKF_NS_W", "STAGE_SPLIT": "ZKF_NS_SPLIT", "STAGE_OUTPUT": "ZKF_NS_OUTPUT"},
+                plus_names={"W": "ZKF_NS_W", "STAGE_SPLIT": "ZKF_NS_SPLIT"},
             )
         )
     for cfg, w, split, kind in [
@@ -1149,7 +1196,6 @@ def _deep_coverage(out: list) -> None:
     # via _zkf_pack_delay comes from divsqrt's maxpipe rows above). One config per branch suffices under merged-union.
     out.append(_binary("mul", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sp=0, so=1))
     out.append(_binary("add", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=0, sa=0, so=1))
-    out.append(_binary("addsub", s, "deep", "w3m5", 3, 5, "exhaustive", 0, sd=1, sa=1, so=1))
     out.append(_cast("from_int", s, "deep", "w4m5i7", 4, 5, 7, "exhaustive", 0, 0, so=1))
     # Identity widen (FRAC_PAD=0, BIAS_OFFSET=0): registered s_y has no structurally-zero padding, so every bit
     # toggles; a padding-bearing widen would leave low s_y bits permanently 0.
@@ -1169,42 +1215,25 @@ def _deep_coverage(out: list) -> None:
 
 def _properties(out: list) -> None:
     s = "icarus"
-    for op in ("add", "addsub"):
-        tgt = f"sim_properties_{op}_icarus"
-        for sd in (0, 1):
-            for sa in (0, 1):
-                for cfg, w, m, k, c in BINARY:
-                    out.append(_binary(op, s, "properties", cfg, w, m, k, c, sd=sd, sa=sa, target=tgt, root_module=op))
+    tgt = "sim_properties_add_icarus"
+    for sd in (0, 1):
+        for sa in (0, 1):
+            for cfg, w, m, k, c in BINARY:
+                out.append(_binary("add", s, "properties", cfg, w, m, k, c, sd=sd, sa=sa, target=tgt))
+    tgt = "sim_properties_mul_icarus"
     for sp in (0, 1):
         for cfg, w, m, k, c in BINARY:
-            out.append(
-                _binary(
-                    "mul",
-                    s,
-                    "properties",
-                    cfg,
-                    w,
-                    m,
-                    k,
-                    c,
-                    sp=sp,
-                    target="sim_properties_mul_icarus",
-                    root_module="mul",
-                )
-            )
+            out.append(_binary("mul", s, "properties", cfg, w, m, k, c, sp=sp, target=tgt))
 
 
 # Smoke set: (name, module, extra-vlog).
 _FAST = [
     ("pack", "pack", [("WEXP", 2), ("WMAN", 4), ("WEXP_UNBIASED", 4)]),
     ("cmp", "cmp", [("WEXP", 2), ("WMAN", 4)]),
-    ("sort", "sort", [("WEXP", 2), ("WMAN", 4)]),
     ("absneg", "absneg", [("WEXP", 2), ("WMAN", 4)]),
     ("finite", "finite", [("WEXP", 2), ("WMAN", 4)]),
     ("add_sd0_sa0", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),
     ("add_sd1_sa1", "add", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
-    ("addsub_sd0_sa0", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 0), ("STAGE_ALIGN", 0)]),
-    ("addsub_sd1_sa1", "addsub", [("WEXP", 2), ("WMAN", 4), ("STAGE_DECODE", 1), ("STAGE_ALIGN", 1)]),
     ("ilog2rt_sd0", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 0)]),
     ("ilog2rt_sd1", "mul_ilog2", [("WEXP", 2), ("WMAN", 4), ("WK", 3), ("STAGE_DECODE", 1)]),
     ("ilog2_si0", "ilog2", [("WEXP", 2), ("WMAN", 4), ("WINT", 3), ("STAGE_INPUT", 0), ("LATENCY", 1)]),

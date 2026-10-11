@@ -54,12 +54,12 @@ def directed_values(fmt: ZkfFormat) -> list[tuple[str, int]]:
             if 1 <= exp <= fmt.exp_max_finite:
                 out.append((f"pow2_{k}", normal(fmt, 0, exp, 0)))
                 out.append((f"neg_pow2_{k}", normal(fmt, 1, exp, 0)))  # negative -> domain error
-        # Top finite exp/frac exercise the reduced WNORM upper range: the re-center branch may carry e to 2^(WEXP-1),
-        # but log2(m') is then negative so the finite result stays just below that bound.
+        # Top finite exp/frac: the re-center branch may carry e to 2^(WEXP-1), but log2(m') is then negative so the
+        # finite result stays just below that bound.
         for frac in sorted({0, 1, fmt.frac_mask >> 1, fmt.frac_mask - 1, fmt.frac_mask}):
             out.append((f"max_exp_frac_{frac}", normal(fmt, 0, fmt.exp_max_finite, frac)))
         # x=2^k yields exact integer y=k; for |k| a power of two, y's significand is a power of two, and the neighbors
-        # exercise the rounder/normalizer around those output exponent boundaries.
+        # exercise the rounding around those output exponent boundaries.
         for p in range(fmt.wexp):
             k = 1 << p
             for delta in (-1, 0, 1):
@@ -88,6 +88,14 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[UnaryCas
             add_unique(cases, seen, "exhaustive", fmt, x)
         return cases
 
+    if kind == "strata":
+        from tools.zkf_transcendental import directed_strata
+
+        for label, values in directed_strata("log2", fmt).items():
+            for x in values:
+                add_unique(cases, seen, label, fmt, x)
+        return cases
+
     for label, value in directed_values(fmt):
         add_unique(cases, seen, label, fmt, value)
 
@@ -96,7 +104,11 @@ def cases_for(fmt: ZkfFormat, kind: str, seed: int, count: int) -> list[UnaryCas
 
     rng = np.random.default_rng(seed)
     while len(cases) < count:
-        x = random_operand(fmt, rng) if int(rng.integers(0, 4)) else random_bits(fmt.wfull, rng)
+        mode = int(rng.integers(0, 4))
+        if mode >= 2:  # half of the other draws are negative
+            x = fmt.pack(0, int(rng.integers(1, fmt.exp_inf)), random_bits(fmt.wfrac, rng)).bits
+        else:
+            x = random_operand(fmt, rng) if mode else random_bits(fmt.wfull, rng)
         add_unique(cases, seen, "random", fmt, x)
     return cases
 
@@ -116,11 +128,12 @@ async def log2_runtime_cases(dut) -> None:
 
     register_stages = fmt.model_of("log2")(
         stage_input=context.stage_input,
-        stage_decode=context.stage_decode,
         stage_product=context.stage_product,
+        stage_product_square=context.stage_product_square,
+        stage_product_odd=context.stage_product_odd,
+        stage_product_chain=context.stage_product_chain,
+        stage_align=context.stage_align,
         stage_product_final=context.stage_product_final,
-        stage_normalize=context.stage_normalize,
-        stage_normalize_output=context.stage_normalize_output,
         stage_pack=context.stage_pack,
         stage_output=context.stage_output,
     ).timing.latency
