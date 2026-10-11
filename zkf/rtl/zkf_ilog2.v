@@ -1,9 +1,7 @@
 // Extracts the raw unbiased exponent as an integer, including limit cases of zero (-bias) and infinity (bias+1).
 // In principle follows C++'s std::ilogb() modulo edge case handling.
 // Result and zero/infinity ignore sign and fraction; negative reports the raw sign bit, including negative zero.
-// WINT >= WEXP+1. Outputs are meaningful with out_valid; II=1.
-//
-// LATENCY = 1 + STAGE_*
+// WINT >= WEXP+1. Outputs are meaningful with out_valid; II=1; latency is 1 + STAGE_INPUT cycles.
 
 `default_nettype none
 

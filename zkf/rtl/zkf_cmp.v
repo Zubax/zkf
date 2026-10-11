@@ -9,10 +9,8 @@
 //
 // STAGE_INPUT: registers ahead of the compare.
 // STAGE_OUTPUT: registers after it.
-// Values above one add dummy stages for routing-congested designs. With both zero the module is combinational and
-// clk/rst are ignored.
-//
-// LATENCY = STAGE_*
+// Each knob is a register count costing as many cycles; values above one add dummy stages for routing-congested
+// designs. With both zero the module is combinational and clk/rst are ignored.
 
 `default_nettype none
 
