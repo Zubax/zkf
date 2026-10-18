@@ -19,7 +19,7 @@ from amaranth.lib.wiring import In, Out
 
 from ._block import Attrs, delay, pipe
 from ._pack import pack_reference
-from ._pmul import Pmul, counts, held, positions, slices
+from ._pmul import Pmul, counts, positions, slices
 from ._value import UnsupportedFormat, ZkfFormat
 
 _ERR_GUARD = 8
@@ -170,11 +170,9 @@ class Kernel(wiring.Component):
 
     The table is addressed by the combinational argument, and the first register is its own, `w` beside it; `depth`
     more follow, and the last sum is combinational. `stages` is the count of every product (see `zkf._pmul.Pmul`), each
-    capped at its own positions, those of one multiplier at its output and operands. A product whose operands are the
-    kernel's registers counts them as its capture: `w**2` that of `w`, a product by `w**2` the square's and its pair's;
-    a product of a coefficient builds its own, the table's register not counting. `c[2i+1]*w` of one multiplier has its
-    output after its pair's sum. `rom_attrs` goes on the table, `mul_attrs` on the products' registers that `Pmul`
-    puts them on and on those of the kernel that a product counts as its capture.
+    capped at its own positions, those of one multiplier at its output and operands; each product builds its own
+    capture. `c[2i+1]*w` of one multiplier has its output after its pair's sum. `rom_attrs` goes on the table,
+    `mul_attrs` on the products' captures.
     """
 
     in_valid: Signal
@@ -219,17 +217,6 @@ class Kernel(wiring.Component):
         rows, half, total = spec.coeffs, d // 2, at.total
         cw, fields = _widths(spec)
 
-        sizes, outer = _sizes(spec), f"p{2 * half}"
-
-        def credited(name: str) -> Attrs:
-            """`mul_attrs` where registers of the kernel are the product's capture and that capture is `held`."""
-            a, b = sizes[name]
-            taken = held(a, b, signed=False, wmultiplier=self._wmultiplier, stages=at.stages[name])
-            return self._mul_attrs if name in at.captured and taken else {}
-
-        # The chain's outer product takes the square from the square's own register where no delay follows it.
-        feeds = bool(credited(outer)) and at.turn[half] == at.ready["sq"]
-
         def product(name: str, a: Value, b: Value, stages: int | None = None) -> Value:
             m.submodules[name] = multiplier = Pmul(
                 len(a),
@@ -237,9 +224,7 @@ class Kernel(wiring.Component):
                 signed=False,
                 wmultiplier=self._wmultiplier,
                 stages=at.stages[name] if stages is None else stages,
-                captured=name in at.captured,
                 attrs=self._mul_attrs,
-                feeds=feeds and name.startswith("sq"),
             )
             m.d.comb += multiplier.a.eq(a)
             m.d.comb += multiplier.b.eq(b)
@@ -262,7 +247,7 @@ class Kernel(wiring.Component):
             m.d.comb += self.rc.eq(segment >= spec.thr)
         valid = Signal(name="v_r")
         m.d.sync += valid.eq(self.in_valid)
-        w = Signal(rw, name="w_r", reset_less=True, attrs=dict(credited("sq_hh" if th else "sq")))
+        w = Signal(rw, name="w_r", reset_less=True)
         m.d.sync += w.eq(argument[:rw])
         c = [Cat(read.data.c0, Const(1, 1))] + [read.data[f"c{j}"] for j in range(1, d + 1)]
 
@@ -279,7 +264,7 @@ class Kernel(wiring.Component):
         for i in range(1, half + 1):
             j = 2 * i + 1
             if j > d:
-                pair[i] = delay(m, f"c{2 * i}_s", cw[2 * i], c[2 * i], at.turn[i], credited(outer))
+                pair[i] = delay(m, f"c{2 * i}_s", cw[2 * i], c[2 * i], at.turn[i])
                 continue
             name, a, b, formed = f"p{j}", c[j], w[rw - t[i] :], at.ready[f"p{j}"]
             if name in at.post:
@@ -293,9 +278,7 @@ class Kernel(wiring.Component):
             even = delay(m, f"c{2 * i}_d", cw[2 * i], c[2 * i], formed)
             term = pj[t[i] - (cw[j] - fields[j]) :]
             first = (even + term if exp2 else even - term)[: pair_bits[i]]
-            pair[i] = delay(
-                m, f"pair{i}_", pair_bits[i], first, at.turn[i] - formed, credited(outer) if i == half else None
-            )
+            pair[i] = delay(m, f"pair{i}_", pair_bits[i], first, at.turn[i] - formed)
 
         # w**2: of two products where its operand is wider than a multiplier, the low part's own square left out.
         ws = w[rw - t2 :]
@@ -305,7 +288,7 @@ class Kernel(wiring.Component):
             square = (high[base - 2 * tl :] + cross[base - tl - 1 :])[sg : q[0] + sg]
         else:
             square = product("sq", ws, ws)[2 * t2 - q[0] :]
-        square = delay(m, "sq_d", q[0], square, at.turn[half] - at.ready["sq"], credited(outer))
+        square = delay(m, "sq_d", q[0], square, at.turn[half] - at.ready["sq"])
 
         # The chain: a product with the square takes the pair above, its sum with the pair below feeds the next.
         value = pair[half]
@@ -551,13 +534,12 @@ def _caps(spec: Spec, wmultiplier: int) -> dict[str, int]:
 @dataclass(frozen=True)
 class _Schedule:
     """
-    The kernel's products in stages after the table's register: the count of each, by name; those that count registers
-    of the kernel as their capture; the odd ones whose output follows the pair's sum; when the result of each is formed
-    (`sq` the square's); when pair `i` joins the chain, the top one at its start; the total.
+    The kernel's products in stages after the table's register: the count of each, by name; the odd ones whose output
+    follows the pair's sum; when the result of each is formed (`sq` the square's); when pair `i` joins the chain, the
+    top one at its start; the total.
     """
 
     stages: dict[str, int]
-    captured: frozenset[str]
     post: frozenset[str]
     ready: dict[str, int]
     turn: dict[int, int]
@@ -573,19 +555,14 @@ def _schedule(spec: Spec, wmultiplier: int, stages: int) -> _Schedule:
     assert len({n[name] for name in squares}) == 1, "the square's products are of one size"
     square = n[squares[0]]
     ready = {name: n[name] for name in caps if name in ("p1", "pl", *odd)}
-    ready |= {name: max(0, n[name] - 1) for name in post} | {"sq": square - (square >= 2)}
-    # The chain starts once the square and every pair are formed, that of a `post` product in its register. Its top
-    # product counts its operands as its capture where both are registers there; the others take a sum.
+    ready |= {name: max(0, n[name] - 1) for name in post} | {"sq": square}
+    # The chain starts once the square and every pair are formed, that of a `post` product in its register.
     feed = max([ready["sq"], *(n[name] for name in odd)])
-    top = f"p{2 * half + 1}"
-    registered = feed > ready.get(top, 0) and (feed > ready["sq"] or (not spec.th and square > 0))
-    captured = frozenset(squares) | ({f"p{2 * half}"} if registered else frozenset())
     turn, start = {half: feed}, feed
     for i in range(half - 1, -1, -1):
-        name = f"p{2 * (i + 1)}"
-        start += n[name] - (name in captured and n[name] >= 2)
+        start += n[f"p{2 * (i + 1)}"]
         if i:
             turn[i] = start
     ready["p2"] = start
     total = max(ready[name] for name in ("p1", "pl", "p2") if name in ready)
-    return _Schedule(n, captured, post, ready, turn, total)
+    return _Schedule(n, post, ready, turn, total)

@@ -7,7 +7,7 @@ from _bench import Case, run_pipeline
 from _operands import SEED, random_bits
 from zkf import Exp2, Log2, ZkfFormat
 from zkf._pmul import slices
-from zkf._trans import Kernel, Spec, _schedule, _sizes, kernel_counts, spec as table
+from zkf._trans import Kernel, Spec, _sizes, kernel_counts, spec as table
 
 
 def arguments(width: int, rw: int, count: int) -> list[int]:
@@ -62,16 +62,6 @@ def test_other_multipliers(function: str, wmultiplier: int) -> None:
 def test_every_row(function: str, wman: int) -> None:
     spec = table(function, wman, 18)
     every_row(spec, Kernel(spec, wmultiplier=18, stages=kernel_counts(spec, 18).start))
-
-
-def test_what_a_product_counts_as_its_capture() -> None:
-    """
-    The square takes the register of `w`, and the top of the chain those of the square and of its pair, which `c3*w`
-    of one multiplier gives after the pair's sum; a product of the chain fed by a sum takes none.
-    """
-    assert _schedule(table("exp2", 36, 18), 18, 3).captured == {"sq_hh", "sq_hl", "p2"}
-    assert _schedule(table("exp2", 40, 18), 18, 3).captured == {"sq", "p4"}
-    assert _schedule(table("log2", 53, 18), 18, 3).captured == {"sq", "p4"}
 
 
 @pytest.mark.parametrize("wman", [18, 36, 40, 53])

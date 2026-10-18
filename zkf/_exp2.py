@@ -53,11 +53,7 @@ class Exp2(Operator):
     Synthesis attributes of the table's memory, such as `{"rom_style": "block"}`; those of several tools can be mixed.
     """
     mul_attrs: Attrs | None = field(default=None, compare=False)
-    """
-    On the captures of the kernel's products where a register follows their multipliers: a product's own, or the
-    kernel's registers that it takes as its capture (the argument, the square, the outer pair, an odd product's
-    operands).
-    """
+    """On the captures of the kernel's products where a register follows their multipliers."""
 
     def __post_init__(self) -> None:
         super().__post_init__()

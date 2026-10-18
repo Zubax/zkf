@@ -71,12 +71,12 @@ def test_strata() -> None:
 def test_timing() -> None:
     fmt = ZkfFormat(6, 18)
     assert build("log2", fmt, 24, stage_core_kernel=0).timing.latency == 3  # a kernel of single multipliers
-    assert build("log2", fmt, stage_core_kernel=2, stage_core_mul=2).timing.latency == 5
-    assert build("log2", fmt, stage_core_kernel=3, stage_core_mul=3).timing.latency == 7
-    assert [build("log2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in (3, 4)] == [8, 8]
-    assert [build("log2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in Core] == [9, 9]
+    assert build("log2", fmt, stage_core_kernel=2, stage_core_mul=2).timing.latency == 7
+    assert build("log2", fmt, stage_core_kernel=3, stage_core_mul=3).timing.latency == 8
+    assert [build("log2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in (3, 4)] == [9, 9]
+    assert [build("log2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in Core] == [10, 10]
     ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~Core(0), "stage_output": 3}
-    assert build("log2", ZkfFormat(8, 36), **ends).timing.latency == 15
+    assert build("log2", ZkfFormat(8, 36), **ends).timing.latency == 16
 
 
 def test_refusals() -> None:

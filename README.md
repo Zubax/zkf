@@ -62,8 +62,8 @@ The `timing` property gives the latency and the initiation interval (II) of the 
 Operators that multiply take `wmultiplier`, the operand width of the target's multipliers (16, 18 and 24 bits are
 common in modern FPGAs; in the absence of hard DSP blocks any value will work).
 
-`rom_attrs` and `mul_attrs` pass synthesis attributes to the lookup tables and to certain critical registers,
-e.g. `rom_attrs={"rom_style": "block"}` or, for Vivado, `mul_attrs={"keep": "true"}`.
+`rom_attrs` and `mul_attrs` pass synthesis attributes to the lookup tables and to the products' operand registers,
+e.g. `rom_attrs={"rom_style": "block"}`.
 
 Use `zkf.Pipe` to delay your own control or sideband signals by an operator's latency so they land with its output.
 
@@ -288,7 +288,6 @@ not all states are mappable between the formats.
 
 Roughly ordered by severity.
 
-- Mul's input-stage credit (where `stage_input` > 0 its last input stage is the product's capture) is provisional.
 - The packer's sticky bit is gathered behind the normalizer's last shift, which is what binds `cordic` at 8/36
   next (14 to 18 levels); it can be gathered beside the last two levels. The detects of the later levels wait for
   the shifts ahead of them likewise, and the sum of a product's rows is two carry chains in a row.
@@ -300,7 +299,6 @@ Roughly ordered by severity.
   degree 3. For the optimization pass.
 - The table of `cordic`'s angles becomes a memory on Yosys, which doubles the engine's LUTs at two iterations a
   cycle, and the equivalence test's proof does not finish at two or four; no spec runs at those rates.
-- `FloatLayout.const` takes a bare integer as raw bits.
 - Icarus in SystemVerilog mode (`-g2012`, which cocotb uses) leaves values unknown where a combinational block of
   the printed text sees no event after time zero: with the initial values, on the vectoring-only `cordic`; with a
   reset held from time zero and no transition, on the valid flags. Verilator and Icarus in Verilog-2005 mode show

@@ -141,7 +141,7 @@ def cores() -> Iterator[Callable[[], wiring.Component]]:
                 )
     # Signed 53x18: a pair level without row sums.
     sizes = ((66, 41, 18), (29, 20, 11), (18, 18, 18), (53, 53, 8), (36, 36, 18), (12, 12, 5), (53, 18, 18))
-    for (wa, wb, wmultiplier), signed, captured, sideband in product(sizes, (False, True), (False, True), (None, side)):
+    for (wa, wb, wmultiplier), signed, sideband in product(sizes, (False, True), (None, side)):
         for stages in range(len(positions(wa, wb, signed=signed, wmultiplier=wmultiplier)) + 1):
             yield partial(
                 Pmul,
@@ -150,7 +150,6 @@ def cores() -> Iterator[Callable[[], wiring.Component]]:
                 signed=signed,
                 wmultiplier=wmultiplier,
                 stages=stages,
-                captured=captured,
                 sideband=sideband,
             )
 

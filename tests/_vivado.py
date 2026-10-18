@@ -4,15 +4,12 @@ import re
 import shutil
 from pathlib import Path
 
-from _catalog import KEPT
 from _harness import Design, Row, run
 
 TOOLS = ("vivado",)
 PART = "xc7a100tcsg324-1"
 """The slowest speed grade."""
 FREQ_MHZ = 150.0
-MUL_ATTRS = {"keep": "true"}
-"""What the specs of `KEPT` take."""
 TIMEOUT_S = 3600
 
 
@@ -33,7 +30,7 @@ def synthesize(design: Design, directory: Path) -> Row:
     """Writes the spec into the directory, cleared first, runs the flow and reads the row from what it left."""
     shutil.rmtree(directory, ignore_errors=True)
     directory.mkdir(parents=True)
-    sources = design.write(directory, mul_attrs=MUL_ATTRS if design.name in KEPT else None)
+    sources = design.write(directory)
     xdc, script = directory / "clock.xdc", directory / "run.tcl"
     xdc.write_text(f"create_clock -period {1000 / FREQ_MHZ:.3f} -name clk [get_ports clk]\n")
     script.write_text(tcl(design, sources.rtl, sources.harness, xdc))

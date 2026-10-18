@@ -59,12 +59,10 @@ class Pmul(wiring.Component):
 
     The operands are cut into their `slices`, one row of the grid of their products per slice of `a`, and the products
     are summed: unsigned ones by the diagonals of the grid, signed ones by rows, then the rows. `stages` turns on the
-    first of `positions`: `p`; the operands, built unless `captured` says that they come from registers already; the
-    grid; each level of the sum but its last, from the grid's. The latency is `stages`, less the capture where
-    `captured`.
+    first of `positions`: `p`; the operands; the grid; each level of the sum but its last, from the grid's. The latency
+    is `stages`.
 
-    `attrs` go on the registers that the multipliers take their operands from: the capture where it is `held`, never
-    ahead of multipliers with no register behind; and `p`'s register where it `feeds` another product as its capture.
+    `attrs` go on the capture where it is `held`.
     """
 
     in_valid: Signal
@@ -81,20 +79,16 @@ class Pmul(wiring.Component):
         signed: bool,
         wmultiplier: int,
         stages: int,
-        captured: bool = False,
         sideband: ShapeLike | None = None,
         attrs: Attrs | None = None,
-        feeds: bool = False,
     ) -> None:
         named = positions(wa, wb, signed=signed, wmultiplier=wmultiplier)
         assert 0 <= stages <= len(named), (stages, named)
         behind = held(wa, wb, signed=signed, wmultiplier=wmultiplier, stages=stages)
         self._capture_attrs = dict(attrs or {}) if behind else {}
-        self._output_attrs = dict(attrs or {}) if feeds else {}
         self._wa, self._wb, self._signed, self._sideband = wa, wb, signed, sideband
         self._stages = stages
-        self._capture = stages >= 2 and not captured
-        self._latency = stages - (stages >= 2 and captured)
+        self._capture = stages >= 2
         self._ga, self._gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
         members = {"in_valid": In(1), "a": In(wa), "b": In(wb), "out_valid": Out(1), "p": Out(wa + wb)}
         if sideband is not None:
@@ -103,7 +97,7 @@ class Pmul(wiring.Component):
 
     @property
     def latency(self) -> int:
-        return self._latency
+        return self._stages
 
     def elaborate(self, platform: object) -> Module:
         m = Module()
@@ -179,7 +173,7 @@ class Pmul(wiring.Component):
             lows, highs = [low[i][0] for i in range(ga)], [high[i][gb - 1] for i in range(ga)]
             total = self._sum(m, "sum", rows, lows, highs, wp, range(len(cuts) - split))
         if stages:
-            p_r = Signal(wp, name="p_r0", reset_less=True, attrs=self._output_attrs)
+            p_r = Signal(wp, name="p_r0", reset_less=True)
             m.d.sync += p_r.eq(total)
             total = p_r
         m.d.comb += self.p.eq(total)

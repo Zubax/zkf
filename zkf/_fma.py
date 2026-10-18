@@ -16,7 +16,7 @@ class Fma(Operator):
     `y = a * b + c`, rounded once; `a * b - c` with the sign bit of `c` flipped.
 
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core_mul`: the product's registers, as Mul's, without its input-stage credit.
+    `stage_core_mul`: the product's registers, as Mul's.
     `stage_core_add`: the sum's registers, a set of `Add.Core`; its decoded operands are the product and `c`.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     `wmultiplier`: the operand width of the target's multipliers.

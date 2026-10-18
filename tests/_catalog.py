@@ -108,13 +108,18 @@ CATALOG: dict[str, Block | CoreSpec] = {
         # Unstaged, the discard mask into the rounding decision makes 74.1 and 59.5 MHz on Diamond.
         Rint(F18, stage_core=Rint.Core.MASK),
         Rint(F36, wint=44, stage_core=Rint.Core.MASK),
-        Exp2(F18, stage_core_kernel=2, wmultiplier=18),
-        Log2(F18, stage_core_kernel=2, stage_core_mul=2, wmultiplier=18),
-        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_output=1, wmultiplier=18),
-        Exp2(F24, stage_core_kernel=2, wmultiplier=18),
-        Log2(F24, stage_core_kernel=2, stage_core_mul=3, wmultiplier=18),
-        Exp2(F36, stage_core_kernel=3, wmultiplier=18),
-        # Without ALIGN Diamond makes 85.2 MHz.
+        # Without SUM Diamond makes 98.2 MHz, at stage_core_kernel=2 Vivado 150.04, under a 0.5% margin.
+        Exp2(F18, stage_core_kernel=3, stage_core=Exp2.Core.SUM, wmultiplier=18),
+        # Without ALIGN Diamond makes 93.6 and 90.9 MHz.
+        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.Core.ALIGN, wmultiplier=18),
+        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.Core.ALIGN, stage_output=1, wmultiplier=18),
+        # Without SUM Diamond makes 78.2 MHz, at stage_core_kernel=2 Vivado 149.1.
+        Exp2(F24, stage_core_kernel=3, stage_core=Exp2.Core.SUM, wmultiplier=18),
+        # Without ALIGN Diamond makes 97.0 MHz, at stage_core_kernel=2 Vivado 149.1.
+        Log2(F24, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.Core.ALIGN, wmultiplier=18),
+        # Without SUM Diamond makes 81.0 MHz.
+        Exp2(F36, stage_core_kernel=3, stage_core=Exp2.Core.SUM, wmultiplier=18),
+        # Without ALIGN Diamond makes 80.6 MHz.
         Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.Core.ALIGN, wmultiplier=18),
         # Without PACK or CORRECTIONS Yosys makes 92.4 and 98.7 MHz.
         Cordic(F18, mode=0, stage_core_mul=3, stage_core=_CORDIC_ROTATION, wmultiplier=18),
@@ -149,11 +154,3 @@ CATALOG: dict[str, Block | CoreSpec] = {
     )
 }
 """The specs by their module names."""
-
-KEPT = frozenset(name for name, spec in CATALOG.items() if isinstance(spec, Exp2 | Log2) and spec.fmt.wman < 36)
-"""
-The specs to which a flow that takes `mul_attrs` (Vivado's, `keep`) gives them, keeping a capture out of the DSP tile it
-feeds. Without, Vivado misses 150 MHz on log2 6/18 (125.7, 127.7) and 8/24 (147.9) and exp2 8/24 (149.2), and closes
-exp2 6/18 by 0.05 MHz; at 8/36 the gain is minor: exp2 155.2 without, 160.7 with, log2 154.4 and 155.2, the texts
-without being those that the suite synthesizes.
-"""

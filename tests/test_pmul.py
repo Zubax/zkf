@@ -33,11 +33,10 @@ def run(
     stages: int,
     wmultiplier: int,
     *,
-    captured: bool = False,
     pairs: list[tuple[int, int]] | None = None,
 ) -> None:
     sideband = data.StructLayout({"tag": 5, "flag": 1})
-    dut = Pmul(wa, wb, signed=signed, wmultiplier=wmultiplier, stages=stages, captured=captured, sideband=sideband)
+    dut = Pmul(wa, wb, signed=signed, wmultiplier=wmultiplier, stages=stages, sideband=sideband)
     cases = []
     for index, (a, b) in enumerate(pairs or operands(wa, wb, 160)):
         tag = {"tag": index & 31, "flag": (index >> 5) & 1}
@@ -48,10 +47,10 @@ def run(
 
 # Default tier: one product of each kind at every count; the deep tier walks every size and grid below.
 KINDS = [
-    (12, 12, False, 4, False),  # unsigned 3x3: diagonals with a pair level
-    (66, 41, True, 18, False),  # signed 4x3: rows, then the rows in pairs
-    (29, 20, True, 11, True),  # 3x2 whose operands come from registers
-    (18, 53, False, 18, False),  # 1x3: one row
+    (12, 12, False, 4),  # unsigned 3x3: diagonals with a pair level
+    (66, 41, True, 18),  # signed 4x3: rows, then the rows in pairs
+    (29, 20, True, 11),  # signed 3x2
+    (18, 53, False, 18),  # 1x3: one row
 ]
 
 
@@ -64,9 +63,9 @@ KINDS = [
     ],
     ids=str,
 )
-def test_kinds(kind: tuple[int, int, bool, int, bool], stages: int) -> None:
-    wa, wb, signed, wmultiplier, captured = kind
-    run(wa, wb, signed, stages, wmultiplier, captured=captured)
+def test_kinds(kind: tuple[int, int, bool, int], stages: int) -> None:
+    wa, wb, signed, wmultiplier = kind
+    run(wa, wb, signed, stages, wmultiplier)
 
 
 # Uneven, matched and narrow products, the widest of binary64, at every count, those that an operator refuses included;
@@ -87,13 +86,6 @@ SIZES = [(29, 20), (39, 24), (13, 25), (18, 18), (12, 12), (36, 36), (53, 53)]
 )
 def test_deep_depths(size: tuple[int, int], signed: bool, stages: int) -> None:
     run(*size, signed, stages, 18)
-
-
-# The capture that registered operands provide, unsigned 3x2 at every count that has it; the signed one is a kind.
-@pytest.mark.deep
-@pytest.mark.parametrize("stages", range(2, 5))
-def test_deep_captured(stages: int) -> None:
-    run(29, 20, False, stages, 11, captured=True)
 
 
 # wa, wb, signed, wmultiplier: the grids and sums each row is there for, each at every count.
@@ -174,7 +166,6 @@ def test_how_a_product_is_cut() -> None:
         assert positions(wa, wb, signed=signed, wmultiplier=wmultiplier) == ("output", "capture", "grid", *sums)
         assert counts(wa, wb, signed=signed, wmultiplier=wmultiplier) == taken
         for stages in range(levels + 4):
-            for captured in (False, True):
-                dut = Pmul(wa, wb, signed=signed, wmultiplier=wmultiplier, stages=stages, captured=captured)
-                assert (dut._ga, dut._gb) == grid, (wa, wb, signed, wmultiplier, stages)
-                assert dut.latency == stages - (captured and stages >= 2)
+            dut = Pmul(wa, wb, signed=signed, wmultiplier=wmultiplier, stages=stages)
+            assert (dut._ga, dut._gb) == grid, (wa, wb, signed, wmultiplier, stages)
+            assert dut.latency == stages

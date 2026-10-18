@@ -160,14 +160,11 @@ class Design:
         group = f"{type(self.model).__name__} {getattr(self.model, 'fmt', '')}"
         return {"name": self.name, "key": self.key, "register_stages": stages, "group": group}
 
-    def write(self, directory: Path, *, rom_attrs: Attrs | None = None, mul_attrs: Attrs | None = None) -> Sources:
-        """
-        The compiled text, with the attributes that the flow puts on a table's memory and on the registers ahead of the
-        products, and the harness.
-        """
+    def write(self, directory: Path, *, rom_attrs: Attrs | None = None) -> Sources:
+        """The compiled text, with the attributes that the flow puts on a table's memory, and the harness."""
         model = self.model
         if isinstance(model, Exp2 | Log2):
-            model = dataclasses.replace(model, rom_attrs=rom_attrs, mul_attrs=mul_attrs)
+            model = dataclasses.replace(model, rom_attrs=rom_attrs)
         sources = Sources(directory / "rtl.v", directory / "harness.v")
         sources.rtl.write_text(model.compile())
         pins, ties = ports(model.signature), unused(model)

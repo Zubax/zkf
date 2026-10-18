@@ -45,7 +45,7 @@ class Log2(Operator):
 
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
     `stage_core_kernel`: the registers of every product of the kernel, as that of `Exp2`.
-    `stage_core_mul`: the registers of the last product, `f * C(f)`, as Mul's, without its input-stage credit.
+    `stage_core_mul`: the registers of the last product, `f * C(f)`, as Mul's.
     `stage_core`: the registers of `Log2.Core` that are built.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     `wmultiplier`: the operand width of the target's multipliers, which the table is generated for.

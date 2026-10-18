@@ -46,7 +46,7 @@ class FloatView(data.View):
 
 
 class FloatLayout(data.StructLayout):
-    """The layout of a float port; in simulation it reads as `Zkf` and accepts `Zkf` or raw bits."""
+    """The layout of a float port; in simulation it reads as and accepts `Zkf`."""
 
     def __init__(self, fmt: ZkfFormat) -> None:
         self.fmt = fmt
@@ -59,9 +59,7 @@ class FloatLayout(data.StructLayout):
         if isinstance(init, Zkf):
             if init.fmt != self.fmt:
                 raise ValueError(f"{init.fmt} is not {self.fmt}")
-            init = init.bits
-        if isinstance(init, int):
-            return data.Const(self, init)
+            return data.Const(self, init.bits)
         return super().const(init)
 
     def from_bits(self, raw: int) -> Zkf:

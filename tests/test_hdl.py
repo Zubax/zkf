@@ -43,14 +43,14 @@ def test_ports_exchange_zkf() -> None:
             assert ctx.get(dut.y) == x
             assert (ctx.get(dut.zero), ctx.get(dut.inf)) == (x.is_zero, x.is_inf)
             assert ctx.get(dut.significand) == (1 << FMT.wfrac) | x.frac
-        ctx.set(dut.x, 5)
-        assert ctx.get(dut.y) == Zkf(FMT, 5)
 
     sim = Simulator(dut)
     sim.add_testbench(bench)
     sim.run()
 
 
-def test_another_format_is_refused() -> None:
+def test_a_constant_is_a_value_of_the_format() -> None:
     with pytest.raises(ValueError, match="is not"):
         FloatLayout(FMT).const(Zkf(ZkfFormat(5, 5), 0))
+    with pytest.raises(TypeError):
+        FloatLayout(FMT).const(3)

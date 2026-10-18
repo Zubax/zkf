@@ -207,16 +207,15 @@ def test_refusals() -> None:
         Mul(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=1)
 
 
-def test_the_last_input_register_is_the_capture() -> None:
-    """From the product's capture on, the input stages take its place: a cycle less."""
+def test_every_stage_is_a_cycle() -> None:
+    """The input stages are a cycle each ahead of the product's capture."""
 
     def latency(fmt: ZkfFormat, **knobs: Any) -> int:
         return Mul(fmt, wmultiplier=18, **knobs).timing.latency
 
     f36 = ZkfFormat(8, 36)
-    assert [latency(f36, stage_input=1, stage_core_mul=k) for k in (2, 3)] == [2, 3]
-    assert latency(f36, stage_input=1, stage_core_mul=3, stage_output=1) == 4
-    assert latency(ZkfFormat(6, 18), stage_input=2, stage_core_mul=1) == 3
+    assert [latency(f36, stage_input=1, stage_core_mul=k) for k in (2, 3)] == [3, 4]
+    assert latency(f36, stage_input=1, stage_core_mul=3, stage_output=1) == 5
 
 
 # The split product at 8/25 with its output registered.

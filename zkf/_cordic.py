@@ -77,8 +77,7 @@ class Cordic(Operator):
 
     `unroll100`: the engine's iterations per cycle in hundredths: 100 or a multiple of it, or 50 for two cycles each.
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core_mul`: the product's registers, as Mul's without its input-stage credit; a rotation passes the product
-    twice in series.
+    `stage_core_mul`: the product's registers, as Mul's; a rotation passes the product twice in series.
     `stage_core`: the registers of `Cordic.Core` that are built; a fixed mode refuses those it lacks.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     `wmultiplier`: the operand width of the target's multipliers.

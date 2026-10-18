@@ -1,4 +1,4 @@
-"""Every spec of the catalog through every synthesis flow, marked `synth`; and the checks that need no tool."""
+"""Every spec of the catalog through every synthesis flow, marked `synth`."""
 
 import os
 import shutil

@@ -6,7 +6,7 @@ from amaranth.lib.wiring import In, Out
 
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, pipe
 from ._pack import Pack, pack_reference
-from ._pmul import Pmul, check, held
+from ._pmul import Pmul, check
 from ._value import Zkf
 
 
@@ -17,8 +17,7 @@ class Mul(Operator):
 
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
     `stage_core_mul`: the product's registers, taken in this order: its output, its operands' capture, the grid of its
-    products (a lone multiplier's pipeline register), then the levels of the grid's sum. Where `stage_input` > 0 the
-    last input stage is the capture, so that from 2 on the latency is `stage_input + stage_core_mul + stage_output - 1`.
+    products (a lone multiplier's pipeline register), then the levels of the grid's sum.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     `wmultiplier`: the operand width of the target's multipliers.
     """
@@ -30,8 +29,8 @@ class Mul(Operator):
     wmultiplier: int
     mul_attrs: Attrs | None = field(default=None, compare=False)
     """
-    On the registers that the multipliers take their operands from, where a register follows them (one multiplier from
-    `stage_core_mul=1` on, a grid from 3 on): the last input stage, or without one the product's capture.
+    On the last input stage at `stage_core_mul=1`, which the multiplier takes the operands from; from 2 on, on the
+    product's capture, where a register follows the multipliers (a grid's from 3 on).
     """
 
     def __post_init__(self) -> None:
@@ -47,8 +46,7 @@ class Mul(Operator):
 
     @property
     def timing(self) -> Timing:
-        credit = int(self.stage_input > 0 and self.stage_core_mul >= 2)
-        return Timing(self.stage_input + self.stage_core_mul - credit + self.stage_output, 1)
+        return Timing(self.stage_input + self.stage_core_mul + self.stage_output, 1)
 
     @property
     def signature(self) -> wiring.Signature:
@@ -91,12 +89,10 @@ class _Mul(wiring.Component):
         model, fmt = self._model, self._model.fmt
         wman, wexp_biased = fmt.wman, fmt.wexp + 2
 
-        # The last input stage is what the multipliers take their operands from: the capture, or below it, their input.
-        behind = held(wman, wman, signed=False, wmultiplier=model.wmultiplier, stages=model.stage_core_mul)
-        attrs = model.mul_attrs if behind else None
+        direct = model.stage_core_mul == 1
         operands = data.StructLayout({"a": FloatLayout(fmt), "b": FloatLayout(fmt)})
         given = bundle(operands, a=self.a, b=self.b)
-        valid, q = pipe(m, "in", self.in_valid, operands, given, model.stage_input, attrs)
+        valid, q = pipe(m, "in", self.in_valid, operands, given, model.stage_input, model.mul_attrs if direct else None)
         a, b = q.a, q.b
 
         # The exponent stays biased: one bias is subtracted here, and the packer adds none.
@@ -109,7 +105,6 @@ class _Mul(wiring.Component):
             signed=False,
             wmultiplier=model.wmultiplier,
             stages=model.stage_core_mul,
-            captured=model.stage_input > 0,
             sideband=side,
             attrs=model.mul_attrs,
         )

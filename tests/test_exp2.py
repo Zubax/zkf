@@ -63,12 +63,12 @@ def test_timing() -> None:
     a cycle.
     """
     fmt = ZkfFormat(6, 18)
-    assert [Exp2(fmt, wmultiplier=24, stage_core_kernel=k).timing.latency for k in range(3)] == [1, 3, 3]
-    assert [Exp2(fmt, wmultiplier=18, stage_core_kernel=k).timing.latency for k in (2, 3)] == [3, 4]
-    assert [build("exp2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in (3, 4)] == [5, 5]
-    assert [build("exp2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in Core] == [6, 6]
+    assert [Exp2(fmt, wmultiplier=24, stage_core_kernel=k).timing.latency for k in range(3)] == [1, 3, 5]
+    assert [Exp2(fmt, wmultiplier=18, stage_core_kernel=k).timing.latency for k in (2, 3)] == [5, 5]
+    assert [build("exp2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in (3, 4)] == [6, 6]
+    assert [build("exp2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in Core] == [7, 7]
     ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~Core(0), "stage_output": 3}
-    assert build("exp2", ZkfFormat(8, 36), **ends).timing.latency == 12
+    assert build("exp2", ZkfFormat(8, 36), **ends).timing.latency == 13
 
 
 def test_refusals() -> None:
