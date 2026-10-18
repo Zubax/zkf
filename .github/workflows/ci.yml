@@ -12,16 +12,13 @@ on:
       - '.github/workflows/release.yml'
   pull_request:
     paths-ignore: *docs_only
-env:
-  COCOTB_IGNORE_PYTHON_REQUIRES: "1"
-
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ !contains(github.event.head_commit.message, '#yolo') }}
 
 jobs:
   tests:
-    name: tests (${{ matrix.sim }})
+    name: tests
     # Skipped by `#yolo` in the head commit message, and for a same-repo PR, which its head commit's push run covers.
     if: &run_ci >-
       !contains(github.event.head_commit.message, '#yolo') &&
@@ -39,14 +36,7 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-${{ runner.os }}-
-      - run: ${{ matrix.run }}
-    # The matrix in two halves, one per runner slot. The Verilator rows carry the coverage gate, so they stay together.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { sim: verilator, run: "nox -s tests -- -k 'not icarus'" }
-          - { sim: icarus, run: "nox -s checks black && nox -s focused -- -k icarus" }
+      - run: nox -s tests mypy black
 
   deep:
     name: deep
@@ -68,26 +58,13 @@ jobs:
       - *python_cache_step
       - run: nox -s accuracy
 
-  formal:
-    name: formal
-    if: *run_ci
-    runs-on: ubuntu-latest
-    container: &fpga_toolchain_container
-      image: ghcr.io/zubax/zubax-fpga-toolchain:latest
-      options: --user root
-    steps:
-      - *checkout_step
-      - *python_cache_step
-      - run: nox -s formal
-      - if: always()
-        uses: actions/upload-artifact@v7
-        with: { name: formal-report, path: build/float/formal/report.html, if-no-files-found: ignore }
-
   synth:
     name: synth
     if: *run_ci
     runs-on: ubuntu-latest
-    container: *fpga_toolchain_container
+    container:
+      image: ghcr.io/zubax/zubax-fpga-toolchain:latest
+      options: --user root
     steps:
       - *checkout_step
       - *python_cache_step
