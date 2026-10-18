@@ -72,3 +72,16 @@ jobs:
       - if: always()
         uses: actions/upload-artifact@v7
         with: { name: synth-artifacts, path: build, if-no-files-found: ignore }
+
+  synth_vendor:
+    name: synth_vendor
+    if: *run_ci
+    runs-on: [self-hosted, ci-runner]
+    container: *mega_toolchain_container
+    steps:
+      - *checkout_step
+      - *python_cache_step
+      - run: nox -s synth_vendor
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with: { name: synth_vendor-artifacts, path: build, if-no-files-found: ignore }

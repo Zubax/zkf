@@ -288,7 +288,6 @@ not all states are mappable between the formats.
 
 Roughly ordered by severity.
 
-- Diamond and Vivado are not in CI; the synthesis tests run them where their tools are found.
 - Mul's input-stage credit (where `stage_input` > 0 its last input stage is the product's capture) is provisional.
 - The packer's sticky bit is gathered behind the normalizer's last shift, which is what binds `cordic` at 8/36
   next (14 to 18 levels); it can be gathered beside the last two levels. The detects of the later levels wait for
