@@ -15,6 +15,9 @@ on:
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: ${{ !contains(github.event.head_commit.message, '#yolo') }}
+env:
+  # Every test by name with its outcome, and why each skipped one was skipped.
+  PYTEST_ADDOPTS: -v -rs
 
 jobs:
   tests:
