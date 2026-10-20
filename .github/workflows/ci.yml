@@ -84,6 +84,8 @@ jobs:
     steps:
       - *checkout_step
       - *python_cache_step
+      # Vivado's first start installs its Tcl store in the home, which the parallel runs would otherwise race over.
+      - run: vivado -mode batch -nojournal -nolog -source /dev/null
       - run: nox -s synth_vendor
       - if: always()
         uses: actions/upload-artifact@v7
