@@ -220,12 +220,13 @@ def test_cut_each_register(mode: int) -> None:
 def test_timing() -> None:
     """A register is a cycle of the modes on whose path it is."""
     fmt = ZkfFormat(6, 18)
-    assert timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18)) == [(20, 21), (33, 34)]
+    assert timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18)) == [(15, 15), (26, 26)]
+    assert timings(Cordic(fmt, unroll100=50, stage_core_mul=3, wmultiplier=18)) == [(23, 23), (33, 33)]
     steps = {member: (1, 0) for member in _ROTATION} | {member: (0, 1) for member in _VECTORING}
     for member in Core:
         rot, vec = steps.get(member, (1, 1))
         found = timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18, stage_core=member))
-        assert found == [(20 + rot, 21 + rot), (33 + vec, 34 + vec)], member
+        assert found == [(15 + rot, 15 + rot), (26 + vec, 26 + vec)], member
 
 
 def test_refusals() -> None:

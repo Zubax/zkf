@@ -44,6 +44,10 @@ A Yosys script that runs `opt` after `proc` with no `opt_clean` between them sto
 some configurations; `attrmap -remove init` before `proc` avoids it, and the registers keep their initial values.
 This is mostly a Yosys quirk rather than a library issue.
 
+Read as SystemVerilog (Icarus `-g2012`, which cocotb uses), the printed text needs a reset edge after time zero, or
+its valid flags stay unknown; even then the angle of `zkf.Cordic`'s first vectoring is unknown. Read as Verilog-2005,
+it shows neither.
+
 ### Tuning knobs
 
 Operators can be tuned for the target chip with register-stage knobs, all off by default:
@@ -87,7 +91,7 @@ II - initiation interval (cycles between accepting new inputs; 1 for zero-bubble
 | `zkf.Divsqrt`   | 1       | `a ÷ b` or `√a`; `error` iff /0 or domain error.                                              | Correct rounding, 0.5 ULP   |
 | `zkf.Exp2`      | 1       | `2^x`                                                                                         | Faithful rounding, see below|
 | `zkf.Log2`      | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.                                          | Faithful rounding, see below|
-| `zkf.Cordic`    |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (-0.5,0.5], `hypot(y,x)`.    | Faithful rounding, see below|
+| `zkf.Cordic`    | latency | `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (-0.5,0.5], `hypot(y,x)`.    | Faithful rounding, see below|
 | `zkf.Pipe`      | 1       | Delay line of N register stages, W bits each.                                                 | No-op                       |
 
 ### Derived functions
@@ -288,21 +292,25 @@ not all states are mappable between the formats.
 
 Roughly ordered by severity.
 
-- The packer's sticky bit is gathered behind the normalizer's last shift, which is what binds `cordic` at 8/36
-  next (14 to 18 levels); it can be gathered beside the last two levels. The detects of the later levels wait for
-  the shifts ahead of them likewise, and the sum of a product's rows is two carry chains in a row.
-- The kernels of WMAN 44 to 53 can start their chain a cycle earlier (measured bit-identical at the catalog's
-  widths); no spec that wide is timed.
-- Table generation uses the multiplier width up to degree 3 only (WMAN up to 36); the author allows assuming that no
-  operand is wider than four multipliers. Shortening an operand to a multiple of the width where it passes one by up to
-  three bits saves 4 to 8% of LUTs and 3 to 5 DSP48E1 on Spartan-7 at WMAN 44 and 53, and changes some tables of
-  degree 3. For the optimization pass.
+- `cordic` refinements:
+  - At 8/36 it is bound next by the sum of a product's rows, two carry chains in a row, by its recurrences (the
+    engine's iteration, the division's digit), and by the rounding into the result. The packer's sticky is gathered
+    behind the normalizer's last shift, and the detects of the later levels wait for the shifts ahead of them.
+    One iteration a cycle there closes on neither Yosys nor Diamond.
+  - Vectoring at one iteration a cycle or more can start at its second iteration too, as at two cycles an
+    iteration (-1 at 6/18).
+  - The module packs a rotation's two results in turn through one packer. A knob could select two packers in parallel,
+    the octant cosine's normalizing by a bit at most: a cycle less on every rotation, for a packer's fabric.
+
+- Transcendental operator refinements (`exp2`, `log2`):
+  - The kernels of WMAN 44 to 53 can start their chain a cycle earlier (measured bit-identical at the catalog's widths);
+    no spec that wide is timed yet.
+  - Table generation uses the multiplier width up to degree 3 only (WMAN up to 36); we assume that no operand is wider
+    than four multipliers. Shortening an operand to a multiple of the width where it passes one by up to three bits
+    saves 4 to 8% of LUTs and 3 to 5 DSP48E1 on Spartan-7 at WMAN 44 and 53, and changes some tables of degree 3.
+
 - The table of `cordic`'s angles becomes a memory on Yosys, which doubles the engine's LUTs at two iterations a
   cycle, and the equivalence test's proof does not finish at two or four; no spec runs at those rates.
-- Icarus in SystemVerilog mode (`-g2012`, which cocotb uses) leaves values unknown where a combinational block of
-  the printed text sees no event after time zero: with the initial values, on the vectoring-only `cordic`; with a
-  reset held from time zero and no transition, on the valid flags. Verilator and Icarus in Verilog-2005 mode show
-  neither: a simulation artifact, left as it is.
 
 ### Postponed as YAGNI
 

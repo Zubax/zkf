@@ -15,9 +15,9 @@ class FixedToFloat(wiring.Component):
     overrides the result. `sideband` is delayed with `y`.
 
     `wmag`, the width of `mag`, is at least WMAN + 3, and `weu` is the width of `exp_offset`. `exp_is_biased`,
-    `assume_no_overflow` and `saturate_round_carry` are those of `Pack`, and `stage_input` and `stage_normalize` are
-    `stage_input` and `stage_split` of `Normshift`. `stage_pack` registers the packer's inputs and `stage_output` the
-    result; there is no other register.
+    `assume_no_overflow` and `saturate_round_carry` are those of `Pack`, and `stage_input`, `stage_normalize` and `most`
+    are `stage_input`, `stage_split` and `most` of `Normshift`. `stage_pack` registers the packer's inputs and
+    `stage_output` the result; there is no other register.
     """
 
     in_valid: Signal
@@ -42,8 +42,10 @@ class FixedToFloat(wiring.Component):
         stage_normalize: int = 0,
         stage_pack: int = 0,
         stage_output: int = 0,
+        most: int | None = None,
     ) -> None:
         self._fmt = fmt
+        self._most = most
         self._wmag = wmag
         self._weu = weu
         self._options = {
@@ -81,7 +83,11 @@ class FixedToFloat(wiring.Component):
             | ({} if self._sideband is None else {"sb": self._sideband})
         )
         m.submodules.normalize = normalize = Normshift(
-            self._wmag, stage_input=self._stage_input, stage_split=self._stage_normalize, sideband=carried
+            self._wmag,
+            stage_input=self._stage_input,
+            stage_split=self._stage_normalize,
+            sideband=carried,
+            most=self._most,
         )
         m.d.comb += normalize.in_valid.eq(self.in_valid)
         m.d.comb += normalize.x.eq(self.mag)

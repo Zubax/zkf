@@ -6,9 +6,10 @@ from amaranth.lib.wiring import In, Out
 class Txn(wiring.Component):
     """
     The handshake of an operator that serves one transaction at a time. `accept` starts one; the operator answers with
-    `res` under a one-cycle `res_valid`; `out` holds the answer until `out_ready` takes it, and only then does
-    `in_ready` rise again. `stage_output=1` registers `out`; with 0, `res` passes through combinationally unless it has
-    to be held.
+    `res` under a one-cycle `res_valid`; `out` holds the answer until `out_ready` takes it, and `in_ready` rises again
+    in that cycle under `overlap`, which takes the next in it, else in the next. `overlap` is for an operator whose
+    `res_valid` does not depend combinationally on `accept`. `stage_output=1` registers `out`; with 0, `res` passes
+    through combinationally unless it has to be held.
     """
 
     in_valid: Signal
@@ -18,9 +19,10 @@ class Txn(wiring.Component):
     out_valid: Signal
     out_ready: Signal
 
-    def __init__(self, shape: ShapeLike, stage_output: int) -> None:
+    def __init__(self, shape: ShapeLike, stage_output: int, overlap: bool = False) -> None:
         self._shape = shape
         self._stage_output = stage_output
+        self._overlap = overlap
         super().__init__(
             {
                 "in_valid": In(1),
@@ -37,8 +39,8 @@ class Txn(wiring.Component):
     def elaborate(self, platform: object) -> Module:
         m = Module()
         busy = Signal(name="busy")
-        m.d.comb += self.in_ready.eq(~busy)
-        m.d.comb += self.accept.eq(self.in_valid & ~busy)
+        m.d.comb += self.in_ready.eq(~busy | (self.out_valid & self.out_ready) if self._overlap else ~busy)
+        m.d.comb += self.accept.eq(self.in_valid & self.in_ready)
         if self._stage_output:
             valid = Signal(name="r_valid")
             out = Signal(self._shape, name="r_out", reset_less=True)

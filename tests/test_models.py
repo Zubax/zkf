@@ -62,9 +62,9 @@ def test_names() -> None:
     assert MulIlog2(F18).name == "zkf_mul_ilog2_e6m18_wk7_input0_core_none_output0_latency0"
     assert Resize(F18, fmt_in=ZkfFormat(8, 36)).name == "zkf_resize_e6m18_e8m36_input0_output0_latency0"
     both = Cordic(F36, stage_core_mul=3, wmultiplier=18)
-    assert both.name.endswith("_mode2_latency_rotation29_latency_vectoring55")
+    assert both.name.endswith("_mode2_latency_rotation24_latency_vectoring44")
     assert "_unroll100_100_" in both.name
-    assert Cordic(F36, stage_core_mul=3, wmultiplier=18, mode=1).name.endswith("_mode1_latency55")
+    assert Cordic(F36, stage_core_mul=3, wmultiplier=18, mode=1).name.endswith("_mode1_latency44")
     assert Add(f, stage_input=True).name == Add(f, stage_input=1).name  # equal configurations, one name
 
 

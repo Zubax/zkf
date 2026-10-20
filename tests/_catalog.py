@@ -121,11 +121,11 @@ CATALOG: dict[str, Block | CoreSpec] = {
         Exp2(F36, stage_core_kernel=3, stage_core=Exp2.Core.SUM, wmultiplier=18),
         # Without ALIGN Diamond makes 80.6 MHz.
         Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.Core.ALIGN, wmultiplier=18),
-        # Without PACK or CORRECTIONS Yosys makes 92.4 and 98.7 MHz.
+        # Without NORMALIZE_INPUT Diamond makes 80.5 MHz.
         Cordic(F18, mode=0, stage_core_mul=3, stage_core=_CORDIC_ROTATION, wmultiplier=18),
-        # Without ANGLE or TAKEN Yosys makes 98.1 and 95.8 MHz.
+        # At stage_core_mul=2 Yosys makes 90.7 MHz in the length's product.
         Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-        # Without SHIFT Yosys makes 94.6 MHz; one iteration a cycle, 95.5 on Diamond.
+        # Without NORMALIZE_INPUT Yosys makes 96.5 MHz.
         Cordic(
             F36,
             mode=0,
@@ -134,21 +134,22 @@ CATALOG: dict[str, Block | CoreSpec] = {
             stage_core=_CORDIC_ROTATION | Cordic.Core.SHIFT | Cordic.Core.FOLDED,
             wmultiplier=18,
         ),
-        # Without SHIFTED Diamond makes 98.9 MHz in the rounding, without ROUNDED 92.0; one iteration a cycle, 93.5.
+        # Without NORMALIZE_INPUT Diamond makes 82.1 MHz.
         Cordic(
             F36,
             mode=1,
             unroll100=50,
             stage_core_mul=4,
-            stage_core=_CORDIC_VECTORING | Cordic.Core.SHIFTED | Cordic.Core.ROUNDED,
+            stage_core=_CORDIC_VECTORING | Cordic.Core.SHIFTED,
             wmultiplier=18,
         ),
-        # Without SHIFT Yosys makes 97.8 MHz, without ANGLE Diamond 93.6.
+        # Without SHIFT Diamond makes 90.5 MHz and Yosys's default seed 96.2; at stage_core_mul=4 Yosys's default seed
+        # makes 98.1.
         Cordic(
             F36,
             unroll100=50,
-            stage_core_mul=4,
-            stage_core=~(Cordic.Core.CORRECTIONS | Cordic.Core.ROUNDED),
+            stage_core_mul=5,
+            stage_core=~(Cordic.Core.CORRECTIONS | Cordic.Core.NORMALIZE_INPUT),
             wmultiplier=18,
         ),
     )

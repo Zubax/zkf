@@ -22,8 +22,10 @@ class Normshift(wiring.Component):
     of the top one, two and three groups of `4**k` bits as are zero, which is the base-4 digit k of `count`.
 
     `stage_split=1` puts a register in the middle of the cascade; 2 adds one right behind the widest level, and needs
-    three levels (a width of 17 or more). `stage_input=1` registers `x` with the zero-detects of the widest level, found
-    ahead of the register, so that the shift of that level, whose select has the widest fan-out, starts at registers.
+    three built levels (unbounded, a width of 17 or more). `stage_input=1` registers `x` with the zero-detects of the
+    widest level, found ahead of the register, so that the shift of that level, whose select has the widest fan-out,
+    starts at registers. `most`, where given, is the most leading zeros of a nonzero `x`, and only the levels that reach
+    it are built.
     """
 
     in_valid: Signal
@@ -33,9 +35,12 @@ class Normshift(wiring.Component):
     count: Signal
     y: Signal
 
-    def __init__(self, width: int, *, stage_input: int = 0, stage_split: int = 0, sideband: ShapeLike) -> None:
+    def __init__(
+        self, width: int, *, stage_input: int = 0, stage_split: int = 0, sideband: ShapeLike, most: int | None = None
+    ) -> None:
         self._width = width
-        self._levels = _levels(width)
+        self._levels = _levels(width) if most is None else min(_levels(width), max(_levels(most + 1), 1))
+        assert stage_split < 2 or self._levels >= 3, (width, most, stage_split)
         self._stage_input = stage_input
         self._stage_split = stage_split
         self._sideband = sideband

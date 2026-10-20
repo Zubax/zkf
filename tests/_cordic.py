@@ -38,12 +38,16 @@ SHORT = {
 
 def synthesized(wman: int, mode: int = 2) -> dict[str, Any]:
     """
-    The knobs of the catalog's specs at 6/18, or at 8/36 above WMAN 24, which agree but in the core: the registers of
-    them all that the mode builds.
+    The knobs of the catalog's specs at 6/18, or at 8/36 above WMAN 24: the rate and the product's count of the mode's
+    spec, or of them all, which agree, where it has none, the count brought within what the width takes; the registers
+    of them all that the mode builds.
     """
     width = 18 if wman <= 24 else 36
     found = [model for model in CATALOG.values() if isinstance(model, Cordic) and model.fmt.wman == width]
-    ((un, sm),) = {(model.unroll100, model.stage_core_mul) for model in found}
+    own = [model for model in found if model.mode == mode] or found
+    ((un, sm),) = {(model.unroll100, model.stage_core_mul) for model in own}
+    taken = counts(*_geometry(wman).operands(mode), signed=mode != 1, wmultiplier=18)
+    sm = min(max(sm, taken.start), taken.stop - 1)
     return {"un": un, "sm": sm, "sc": reduce(or_, (model.stage_core for model in found)) & ~_LACKED[mode]}
 
 
@@ -61,10 +65,10 @@ VECTORED = {
 
 def rotations(fmt: ZkfFormat) -> list[int]:
     """
-    Zeros and infinities with and without a fraction; the directed numbers; every quarter of a turn up to two, the
-    floats next to a quarter, whole turns; both sides of where the linear path takes over, at either end of every
-    quadrant; what is too small for the reduction to resolve, and the exponents at which it starts and stops
-    shifting; and angles inside the octants, which the iterations and their correction serve.
+    Zeros and infinities with and without a fraction; the directed numbers; every quarter of a turn up to two and the
+    odd eighths below one, the floats next to a quarter, whole turns; both sides of where the linear path takes over,
+    at either end of every quadrant; what is too small for the reduction to resolve, and the exponents at which it
+    starts and stops shifting; and angles inside the octants, which the iterations and their correction serve.
     """
     sign_bit = 1 << fmt.sign_shift
     out = [0, sign_bit, fmt.exp_inf << fmt.wfrac, sign_bit | (fmt.exp_inf << fmt.wfrac), (1 << fmt.wfull) - 1]
@@ -79,6 +83,7 @@ def rotations(fmt: ZkfFormat) -> list[int]:
             exp = fmt.bias + top - 2
             if 1 <= exp <= fmt.exp_max_finite:
                 out.append(fmt.pack(sign, exp, (k << (fmt.wfrac - top)) & fmt.frac_mask).bits)
+        out += [fmt.encode(Fraction(k, 8)).bits | (sign << fmt.sign_shift) for k in (1, 3, 5, 7)]
         quarter = fmt.bias - 2
         if quarter >= 2:
             out.append(fmt.pack(sign, quarter - 1, fmt.frac_mask).bits)
@@ -203,7 +208,7 @@ def run(wexp: int, wman: int, kind: str | int, mode: int = 2, shard: int = 0, sh
 def simulate(model: Cordic, kind: str | int, shard: int = 0, shards: int = 1, alternate: bool = False) -> None:
     """The bench's seed follows the configuration."""
     found = cases(model, kind, shard, shards, alternate=alternate)
-    run_handshake(model.component(), found, zlib.crc32(model.name.encode()) % 3)
+    run_handshake(model.component(), found, zlib.crc32(model.name.encode()) % 3, overlap=overlaps(model))
 
 
 def cut(model: Cordic) -> None:
@@ -223,7 +228,15 @@ def cut(model: Cordic) -> None:
         if model.mode != 0
     ]
     first, then = (turned[0], angled[0]) if model.mode == 2 else (turned or angled)
-    run_cuts(model.component(), [(first, then), (then, first)])
+    run_cuts(model.component(), [(first, then), (then, first)], overlap=overlaps(model))
+
+
+def overlaps(model: Cordic) -> bool:
+    """Whether the next transaction is taken in the cycle the previous one is handed over."""
+    timing = model.timing
+    return all(
+        t.initiation_interval == t.latency for t in ([timing] if isinstance(timing, Timing) else timing.values())
+    )
 
 
 def rotation_strata(fmt: ZkfFormat, seed: int = SEED) -> list[int]:
