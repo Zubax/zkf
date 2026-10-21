@@ -292,15 +292,11 @@ not all states are mappable between the formats.
 
 Roughly ordered by severity.
 
-- `cordic` refinements:
-  - At 8/36 it is bound next by the sum of a product's rows, two carry chains in a row, by its recurrences (the
-    engine's iteration, the division's digit), and by the rounding into the result. The packer's sticky is gathered
-    behind the normalizer's last shift, and the detects of the later levels wait for the shifts ahead of them.
-    One iteration a cycle there closes on neither Yosys nor Diamond.
-  - Vectoring at one iteration a cycle or more can start at its second iteration too, as at two cycles an
-    iteration (-1 at 6/18).
-  - The module packs a rotation's two results in turn through one packer. A knob could select two packers in parallel,
-    the octant cosine's normalizing by a bit at most: a cycle less on every rotation, for a packer's fabric.
+- `cordic` at 8/36 is bound next by the division's digit, a recurrence, by the sum of a product's rows,
+  two carry chains in a row, by the rounding into the result, and by the normalizer, whose detects of the later levels
+  wait for the shifts ahead of them; the packer's sticky is gathered behind its last shift.
+  These sit within about 5% of 100 MHz on the ECP5, about as much as placement moves them. One iteration a cycle
+  there closes on neither Yosys nor Diamond.
 
 - Transcendental operator refinements (`exp2`, `log2`):
   - The kernels of WMAN 44 to 53 can start their chain a cycle earlier (measured bit-identical at the catalog's widths);

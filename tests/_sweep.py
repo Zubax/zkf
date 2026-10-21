@@ -18,6 +18,7 @@ KNOBS: Mapping[str, tuple[int, ...]] = {
     "mode": (0, 1, 2),
     "unroll100": (50, 100, 200, 400),
     "n": (0, 1, 7),
+    "fast": (False, True),
 }
 BASE: Mapping[str, Mapping[str, int]] = {
     "cordic": {"stage_core_mul": 3},

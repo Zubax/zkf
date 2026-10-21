@@ -125,7 +125,7 @@ CATALOG: dict[str, Block | CoreSpec] = {
         Cordic(F18, mode=0, stage_core_mul=3, stage_core=_CORDIC_ROTATION, wmultiplier=18),
         # At stage_core_mul=2 Yosys makes 90.7 MHz in the length's product.
         Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-        # Without NORMALIZE_INPUT Yosys makes 96.5 MHz.
+        # Without NORMALIZE_INPUT Yosys makes 96.4 MHz.
         Cordic(
             F36,
             mode=0,
@@ -134,24 +134,19 @@ CATALOG: dict[str, Block | CoreSpec] = {
             stage_core=_CORDIC_ROTATION | Cordic.Core.SHIFT | Cordic.Core.FOLDED,
             wmultiplier=18,
         ),
-        # Without NORMALIZE_INPUT Diamond makes 82.1 MHz.
+        # Without stage_output=1 one of nextpnr's seeds 1 to 6 makes 99.7 MHz, in the rounding into the result; with
+        # ROUNDED in its place two of Diamond's placement cost tables 1 to 6 miss, at 99.1 and 99.9.
         Cordic(
             F36,
             mode=1,
             unroll100=50,
             stage_core_mul=4,
             stage_core=_CORDIC_VECTORING | Cordic.Core.SHIFTED,
+            stage_output=1,
             wmultiplier=18,
         ),
-        # Without SHIFT Diamond makes 90.5 MHz and Yosys's default seed 96.2; at stage_core_mul=4 Yosys's default seed
-        # makes 98.1.
-        Cordic(
-            F36,
-            unroll100=50,
-            stage_core_mul=5,
-            stage_core=~(Cordic.Core.CORRECTIONS | Cordic.Core.NORMALIZE_INPUT),
-            wmultiplier=18,
-        ),
+        # Without NORMALIZE_INPUT nextpnr's seeds 1 to 6 make 95.7 to 99.3 MHz, in the normalizer.
+        Cordic(F36, unroll100=50, stage_core_mul=5, stage_core=~Cordic.Core.CORRECTIONS, wmultiplier=18, fast=True),
     )
 }
 """The specs by their module names."""

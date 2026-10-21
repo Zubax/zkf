@@ -25,7 +25,8 @@ VECTORINGS = [(6, 18, 1536), (8, 24, 1024), (8, 36, 768), (11, 53, 384), (5, 16,
 # The knobs at 5/16 unless a row has a format, where they change no result; of both modes unless it has one; the
 # product's count the fewest unless a row has one. Half a rate with the recurrence of `z` ahead, several iterations a
 # cycle with a last group that is not whole, the product from none of its registers at a width where it is one
-# multiplier to the pairs of rows of a grid on narrower multipliers, and the registers of the rest one by one and all.
+# multiplier to the pairs of rows of a grid on narrower multipliers, the registers of the rest one by one and all, and
+# the second packer.
 KNOBS: list[dict[str, Any]] = [
     {"un": 50},
     {"un": 200},
@@ -63,10 +64,16 @@ KNOBS: list[dict[str, Any]] = [
         "mode": 2,
     },
     {"si": 1, "un": 50, "sm": 4, "sc": ~Core(0), "so": 2, "mode": 2},
+    {"fa": True, "mode": 0},
+    {"fa": True, "un": 50, "sm": 4, "mode": 2},
+    {"fa": True, "si": 1, "sm": 0, "wm": 32, "sc": ~_LACKED[0], "so": 2, "mode": 0},
+    {"fa": True, "un": 200, "sc": ~_LACKED[2], "mode": 2},
+    {"fa": True, "sc": ~_LACKED[2] & ~Core.CORRECTIONS, "mode": 2},
 ]
 # In a rotation at 5/18 the sine reaches the packer's underflow, the bias being below the fraction; at 8/48 the
-# width of what the modes share crosses a power of two; 4 is an exponent that a rotation alone takes.
-BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {"un": 50}), (11, 53, {}), (4, 16, {"mode": 0})]
+# width of what the modes share crosses a power of two; 4 is an exponent that a rotation alone takes; and the second
+# packer at a catalog width.
+BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {"un": 50}), (11, 53, {}), (4, 16, {"mode": 0}), (8, 36, {"fa": True})]
 
 
 # The deep tier: the formats of the default one and others at more operands, under the knobs one by one.
@@ -124,7 +131,7 @@ def test_rotation_sampled() -> None:
 
 @pytest.mark.deep
 @pytest.mark.parametrize("shard", range(16))
-@pytest.mark.parametrize("stages", [{"sc": Core.REDUCED | Core.NORMALIZE}, *DEEP_KNOBS], ids=str)
+@pytest.mark.parametrize("stages", [{"sc": Core.REDUCED | Core.NORMALIZE}, *DEEP_KNOBS, {"fa": True}], ids=str)
 def test_rotation_whole(stages: dict[str, Any], shard: int) -> None:
     run(2, 16, "every", mode=0, shard=shard, shards=16, **stages)
 
@@ -155,15 +162,18 @@ def test_catalog(model: Cordic) -> None:
 
 
 def subsets(seed: int = SEED) -> list[dict[str, Any]]:
-    """Random sets of the registers that a mode builds, the most of both modes, each at a rate of its own."""
+    """
+    Random sets of the registers that a mode builds, the most of both modes, each at a rate of its own; and every third
+    with a rotation again with two packers.
+    """
     rng = np.random.default_rng(seed)
-    out = []
+    out: list[dict[str, Any]] = []
     for mode, count in ((0, 6), (1, 6), (2, 20)):
         members = list(~_LACKED[mode])
         for _ in range(count):
             taken = [member for member, coin in zip(members, rng.integers(0, 2, len(members))) if coin]
             out.append({"sc": reduce(or_, taken, Core(0)), "un": int(rng.choice([50, 100, 200])), "mode": mode})
-    return out
+    return out + [row | {"fa": True} for row in out[::3] if row["mode"] != 1]
 
 
 # A few of each mode per change, the rest in the deep tier.
@@ -211,6 +221,13 @@ def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
         cut(build(ZkfFormat(3, 16), mode, **knobs))  # an exponent that a vectoring does not take
 
 
+# Without CORRECTIONS a packer out of step with the other takes a value that has moved on.
+@pytest.mark.parametrize("held", [True, False])
+@pytest.mark.parametrize("mode", [0, 2])
+def test_cut_fast(mode: int, held: bool) -> None:
+    cut(build(ZkfFormat(5, 16), mode, fa=True, sc=~_LACKED[mode] & ~(Core(0) if held else Core.CORRECTIONS)))
+
+
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_cut_each_register(mode: int) -> None:
     for member in ~_LACKED[mode]:
@@ -220,13 +237,14 @@ def test_cut_each_register(mode: int) -> None:
 def test_timing() -> None:
     """A register is a cycle of the modes on whose path it is."""
     fmt = ZkfFormat(6, 18)
-    assert timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18)) == [(15, 15), (26, 26)]
+    assert timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18)) == [(15, 15), (25, 25)]
     assert timings(Cordic(fmt, unroll100=50, stage_core_mul=3, wmultiplier=18)) == [(23, 23), (33, 33)]
     steps = {member: (1, 0) for member in _ROTATION} | {member: (0, 1) for member in _VECTORING}
     for member in Core:
         rot, vec = steps.get(member, (1, 1))
         found = timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18, stage_core=member))
-        assert found == [(15 + rot, 15 + rot), (26 + vec, 26 + vec)], member
+        assert found == [(15 + rot, 15 + rot), (25 + vec, 25 + vec)], member
+    assert timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18, fast=True)) == [(14, 14), (25, 25)]
 
 
 def test_refusals() -> None:

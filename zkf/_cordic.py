@@ -8,7 +8,7 @@ from typing import Any, Literal, NamedTuple, overload
 
 import amaranth.lib.enum
 import mpmath
-from amaranth.hdl import Array, Cat, Const, Module, Mux, Signal, signed, Value, ValueLike
+from amaranth.hdl import Array, Cat, Const, Module, Mux, Signal, signed, Value
 from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
@@ -31,6 +31,12 @@ _GUARD_XY = 6
 _GUARD_ZF, _GUARD_Z = 6, 3
 """Of the angle: fraction bits beyond those of the coordinate in turns, and integer bits above them."""
 
+
+_SEED = 2
+"""
+The iteration that the engine starts at. A rotation's first two are constant, its folded angle being in `[0, lut[0]]`;
+a vectoring's first adds (`y0 >= 0`) and its second subtracts unless `y0 == x0`. The load is their result.
+"""
 
 _exact = context(400)
 """The context that computes the constants."""
@@ -61,8 +67,9 @@ class Cordic(Operator):
     cycle, which can take the next, whatever the stages; where the product has no register, it rises a cycle later.
 
     One iterative CORDIC engine serves both modes, beside one multiplier, which the products take in turn, and one
-    packer, which the two results take in turn; the constants are generated for the WMAN. About WMAN / 2 iterations
-    suffice, as each mode finishes with one step linear in the residual angle, whose square is below an ULP.
+    packer, which a rotation's two results take in turn unless `fast`; the constants are generated for the WMAN. About
+    WMAN / 2 iterations suffice, as each mode finishes with one step linear in the residual angle, whose square is below
+    an ULP.
 
     A rotation reduces `|a|` modulo a turn, exactly, to a quadrant and a coordinate within it, folds that into an eighth
     of a turn, and turns `(1/gain, 0)` by it, which leaves `(cos, sin)` and a small residual angle `z`. One linear
@@ -82,6 +89,7 @@ class Cordic(Operator):
     `stage_core`: the registers of `Cordic.Core` that are built; a fixed mode refuses those it lacks.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output but to `in_ready`.
     `wmultiplier`: the operand width of the target's multipliers.
+    `fast`: a second packer, which packs a rotation's cosine of the octant beside its sine: a cycle less on a rotation.
     """
 
     class Core(enum.Flag):
@@ -94,25 +102,25 @@ class Cordic(Operator):
         FOLDED = enum.auto()
         """A rotation's coordinate folded into an octant, ahead of the engine."""
         CORRECTIONS = enum.auto()
-        """A rotation's corrections, ahead of the first of them packed."""
+        """A rotation's corrections, ahead of their packing."""
         TAKEN = enum.auto()
-        """A vectoring's operands as taken."""
+        """A vectoring's operands as taken, with the differences of their exponents."""
         ORDERED = enum.auto()
-        """A vectoring's operands ordered by magnitude, with their shift amount."""
+        """A vectoring's smaller operand aligned to the larger."""
         SHIFTED = enum.auto()
-        """A vectoring's smaller operand shifted, ahead of the engine."""
+        """What a vectoring's load takes, ahead of the engine."""
         ANGLE = enum.auto()
         """A vectoring's angle summed, ahead of the packer."""
         MEET = enum.auto()
-        """Where the modes meet, ahead of the packer; at `mode=2` alone."""
+        """Where the modes meet, ahead of the packers; at `mode=2` alone."""
         NORMALIZE_INPUT = enum.auto()
-        """The magnitude to pack with the zero-detects of the normalizer's widest level, ahead of its shift."""
+        """The magnitude to pack with the zero-detects of each normalizer's widest level, ahead of its shift."""
         NORMALIZE = enum.auto()
-        """The middle of the normalizer."""
+        """The middle of the normalizers."""
         PACK = enum.auto()
-        """The packer's input."""
+        """The packers' input."""
         ROUNDED = enum.auto()
-        """The packer's output."""
+        """The packers' output."""
 
     operator = "cordic"
     modes = MappingProxyType({0: "rotation", 1: "vectoring"})
@@ -123,6 +131,7 @@ class Cordic(Operator):
     stage_output: int = 0
     wmultiplier: int
     mode: int = 2
+    fast: bool = False
     mul_attrs: Attrs | None = field(default=None, compare=False)
     """
     On the product's capture, where a register follows the multipliers: from `stage_core_mul=2` on for one multiplier,
@@ -203,7 +212,7 @@ class Cordic(Operator):
         g = _geometry(self.fmt.wman)
         product = self.stage_core_mul
         registers = len(self.stage_core & ~(_VECTORING, _ROTATION)[mode])
-        iterations = g.n - _seeds(self.unroll100)[mode]
+        iterations = g.n - _SEED
         preloaded = int(self.unroll100 < 100)  # the load shifts for the first iteration
         cycles = (iterations * 100 + self.unroll100 - 1) // self.unroll100 - preloaded
         if mode == 0:
@@ -214,8 +223,9 @@ class Cordic(Operator):
                 # end, when the sine is issued.
                 assert product + held < cycles - iterations, (product, cycles, iterations)
                 saved = product + held
-            # The engine's load; the cosine a cycle behind the sine into the multiplier and into the packer.
-            latency = 3 + held + cycles + 2 * product - saved - max(_ahead(self) - 1, 0)
+            # The engine's load; the cosine a cycle behind the sine into the multiplier, and into the packer unless
+            # `fast`.
+            latency = 2 + (not self.fast) + held + cycles + 2 * product - saved - max(_ahead(self) - 1, 0)
         else:
             # The engine's load, the division's, and the last digit into the angle.
             latency = 3 + cycles + g.steps
@@ -403,15 +413,6 @@ def _angle_bits(c: _Constants, k: int) -> int:
     return (sum(c.lut[c.n - k :]) + c.lut[-1]).bit_length() + 1
 
 
-def _seeds(unroll100: int) -> tuple[int, int]:
-    """
-    The iterations that a rotation and a vectoring start at. A rotation's first two are constant, its folded angle being
-    in `[0, lut[0]]`, and its load is their result. A vectoring's first adds (`y0 >= 0`), and its load does it; at two
-    cycles an iteration the second too, which subtracts unless `y0 == x0`.
-    """
-    return 2, 2 if unroll100 < 100 else 1
-
-
 def _sincos(a: Zkf) -> CordicResult[Zkf]:
     """A rotation: `(sin(2 * pi * a), cos(2 * pi * a), quadrant)`."""
     fmt = a.fmt
@@ -482,6 +483,7 @@ def _sincos(a: Zkf) -> CordicResult[Zkf]:
         quadrant = ((4 - quadrant_abs) & 3) if tzero else (3 - quadrant_abs)
 
     assert all(not mag or mag.bit_length() >= spec.least[0] for mag in (sin_m[0], cos_m[0])), "the packer's bound"
+    assert 1 << (xf - 1) <= cos_tp[0] <= 1 << xf, "the bound of the cosine's packer"
     sin_bits = fixed_to_float_reference(fmt, sin_sign, sin_m[0], sin_m[1], wmag)
     cos_bits = fixed_to_float_reference(fmt, cos_sign, cos_m[0], cos_m[1], wmag)
     return CordicResult(Zkf(fmt, sin_bits), Zkf(fmt, cos_bits), quadrant)
@@ -704,6 +706,8 @@ class _Share:
     y0: Value
     z0: Value
     neg0: Value
+    xa: Value
+    ya: Value
     pm_iv: Value
     pm_sb: Value
     pm_a: Value
@@ -722,7 +726,7 @@ class _Share:
 
 _RAISED = ("start", "pm_iv", "pk_iv", "res")
 """The members of `_Share` that either mode raises; the rest are of the mode that the transaction is in."""
-_TAKING = ("x0", "y0", "z0", "neg0", "pm_sb", "pm_a", "pm_b")
+_TAKING = ("x0", "y0", "z0", "neg0", "xa", "ya", "pm_sb", "pm_a", "pm_b")
 """The members of `_Share` that a transaction drives in the cycle it is taken in, where the engine can start then."""
 
 
@@ -775,7 +779,8 @@ class _Cordic(wiring.Component):
         wa_pm, wb_pm = c.operands(mode)
         wb_pm = max(wb_pm, wb_rot) if rotates else wb_pm
         # The tags beside a rotation's product and a packed result: each mode reads its own, in its own transactions.
-        theta, quadrant = data.StructLayout({"theta": 1}), data.StructLayout({"quadrant": 2, "second": 1})
+        theta = data.StructLayout({"theta": 1})
+        quadrant = data.StructLayout({"quadrant": 2} | ({} if model.fast else {"second": 1}))
         pk_tags = data.UnionLayout(
             ({"rotation": quadrant} if rotates else {}) | ({"vectoring": theta} if vectors else {})
         )
@@ -826,18 +831,22 @@ class _Cordic(wiring.Component):
             attrs=model.mul_attrs,
         )
         least = min(c.least[side] for side in ((0,), (1,), (0, 1))[mode])
-        m.submodules.f2f = f2f = FixedToFloat(
+        # The same stages keep the packers in step.
+        packer = functools.partial(
+            FixedToFloat,
             fmt,
+            stage_input=int(Core.NORMALIZE_INPUT in core),
+            stage_normalize=int(Core.NORMALIZE in core),
+            stage_pack=int(Core.PACK in core),
+            stage_output=int(Core.ROUNDED in core),
+        )
+        m.submodules.f2f = f2f = packer(
             wmag=wmag_pk,
             weu=weu_pk,
             exp_is_biased=vectors,
             assume_no_overflow=not vectors,
             saturate_round_carry=vectors,
             sideband=pk_tags,
-            stage_input=int(Core.NORMALIZE_INPUT in core),
-            stage_normalize=int(Core.NORMALIZE in core),
-            stage_pack=int(Core.PACK in core),
-            stage_output=int(Core.ROUNDED in core),
             most=wmag_pk - least,
         )
         a_zero = Signal(name="a_zero")
@@ -1037,19 +1046,21 @@ class _Cordic(wiring.Component):
                         m.d.sync += corr_s.eq(product)
             sin_now = (e_yn + (corr_s >> corr_shift))[:wx].as_signed()
             cos_now = (e_xn - (product >> corr_shift))[:wx].as_signed()
-            held_sin = Signal(signed(wx), name="held_sin", reset_less=True)
-            held_cos = Signal(signed(wx), name="held_cos", reset_less=True)
-            with m.If(last):
-                m.d.sync += held_sin.eq(sin_now)
-                m.d.sync += held_cos.eq(cos_now)
-            # Without CORRECTIONS the first of them is packed as they are made, and the second from their hold.
-            sin_held: Value = held_sin if Core.CORRECTIONS in core else Mux(last, sin_now, held_sin)
-            cos_held: Value = held_cos if Core.CORRECTIONS in core else Mux(last, cos_now, held_cos)
+            sin_held, cos_held = sin_now, cos_now  # `fast` without CORRECTIONS packs both as they are made
+            if Core.CORRECTIONS in core or not model.fast:
+                held_sin = Signal(signed(wx), name="held_sin", reset_less=True)
+                held_cos = Signal(signed(wx), name="held_cos", reset_less=True)
+                with m.If(last):
+                    m.d.sync += held_sin.eq(sin_now)
+                    m.d.sync += held_cos.eq(cos_now)
+                # Without CORRECTIONS the first of them is packed as they are made, and the second from their hold.
+                sin_held = held_sin if Core.CORRECTIONS in core else Mux(last, sin_now, held_sin)
+                cos_held = held_cos if Core.CORRECTIONS in core else Mux(last, cos_now, held_cos)
 
             sin_mag = Signal(wmag_rot, name="sin_tp_mag")
             m.d.comb += sin_mag.eq(Mux(sa_o, bypass_mag, _zext(sin_held[: xf + 1], wmag_rot)))
-            cos_mag = Signal(wmag_rot, name="cos_tp_mag")
-            m.d.comb += cos_mag.eq(Mux(sa_o, Const(1 << xf, wmag_rot), _zext(cos_held[: xf + 1], wmag_rot)))
+            cos_mag = Signal(xf + 1, name="cos_tp_mag")  # in (1/2, 1]
+            m.d.comb += cos_mag.eq(Mux(sa_o, Const(1 << xf, xf + 1), cos_held[: xf + 1]))
             sin_exp = Signal(signed(weu_pk), name="sin_tp_exp")
             with m.Switch(Cat(tiny_o, sa_o)):
                 with m.Case("0-"):
@@ -1058,14 +1069,8 @@ class _Cordic(wiring.Component):
                     m.d.comb += sin_exp.eq((_sext(e_o, weu_pk) + (eone_s - wfrac))[:weu_pk].as_signed())
                 with m.Default():  # and of a small coordinate: `const2pi` times it
                     m.d.comb += sin_exp.eq(Const(eone_s - (wt + 2), signed(weu_pk)))
-            one_exp = Const(eone_xf, signed(weu_pk))
 
-            # The sine, then the cosine a cycle later from the same state: the packer's input stage is their register.
-            second = Signal(name="rot_second")
-            m.d.sync += second.eq(corrections_valid)
-            cosine = Signal(name="rot_cosine")
-            m.d.comb += cosine.eq(second ^ swap_o)
-            pk_quad, pk_sign = Signal(2, name="rot_pk_quad"), Signal(1, name="rot_pk_sign")
+            pk_quad = Signal(2, name="rot_pk_quad")
             with m.Switch(Cat(tzero_o, sign_o, inf_o)):
                 with m.Case("1--"):
                     m.d.comb += pk_quad.eq(0)
@@ -1075,25 +1080,43 @@ class _Cordic(wiring.Component):
                     m.d.comb += pk_quad.eq((-quad_o)[:2])
                 with m.Default():
                     m.d.comb += pk_quad.eq((3 - quad_o)[:2])
-            with m.If(second):
-                m.d.comb += pk_sign.eq(Mux(inf_o, sign_o, quad_o[1] ^ quad_o[0]))
-            with m.Else():
-                m.d.comb += pk_sign.eq(quad_o[1] ^ sign_o)
-
+            r0_sign, r1_sign = quad_o[1] ^ sign_o, Mux(inf_o, sign_o, quad_o[1] ^ quad_o[0])
             packed = Signal(name="rot_packed")
             m.d.comb += packed.eq(pk_valid & ~held_vec if both else pk_valid)
-            sin_num = Signal(f, name="sin_num", reset_less=True)
-            with m.If(packed):
-                with m.If(~pk_sb.rotation.second):
+
+            if model.fast:
+                # The sine and the cosine of the octant side by side, then unfolded.
+                cosine_in = data.StructLayout({"sign": 1, "inf": 1, "mag": xf + 1})
+                given = bundle(cosine_in, sign=Mux(swap_o, r0_sign, r1_sign), inf=inf_o, mag=cos_mag)
+                cos_valid, cs = pipe(m, "meet_cos", corrections_valid, cosine_in, given, int(Core.MEET in core))
+                m.submodules.f2f_cos = f2c = packer(wmag=xf + 1, weu=wexp + 2, assume_no_overflow=True, most=1)
+                m.d.comb += [f2c.in_valid.eq(cos_valid), f2c.sign.eq(cs.sign), f2c.force_inf.eq(cs.inf)]
+                m.d.comb += [f2c.exp_offset.eq(0), f2c.mag.eq(cs.mag)]
+                pk_iv, pk_sign, pk_exp, pk_mag = corrections_valid, Mux(swap_o, r1_sign, r0_sign), sin_exp, sin_mag
+                res, r0, r1 = packed, Mux(swap_o, f2c.y, pk_y), Mux(swap_o, pk_y, f2c.y)
+                tags = bundle(quadrant, quadrant=pk_quad)
+            else:
+                # The sine, then the cosine a cycle later from the same state: the packer's input stage is their
+                # register.
+                second = Signal(name="rot_second")
+                m.d.sync += second.eq(corrections_valid)
+                cosine = Signal(name="rot_cosine")
+                m.d.comb += cosine.eq(second ^ swap_o)
+                sin_num = Signal(f, name="sin_num", reset_less=True)
+                with m.If(packed & ~pk_sb.rotation.second):
                     m.d.sync += sin_num.eq(pk_y)
-            pk_iv = Signal(name="rot_pk_iv")
-            m.d.comb += pk_iv.eq(corrections_valid | second)
+                pk_iv, pk_sign = corrections_valid | second, Mux(second, r1_sign, r0_sign)
+                pk_exp, pk_mag = Mux(cosine, Const(eone_xf, signed(weu_pk)), sin_exp), Mux(cosine, cos_mag, sin_mag)
+                res, r0, r1 = packed & pk_sb.rotation.second, sin_num, pk_y
+                tags = bundle(quadrant, quadrant=pk_quad, second=second)
             return _Share(
                 start=folded_valid,
                 x0=Mux(halfway, narrow, wide),
                 y0=Mux(halfway, wide, narrow),
                 z0=z2,
                 neg0=z2[-1],
+                xa=Const(0, wx),
+                ya=Const(0, wx),
                 pm_iv=pm_iv,
                 pm_sb=pm_tag.as_value(),
                 pm_a=_sext(pm_a, wa_pm).as_unsigned(),
@@ -1101,12 +1124,12 @@ class _Cordic(wiring.Component):
                 pk_iv=pk_iv,
                 pk_sign=pk_sign,
                 pk_inf=inf_o,
-                pk_exp=Mux(cosine, one_exp, sin_exp),
-                pk_mag=_zext(Mux(cosine, cos_mag, sin_mag), wmag_pk),
-                pk_sb=bundle(quadrant, quadrant=pk_quad, second=second),
-                res=packed & pk_sb.rotation.second,
-                r0=sin_num.as_value(),
-                r1=pk_y.as_value(),
+                pk_exp=pk_exp,
+                pk_mag=_zext(pk_mag, wmag_pk),
+                pk_sb=tags,
+                res=res,
+                r0=Value.cast(r0),
+                r1=Value.cast(r1),
                 quadrant=pk_sb.rotation.quadrant,
             )
 
@@ -1126,11 +1149,20 @@ class _Cordic(wiring.Component):
             m.d.comb += mine_now.eq(si_valid & si.vec)
             above, high = key_y[wkl:] > key_x[wkl:], key_y[wkl:] == key_x[wkl:]
             level = high & (key_y[:wkl] > key_x[:wkl])
-            twice = _seeds(model.unroll100)[1] > 1
-            equal = {"equal": 1} if twice else {}
-            operands = data.StructLayout({"swap": 1, "y": f, "x": f, "xz": 1, "xi": 1, "yz": 1, "yi": 1} | equal)
+            at50 = model.unroll100 < 100
+            # Both orders of the difference of the exponents are formed beside the compares, so that the order only
+            # selects. A shift past `wx - 4` leaves nothing of a significand scaled as below; there the numerator is
+            # zeroed.
+            clamp = wx - 4
+            wsh = ceil_log2(clamp + 1)
+            wcmp = max(we + 1, wsh + 1) + 1
+            operands = data.StructLayout(
+                {"swap": 1, "y": f, "x": f, "xz": 1, "xi": 1, "yz": 1, "yi": 1, "equal": 1, "dxy": wcmp, "dyx": wcmp}
+            )
             given = bundle(
                 operands,
+                dxy=(_zext(si.b.exp, wcmp) - _zext(si.a.exp, wcmp))[:wcmp],
+                dyx=(_zext(si.a.exp, wcmp) - _zext(si.b.exp, wcmp))[:wcmp],
                 swap=above | level,
                 y=si.a,
                 x=si.b,
@@ -1150,18 +1182,18 @@ class _Cordic(wiring.Component):
             m.d.comb += num_sig.eq(Mux(tk.swap, tk.x.significand, tk.y.significand))
             den_exp = Signal(wexp, name="f1_den_exp")
             m.d.comb += den_exp.eq(Mux(tk.swap, tk.y.exp, tk.x.exp))  # biased, as the packer takes it
-            # Both orders of the difference of the exponents and their clamps are formed side by side, so that the order
-            # only selects.
-            clamp = wx + xf
-            wsh = ceil_log2(clamp + 1)
-            wcmp = max(we + 1, wsh + 1) + 1
-            exp_x, exp_y = _zext(tk.x.exp, wcmp), _zext(tk.y.exp, wcmp)
-            shift_xy = Signal(wcmp, name="f1_shift_xy")
-            m.d.comb += shift_xy.eq((exp_x - exp_y)[:wcmp])
-            shift_yx = Signal(wcmp, name="f1_shift_yx")
-            m.d.comb += shift_yx.eq((exp_y - exp_x)[:wcmp])
-            shamt_xy = Mux(shift_xy > clamp, Const(clamp, wsh), shift_xy[:wsh])
-            shamt_yx = Mux(shift_yx > clamp, Const(clamp, wsh), shift_yx[:wsh])
+            shift_xy, shift_yx = tk.dxy, tk.dyx
+            shamt = Signal(wsh, name="f1_shamt")
+            m.d.comb += shamt.eq(Mux(tk.swap, shift_yx, shift_xy)[:wsh])
+            beyond = Signal(name="f1_beyond")
+            m.d.comb += beyond.eq(Mux(tk.swap, shift_yx > clamp, shift_xy > clamp))
+            # The significands, scaled by a quarter, top out two bits below the engine's sign; the numerator is aligned
+            # to the denominator's binade.
+            up = xf - wfrac - 2
+            aligned = Signal(signed(wx), name="f1_y0")
+            m.d.comb += aligned.eq(
+                (Cat(Const(0, up), num_sig, Const(0, wx - wman - up)) >> shamt) & ~beyond.replicate(wx)
+            )
             # The first remainder of the bypass, worked out away from the divider's loading.
             byp_diff = Signal(wman + 1, name="f1_byp_diff")
             m.d.comb += byp_diff.eq((num_sig - den_sig)[: wman + 1])
@@ -1222,48 +1254,58 @@ class _Cordic(wiring.Component):
                         m.d.sync += held_sp_mag.eq(ordered)
                 m.d.sync += held_byp_irem.eq(Mux(byp_ibit, byp_diff[:wman], num_sig))
                 m.d.sync += held_byp_ibit.eq(byp_ibit)
-            thrice = {"three": wman + 2} if twice else {}
-            numerator = data.StructLayout({"sig": wman, "shamt": wsh} | equal | thrice)
+            # With it the terms of `x0` that the load takes: `3 den`, and `-den` or, where `y0 == x0`, `-5 den`; at 50
+            # what gives the sign of `y2`.
+            sign2 = {"three": wman + 2, "shamt": wsh, "beyond": 1} if at50 else {}
+            numerator = data.StructLayout(
+                {"y0": signed(wx), "den3": wman + 2, "dneg": signed(wman + 4), "equal": 1} | sign2
+            )
             given = bundle(
                 numerator,
-                sig=num_sig,
-                shamt=Mux(tk.swap, shamt_yx, shamt_xy),
-                equal=tk.equal if twice else 0,
+                y0=aligned,
+                den3=den_sig + (den_sig << 1),
+                dneg=Mux(tk.equal, -((den_sig << 2) + den_sig), -den_sig)[: wman + 4],
+                equal=tk.equal,
                 three=num_sig + (num_sig << 1),
+                shamt=shamt,
+                beyond=beyond,
             )
             ordered_valid, od = pipe(m, "ordered", taken_valid, numerator, given, int(Core.ORDERED in core))
 
-            # The significands, scaled by a quarter, top out two bits below the engine's sign.
-            up = xf - wfrac - 2
-            scaled = Cat(Const(0, up), od.sig, Const(0, wx - wman - up))
-            den = held_den_sig if Core.ORDERED in core else den_sig
-            if twice:
-                # `x2 = 3/2 x0 + ceil(y0 / 2)` and `y2 = y0 + floor(y0 / 2) - x0 / 2`, `x0` being even; where `y0 == x0`,
-                # `y2 = -x0`, which the same sum gives with `-5/2 x0`. Beside the shift are formed the terms of `x0`, and
-                # the sign of `y2` from the significands: `3 y0 >= x0`, always where `y0` is not shifted, never where by
-                # three or more.
+            # `x2 = 3/2 x0 + ceil(y0 / 2)` and `y2 = y0 + floor(y0 / 2) - x0 / 2`, `x0` being even; where `y0 == x0`,
+            # `y2 = -x0`, which the same sum gives with `-5/2 x0`.
+            y0, term = od.y0, Cat(Const(0, up - 1), od.dneg).as_signed()
+            x2 = Cat(y0[0], Const(0, up - 2), od.den3)  # less `floor(y0 / 2)`
+            if at50:
+                # The sums ahead of the register, and the sign of `y2` from the significands: `3 y0 >= x0`, always
+                # where `y0` is not shifted, never where by three or more.
+                den = held_den_sig if Core.ORDERED in core else den_sig
                 rises = Array([Const(1, 1), od.three >= den << 1, od.three >= den << 2, Const(0, 1)])
-                layout = {"den3": wman + 2, "dneg": signed(wman + 4), "equal": 1, "rising": 1, "y0": signed(wx)}
-                seed = data.StructLayout(layout)
+                seed = data.StructLayout({"x2": signed(wx), "y2": signed(wx), "equal": 1, "rising": 1})
                 given = bundle(
                     seed,
-                    den3=den + (den << 1),
-                    dneg=Mux(od.equal, -((den << 2) + den), -den)[: wman + 4],
+                    x2=(x2 + (y0 >> 1))[:wx],
+                    y2=(y0 + (y0 >> 1) + term)[:wx],
                     equal=od.equal,
-                    rising=~od.equal & ~od.shamt[2:].any() & rises[od.shamt[:2]],
-                    y0=scaled >> od.shamt,
+                    rising=~od.equal & ~od.beyond & ~od.shamt[2:].any() & rises[od.shamt[:2]],
                 )
             else:
-                seed = data.StructLayout({"den": wman, "y0": signed(wx)})
-                given = bundle(seed, den=den, y0=scaled >> od.shamt)
+                # The first lane's adders sum the addends, `y2`'s as sums and carries.
+                seed = data.StructLayout({"xl": signed(wx), "xa": wx, "yl": signed(wx), "ya": wx, "equal": 1})
+                given = bundle(
+                    seed,
+                    xl=y0 >> 1,
+                    xa=_zext(x2, wx),
+                    yl=y0 ^ (y0 >> 1) ^ term,
+                    ya=((y0 & (y0 >> 1) | (y0 ^ (y0 >> 1)) & term) << 1)[:wx],
+                    equal=od.equal,
+                )
             shifted_valid, sd = pipe(m, "shifted", ordered_valid, seed, given, int(Core.SHIFTED in core))
-            if twice:
-                x_load = (Cat(sd.y0[0], Const(0, up - 2), sd.den3) + (sd.y0 >> 1))[:wx].as_signed()
-                y_load = (sd.y0 + (sd.y0 >> 1) + Cat(Const(0, up - 1), sd.dneg).as_signed())[:wx].as_signed()
-                z_load = Mux(sd.equal, Const(c.lut[0] + c.lut[1], signed(wz)), Const(c.lut[0] - c.lut[1], signed(wz)))
+            if at50:
+                x_load, y_load, xa, ya = sd.x2, sd.y2, Const(0, wx), Const(0, wx)
             else:
-                x_load = Cat(Const(0, up), sd.den, Const(0, wx - wman - up)).as_signed()
-                y_load, z_load = sd.y0, Const(c.lut[0], signed(wz))
+                x_load, y_load, xa, ya = sd.xl, sd.yl, sd.xa, sd.ya
+            z_load = Mux(sd.equal, Const(c.lut[0] + c.lut[1], signed(wz)), Const(c.lut[0] - c.lut[1], signed(wz)))
             done = Signal(name="vec_done")
             m.d.comb += done.eq(engine.done & held_vec if both else engine.done)
 
@@ -1395,7 +1437,9 @@ class _Cordic(wiring.Component):
                 x0=x_load,
                 y0=y_load,
                 z0=z_load,
-                neg0=sd.rising if twice else Const(1, 1),
+                neg0=sd.rising if at50 else Const(0, 1),
+                xa=xa,
+                ya=ya,
                 pm_iv=mag_issue,
                 pm_sb=Const(0, _Product.as_shape()),
                 pm_a=_zext(dv_xn[:wa_mul], wa_pm),
@@ -1427,6 +1471,8 @@ class _Cordic(wiring.Component):
         m.d.comb += engine.y0.eq(now.y0)
         m.d.comb += engine.z0.eq(now.z0)
         m.d.comb += engine.neg0.eq(now.neg0)
+        m.d.comb += engine.xa.eq(now.xa)
+        m.d.comb += engine.ya.eq(now.ya)
         m.d.comb += pmul.in_valid.eq(now.pm_iv)
         if rotates:
             m.d.comb += pmul.sb_in.eq(now.pm_sb)
@@ -1460,7 +1506,7 @@ class _Lane(wiring.Component):
     the first lane being never past it while the engine runs, and one past the last or while the engine is idle adds
     nothing to `x` and `y`, which then load through the same adders. `xs` and `ys` are what is shifted: `x` and `y`, or
     the registers themselves in the first lane. `vec` is read at `mode` 2 alone. `seeding`, while the engine is idle,
-    adds `x0` to `x` and takes it from `y` instead: on `x = y = y0`, iteration 0 of a vectoring of `(x0, y0)`.
+    adds `xa` to `x` and `ya` to `y` instead.
     """
 
     run: Signal
@@ -1472,7 +1518,8 @@ class _Lane(wiring.Component):
     xs: Signal
     ys: Signal
     seeding: Signal
-    x0: Signal
+    xa: Signal
+    ya: Signal
     x_next: Signal
     y_next: Signal
     z_next: Signal
@@ -1481,7 +1528,7 @@ class _Lane(wiring.Component):
         self._index, self._lut, self._n, self._mode = index, lut, n, mode
         taken = {"run": In(1), "vec": In(1), "i": In(wi), "x": In(signed(wx)), "y": In(signed(wx))}
         taken |= {"z": In(signed(wz)), "xs": In(signed(wx)), "ys": In(signed(wx))}
-        taken |= {"seeding": In(1), "x0": In(signed(wx))}
+        taken |= {"seeding": In(1), "xa": In(wx), "ya": In(wx)}
         super().__init__(taken | {"x_next": Out(signed(wx)), "y_next": Out(signed(wx)), "z_next": Out(signed(wz))})
 
     def elaborate(self, platform: object) -> Module:
@@ -1501,9 +1548,9 @@ class _Lane(wiring.Component):
         sub_x = Signal(name="sub_x")
         m.d.comb += sub_x.eq(en & sub_z)
         sub_y = Signal(name="sub_y")
-        m.d.comb += sub_y.eq(en & neg | self.seeding)
-        x_by = Mux(self.seeding, self.x0.as_unsigned(), (ys >> idx).as_unsigned() & en.replicate(wx))
-        y_by = Mux(self.seeding, self.x0.as_unsigned(), (xs >> idx).as_unsigned() & en.replicate(wx))
+        m.d.comb += sub_y.eq(en & neg)
+        x_by = Mux(self.seeding, self.xa, (ys >> idx).as_unsigned() & en.replicate(wx))
+        y_by = Mux(self.seeding, self.ya, (xs >> idx).as_unsigned() & en.replicate(wx))
         m.d.comb += self.x_next.eq(_step(x, x_by, sub_x))
         m.d.comb += self.y_next.eq(_step(y, y_by, sub_y))
         m.d.comb += self.z_next.eq(Mux(en_z, _step(z, self._lut[idx], sub_z), z))
@@ -1525,10 +1572,10 @@ class _Engine(wiring.Component):
     rotation starts on its residual angle early. At 100, `ahead`, where nonzero, raises `z_ahead` that many iterations
     before the end and gives in `z_signs` the signs of `z` from there on but the last's.
 
-    `start` for a cycle takes `x0`, `y0` and `z0`, those of the iterations that `_seeds` gives for rotation and
-    vectoring, but at 100 and up a vectoring's `x0` and `y0`, which are of iteration 0; it is ignored while the engine
-    runs. At 50 the load also shifts for the first iteration, whose sign is `neg0`: that `z0` is negative in rotation,
-    that `y0` is not in vectoring. `done` is high for one cycle with `xn`, `yn` and `zn`; `z_done` for one with `zn`.
+    `start` for a cycle takes `x0`, `y0` and `z0`, those of iteration `_SEED`, and is ignored while the engine runs; at
+    100 and up a vectoring's load adds `xa` to `x0` and `ya` to `y0` on the first lane's adders. At 50 the load also
+    shifts for the first iteration, whose sign is `neg0`: that `z0` is negative in rotation, that `y0` is not in
+    vectoring. `done` is high for one cycle with `xn`, `yn` and `zn`; `z_done` for one with `zn`.
     """
 
     start: Signal
@@ -1537,6 +1584,8 @@ class _Engine(wiring.Component):
     y0: Signal
     z0: Signal
     neg0: Signal
+    xa: Signal
+    ya: Signal
     done: Signal
     z_done: Signal
     xn: Signal
@@ -1563,6 +1612,8 @@ class _Engine(wiring.Component):
                 "y0": In(signed(wx)),
                 "z0": In(signed(wz)),
                 "neg0": In(1),
+                "xa": In(wx),
+                "ya": In(wx),
                 "done": Out(1),
                 "z_done": Out(1),
                 "xn": Out(signed(wx)),
@@ -1589,13 +1640,6 @@ class _Engine(wiring.Component):
         run, done = Signal(name="run"), Signal(name="done")
         phase = Signal(name="phase") if half else None  # 0 shifts and samples, 1 adds and advances
         i = Signal(wi, name="i", reset_less=True)
-        seed, vseed = _seeds(self._unroll100)
-
-        def chosen(rotation: ValueLike, vectoring: ValueLike) -> ValueLike:
-            """What the mode of the transaction that starts takes."""
-            return (rotation, vectoring, Mux(self.vectoring, vectoring, rotation))[mode]
-
-        first = chosen(seed, vseed)
         vec = Signal(1, name="vec", reset_less=True) if mode == 2 else None
         x, y, z = (
             Signal(signed(wx), name="x", reset_less=True),
@@ -1619,7 +1663,7 @@ class _Engine(wiring.Component):
                 m.d.sync += run.eq(0)
         with m.Elif(~run & self.start):
             m.d.sync += run.eq(1)
-            m.d.sync += i.eq(first)
+            m.d.sync += i.eq(_SEED)
             if vec is not None:
                 m.d.sync += vec.eq(self.vectoring)
 
@@ -1627,7 +1671,7 @@ class _Engine(wiring.Component):
             # `z` keeps a load of its own: with a bare sum ahead of it, a tool may retime the register into the adder,
             # onto the path of the sign.
             x_in = Signal(signed(wx), name="x_in")
-            m.d.comb += x_in.eq(Mux(run, x, chosen(self.x0, self.y0)))
+            m.d.comb += x_in.eq(Mux(run, x, self.x0))
             y_in = Signal(signed(wx), name="y_in")
             m.d.comb += y_in.eq(Mux(run, y, self.y0))
             feed = (x_in, y_in, z, x, y)
@@ -1638,7 +1682,8 @@ class _Engine(wiring.Component):
                 if vec is not None:
                     m.d.comb += lane.vec.eq(vec)
                 if index == 0 and mode:
-                    m.d.comb += [lane.seeding.eq(~run & chosen(0, 1)), lane.x0.eq(self.x0)]
+                    seeding = ~run & (1 if mode == 1 else self.vectoring)
+                    m.d.comb += [lane.seeding.eq(seeding), lane.xa.eq(self.xa), lane.ya.eq(self.ya)]
                 feed = (lane.x_next, lane.y_next, lane.z_next, lane.x_next, lane.y_next)
             with m.If(run | self.start):
                 m.d.sync += x.eq(lane.x_next)
@@ -1658,8 +1703,10 @@ class _Engine(wiring.Component):
             x_shifted = Signal(signed(wx), name="x_shifted", reset_less=True)
             y_shifted = Signal(signed(wx), name="y_shifted", reset_less=True)
             neg, angle = Signal(1, name="neg", reset_less=True), Signal(wz, name="angle", reset_less=True)
-            sub = Signal(name="sub")
-            m.d.comb += sub.eq(~neg)
+            # The sign in copies, so that each steers fewer adders: `neg` that of `y`, `sub` those of `x` and of
+            # `z` but at `mode` 2, where `vsub` steers a vectoring's `z`.
+            sub = Signal(name="sub", reset_less=True)
+            vsub = Signal(name="vsub", reset_less=True) if mode == 2 else None
             # The sign of `z` ahead of each iteration, recorded from the sum that makes it.
             replayed = Signal(n + 1, name="signs", reset_less=True) if self.early else None
             ahead = z[-1] if replayed is None else replayed.bit_select(i, 1)
@@ -1667,23 +1714,31 @@ class _Engine(wiring.Component):
             if replayed is None:
                 fetched = Signal(wz, name="fetched")
                 m.d.comb += fetched.eq(lut[i])
+            sampled = Signal(name="sampled")
+            m.d.comb += sampled.eq((ahead, ~y[-1], None if vec is None else Mux(vec, ~y[-1], ahead))[mode])
             with m.If(run):
                 m.d.sync += phase.eq(~phase)
             with m.If(~run):
                 with m.If(self.start):
                     m.d.sync += x.eq(self.x0)
                     m.d.sync += y.eq(self.y0)
-                    m.d.sync += x_shifted.eq(chosen(self.x0 >> seed, self.x0 >> vseed))
-                    m.d.sync += y_shifted.eq(chosen(self.y0 >> seed, self.y0 >> vseed))
+                    m.d.sync += x_shifted.eq(self.x0 >> _SEED)
+                    m.d.sync += y_shifted.eq(self.y0 >> _SEED)
                     m.d.sync += neg.eq(self.neg0)
+                    m.d.sync += sub.eq(~self.neg0)
+                    if vsub is not None:
+                        m.d.sync += vsub.eq(~self.neg0 & self.vectoring)
                     m.d.sync += phase.eq(1)
                     if replayed is None:
                         m.d.sync += z.eq(self.z0)
-                        m.d.sync += angle.eq(lut[first])
+                        m.d.sync += angle.eq(lut[_SEED])
             with m.Elif(~phase):
                 m.d.sync += x_shifted.eq(x >> i)
                 m.d.sync += y_shifted.eq(y >> i)
-                m.d.sync += neg.eq((ahead, ~y[-1], None if vec is None else Mux(vec, ~y[-1], ahead))[mode])
+                m.d.sync += neg.eq(sampled)
+                m.d.sync += sub.eq(~sampled)
+                if vec is not None and vsub is not None:
+                    m.d.sync += vsub.eq(y[-1] & vec)
                 if fetched is not None:
                     m.d.sync += angle.eq(fetched)
             with m.Else():
@@ -1704,7 +1759,7 @@ class _Engine(wiring.Component):
                 z_load = Signal(name="z_load")
                 m.d.comb += z_load.eq(self.start & ~run)
                 z_sub = Signal(name="z_sub")
-                m.d.comb += z_sub.eq(~z[-1] if vec is None else Mux(vec, sub, ~z[-1]))
+                m.d.comb += z_sub.eq(~z[-1] if vec is None or vsub is None else vsub | ~vec & ~z[-1])
                 ahead_angle = Signal(wz, name="fetched")
                 m.d.comb += ahead_angle.eq(lut[zi_next])
                 m.d.sync += z_finished.eq(z_run & z_last)
@@ -1721,8 +1776,8 @@ class _Engine(wiring.Component):
                     m.d.sync += angle.eq(ahead_angle)
                 with m.Elif(z_load):
                     m.d.sync += z.eq(self.z0)
-                    m.d.sync += zi.eq(first)
-                    m.d.sync += angle.eq(lut[first])
+                    m.d.sync += zi.eq(_SEED)
+                    m.d.sync += angle.eq(lut[_SEED])
                 z_done = z_finished if vec is None else z_finished | (vec & done)
 
         m.d.comb += self.done.eq(done)
