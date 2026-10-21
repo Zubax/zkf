@@ -17,11 +17,11 @@ class FromInt(Operator):
     `y = float(a)` for a signed `wint`-bit `a`, rounded to nearest even.
 
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `FromInt.Core` that are built.
+    `stage_core`: the registers of `FromInt.CoreStages` that are built.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
-    class Core(enum.Flag):
+    class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
         ABS = enum.auto()
@@ -36,7 +36,7 @@ class FromInt(Operator):
     operator = "from_int"
     wint: int = 32
     stage_input: int = 0
-    stage_core: Core = Core(0)
+    stage_core: CoreStages = CoreStages(0)
     stage_output: int = 0
 
     def __post_init__(self) -> None:
@@ -95,14 +95,14 @@ class _FromInt(wiring.Component):
             wmag=wx,
             weu=weu,
             exp_is_biased=True,
-            stage_input=int(FromInt.Core.NORMALIZE_INPUT in model.stage_core),
-            stage_normalize=int(FromInt.Core.NORMALIZE in model.stage_core),
-            stage_pack=int(FromInt.Core.PACK in model.stage_core),
+            stage_input=int(FromInt.CoreStages.NORMALIZE_INPUT in model.stage_core),
+            stage_normalize=int(FromInt.CoreStages.NORMALIZE in model.stage_core),
+            stage_pack=int(FromInt.CoreStages.PACK in model.stage_core),
             stage_output=model.stage_output,
         )
         held = data.StructLayout({"sign": 1, "mag": wint})
         taken = bundle(held, sign=negative, mag=magnitude)
-        valid, h = pipe(m, "abs", valid, held, taken, int(FromInt.Core.ABS in model.stage_core))
+        valid, h = pipe(m, "abs", valid, held, taken, int(FromInt.CoreStages.ABS in model.stage_core))
         m.d.comb += fixed_to_float.in_valid.eq(valid)
         m.d.comb += fixed_to_float.sign.eq(h.sign)
         m.d.comb += fixed_to_float.force_inf.eq(0)

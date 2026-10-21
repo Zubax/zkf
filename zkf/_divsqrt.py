@@ -35,11 +35,11 @@ class Divsqrt(Operator):
     rounding selects the digits so far or one more.
 
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `Divsqrt.Core` that are built; the other digits have a stage each, fixed.
+    `stage_core`: the registers of `Divsqrt.CoreStages` that are built; the other digits have a stage each, fixed.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
-    class Core(enum.Flag):
+    class CoreStages(enum.Flag):
         """The registers of `stage_core`."""
 
         FIRST_DIGIT = enum.auto()
@@ -47,7 +47,7 @@ class Divsqrt(Operator):
 
     operator = "divsqrt"
     stage_input: int = 0
-    stage_core: Core = Core(0)
+    stage_core: CoreStages = CoreStages(0)
     stage_output: int = 0
     mode: int = 2
 
@@ -57,7 +57,7 @@ class Divsqrt(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
-        if Divsqrt.Core.FIRST_DIGIT in self.stage_core and self.fmt.wman % 2:
+        if Divsqrt.CoreStages.FIRST_DIGIT in self.stage_core and self.fmt.wman % 2:
             raise ValueError(f"stage_core={self.stage_core}: WMAN={self.fmt.wman} is odd; leave FIRST_DIGIT out")
         if not 0 <= self.mode <= 2:
             raise ValueError(f"mode={self.mode} is outside 0..2")
@@ -242,7 +242,7 @@ class _Divsqrt(wiring.Component):
         model, fmt, mode = self._model, self._model.fmt, self._model.mode
         wexp, wman, wfrac, weu = fmt.wexp, fmt.wman, fmt.wfrac, fmt.wexp + 2
         even = wman % 2 == 0
-        fold = even and Divsqrt.Core.FIRST_DIGIT not in model.stage_core
+        fold = even and Divsqrt.CoreStages.FIRST_DIGIT not in model.stage_core
         stages = wman // 2 - int(fold)  # the registers of the digit pipeline
         divides, roots = mode != 1, mode != 0
         wframe = wman if roots and even else wfrac  # fraction bits of the frame

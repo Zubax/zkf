@@ -13,8 +13,8 @@ from _operands import SEED
 from zkf import Timing, UnsupportedFormat, ZkfFormat
 from zkf._cordic import _LACKED, _ROTATION, _VECTORING, Cordic, _constants
 
-Core = Cordic.Core
-SHARED = Core.NORMALIZE_INPUT | Core.NORMALIZE | Core.PACK
+CoreStages = Cordic.CoreStages
+SHARED = CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK
 
 # wexp, wman and a count. A rotation is walked whole at 2/16 in the deep tier and in a thirteenth here, which takes
 # as long as the other formats together.
@@ -53,22 +53,27 @@ KNOBS: list[dict[str, Any]] = [
     {"un": 50, "sm": 3, "wexp": 6, "wman": 18, "mode": 1},
     *({"sc": member, "mode": mode} for mode in (0, 1, 2) for member in ~_LACKED[mode]),
     *({"sc": ~_LACKED[mode], "sm": 0, "wm": 32, "mode": mode} for mode in (0, 1, 2)),
-    {"sc": Core.REDUCED | Core.NORMALIZE_INPUT | Core.NORMALIZE, "sm": 4, "wm": 10, "mode": 0},
+    {"sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE, "sm": 4, "wm": 10, "mode": 0},
     {"sc": ~_LACKED[1], "un": 50, "mode": 1},
-    {"si": 1, "sm": 3, "sc": SHARED | Core.TAKEN | Core.ORDERED, "so": 1, "mode": 1},
+    {"si": 1, "sm": 3, "sc": SHARED | CoreStages.TAKEN | CoreStages.ORDERED, "so": 1, "mode": 1},
     {
         "si": 1,
         "sm": 3,
-        "sc": SHARED | Core.REDUCED | Core.FOLDED | Core.TAKEN | Core.ORDERED | Core.ANGLE,
+        "sc": SHARED
+        | CoreStages.REDUCED
+        | CoreStages.FOLDED
+        | CoreStages.TAKEN
+        | CoreStages.ORDERED
+        | CoreStages.ANGLE,
         "so": 1,
         "mode": 2,
     },
-    {"si": 1, "un": 50, "sm": 4, "sc": ~Core(0), "so": 2, "mode": 2},
+    {"si": 1, "un": 50, "sm": 4, "sc": ~CoreStages(0), "so": 2, "mode": 2},
     {"fa": True, "mode": 0},
     {"fa": True, "un": 50, "sm": 4, "mode": 2},
     {"fa": True, "si": 1, "sm": 0, "wm": 32, "sc": ~_LACKED[0], "so": 2, "mode": 0},
     {"fa": True, "un": 200, "sc": ~_LACKED[2], "mode": 2},
-    {"fa": True, "sc": ~_LACKED[2] & ~Core.CORRECTIONS, "mode": 2},
+    {"fa": True, "sc": ~_LACKED[2] & ~CoreStages.CORRECTIONS, "mode": 2},
 ]
 # In a rotation at 5/18 the sine reaches the packer's underflow, the bias being below the fraction; at 8/48 the
 # width of what the modes share crosses a power of two; 4 is an exponent that a rotation alone takes; and the second
@@ -78,7 +83,9 @@ BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {"un": 50}), (11, 53, {}), (4, 16, {"m
 
 # The deep tier: the formats of the default one and others at more operands, under the knobs one by one.
 DEEP_KNOBS: list[dict[str, Any]] = [{}, {"un": 50}, {"un": 200}, {"un": 400}, {"sm": 3}, {"sm": 4}, {"sm": 4, "wm": 10}]
-DEEP_KNOBS += [{"si": 1, "so": 1, "sc": Core.REDUCED | Core.NORMALIZE_INPUT | Core.NORMALIZE | Core.PACK}]
+DEEP_KNOBS += [
+    {"si": 1, "so": 1, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK}
+]
 DEEP_KNOBS += [{"un": 50, "sm": 4}, {"sc": ~_LACKED[0]}]
 DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     *((3, 16, 512, {"mode": 0} | knobs) for knobs in DEEP_KNOBS),
@@ -89,7 +96,7 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (3, 16, 4000, {"mode": 0}),
     (5, 16, 4000, {"mode": 0}),
     (5, 16, 4000, {"mode": 0, "un": 200}),
-    (5, 16, 4000, {"mode": 0, "sc": Core.REDUCED | Core.NORMALIZE}),
+    (5, 16, 4000, {"mode": 0, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE}),
     (5, 16, 4000, {"mode": 0, "un": 50}),
     (5, 16, 2000, {"mode": 0, "sm": 0, "wm": 32}),
     (5, 16, 512, {"mode": 0, "sc": ~_LACKED[0]}),
@@ -97,13 +104,18 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (8, 24, 768, {"mode": 0}),
     *((wexp, wman, count, {"mode": 2}) for wexp, wman, count in VECTORINGS[:4]),
     *((5, 16, 512, {"mode": 1, "un": u}) for u in (50, 200, 400)),
-    (5, 16, 512, {"mode": 1, "si": 1, "so": 1, "sc": Core.ORDERED | Core.NORMALIZE_INPUT | Core.NORMALIZE}),
+    (
+        5,
+        16,
+        512,
+        {"mode": 1, "si": 1, "so": 1, "sc": CoreStages.ORDERED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE},
+    ),
     (5, 16, 512, {"mode": 1, "sc": ~_LACKED[1]}),
     (5, 16, 4000, {"mode": 1}),
     (5, 16, "directed", {"mode": 1}),
     (5, 16, 2000, {"mode": 1, "un": 200}),
     (6, 18, 2000, {"mode": 1, "un": 300}),
-    (5, 16, 2000, {"mode": 1, "sc": Core.ORDERED | Core.NORMALIZE}),
+    (5, 16, 2000, {"mode": 1, "sc": CoreStages.ORDERED | CoreStages.NORMALIZE}),
     (5, 16, 2000, {"mode": 1, "sm": 0, "wm": 32}),
     (5, 16, 512, {"un": 50}),
     (8, 36, 2048, {"mode": 1} | synthesized(36, 1)),
@@ -131,7 +143,9 @@ def test_rotation_sampled() -> None:
 
 @pytest.mark.deep
 @pytest.mark.parametrize("shard", range(16))
-@pytest.mark.parametrize("stages", [{"sc": Core.REDUCED | Core.NORMALIZE}, *DEEP_KNOBS, {"fa": True}], ids=str)
+@pytest.mark.parametrize(
+    "stages", [{"sc": CoreStages.REDUCED | CoreStages.NORMALIZE}, *DEEP_KNOBS, {"fa": True}], ids=str
+)
 def test_rotation_whole(stages: dict[str, Any], shard: int) -> None:
     run(2, 16, "every", mode=0, shard=shard, shards=16, **stages)
 
@@ -172,7 +186,7 @@ def subsets(seed: int = SEED) -> list[dict[str, Any]]:
         members = list(~_LACKED[mode])
         for _ in range(count):
             taken = [member for member, coin in zip(members, rng.integers(0, 2, len(members))) if coin]
-            out.append({"sc": reduce(or_, taken, Core(0)), "un": int(rng.choice([50, 100, 200])), "mode": mode})
+            out.append({"sc": reduce(or_, taken, CoreStages(0)), "un": int(rng.choice([50, 100, 200])), "mode": mode})
     return out + [row | {"fa": True} for row in out[::3] if row["mode"] != 1]
 
 
@@ -190,8 +204,8 @@ def test_subsets(row: dict[str, Any]) -> None:
 # A front ahead of the engine in one mode and none in the other: a transaction of the other starts the engine in the
 # cycle it is taken in, unless the input is registered. The cut without the input stage is `test_cut_each_register`'s.
 @pytest.mark.parametrize("si", [0, 1])
-@pytest.mark.parametrize("front", [Core.SHIFT, Core.FOLDED, Core.TAKEN, Core.SHIFTED], ids=str)
-def test_one_front(front: Cordic.Core, si: int) -> None:
+@pytest.mark.parametrize("front", [CoreStages.SHIFT, CoreStages.FOLDED, CoreStages.TAKEN, CoreStages.SHIFTED], ids=str)
+def test_one_front(front: Cordic.CoreStages, si: int) -> None:
     model = build(ZkfFormat(5, 16), sc=front, si=si)
     simulate(model, 256, alternate=True)
     if si:
@@ -212,10 +226,12 @@ def test_every_width_of_a_mode(wman: int, mode: int) -> None:
     run(8, wman, "directed", mode=mode, **synthesized(wman, mode))
 
 
-@pytest.mark.parametrize("stages", [{}, {"un": 50, "sm": 3, "sc": ~Core(0), "so": 2}, {"un": 200, "si": 1}], ids=str)
+@pytest.mark.parametrize(
+    "stages", [{}, {"un": 50, "sm": 3, "sc": ~CoreStages(0), "so": 2}, {"un": 200, "si": 1}], ids=str
+)
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
-    knobs = stages | {"sc": stages.get("sc", Core(0)) & ~_LACKED[mode]}
+    knobs = stages | {"sc": stages.get("sc", CoreStages(0)) & ~_LACKED[mode]}
     cut(build(ZkfFormat(5, 16), mode, **knobs))
     if mode == 0:
         cut(build(ZkfFormat(3, 16), mode, **knobs))  # an exponent that a vectoring does not take
@@ -225,7 +241,9 @@ def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
 @pytest.mark.parametrize("held", [True, False])
 @pytest.mark.parametrize("mode", [0, 2])
 def test_cut_fast(mode: int, held: bool) -> None:
-    cut(build(ZkfFormat(5, 16), mode, fa=True, sc=~_LACKED[mode] & ~(Core(0) if held else Core.CORRECTIONS)))
+    cut(
+        build(ZkfFormat(5, 16), mode, fa=True, sc=~_LACKED[mode] & ~(CoreStages(0) if held else CoreStages.CORRECTIONS))
+    )
 
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
@@ -240,7 +258,7 @@ def test_timing() -> None:
     assert timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18)) == [(15, 15), (25, 25)]
     assert timings(Cordic(fmt, unroll100=50, stage_core_mul=3, wmultiplier=18)) == [(23, 23), (33, 33)]
     steps = {member: (1, 0) for member in _ROTATION} | {member: (0, 1) for member in _VECTORING}
-    for member in Core:
+    for member in CoreStages:
         rot, vec = steps.get(member, (1, 1))
         found = timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18, stage_core=member))
         assert found == [(15 + rot, 15 + rot), (25 + vec, 25 + vec)], member
@@ -267,12 +285,18 @@ def test_refusals() -> None:
             Cordic(fmt, **{"wmultiplier": 18, "stage_core_mul": 3} | knobs)
     with pytest.raises(ValueError, match=r"^stage_core_mul=0: set 3\.\.4 "):
         Cordic(fmt, wmultiplier=18)
-    refusal = "stage_core=Core.SHIFT|TAKEN|MEET: leave out TAKEN|MEET, which mode=0 lacks"
+    refusal = "stage_core=CoreStages.SHIFT|TAKEN|MEET: leave out TAKEN|MEET, which mode=0 lacks"
     with pytest.raises(ValueError, match=f"^{re.escape(refusal)}$"):
-        Cordic(fmt, wmultiplier=18, stage_core_mul=3, stage_core=Core.SHIFT | Core.TAKEN | Core.MEET, mode=0)
-    refusal = "stage_core=Core.FOLDED|ANGLE: leave out FOLDED, which mode=1 lacks"
+        Cordic(
+            fmt,
+            wmultiplier=18,
+            stage_core_mul=3,
+            stage_core=CoreStages.SHIFT | CoreStages.TAKEN | CoreStages.MEET,
+            mode=0,
+        )
+    refusal = "stage_core=CoreStages.FOLDED|ANGLE: leave out FOLDED, which mode=1 lacks"
     with pytest.raises(ValueError, match=f"^{re.escape(refusal)}$"):
-        Cordic(fmt, wmultiplier=18, stage_core_mul=3, stage_core=Core.FOLDED | Core.ANGLE, mode=1)
+        Cordic(fmt, wmultiplier=18, stage_core_mul=3, stage_core=CoreStages.FOLDED | CoreStages.ANGLE, mode=1)
     Cordic(fmt, wmultiplier=36)
     for wexp, wman, mode in ((4, 16, 1), (4, 16, 2), (8, 15, 0), (8, 54, 2)):
         with pytest.raises(UnsupportedFormat):

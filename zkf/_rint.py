@@ -35,11 +35,11 @@ class Rint(Operator):
     `y_int` saturates on an infinity and on overflow.
 
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `Rint.Core` that are built.
+    `stage_core`: the registers of `Rint.CoreStages` that are built.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
-    class Core(enum.Flag):
+    class CoreStages(enum.Flag):
         """The registers of `stage_core`."""
 
         MASK = enum.auto()
@@ -48,7 +48,7 @@ class Rint(Operator):
     operator = "rint"
     wint: int = 32
     stage_input: int = 0
-    stage_core: Core = Core(0)
+    stage_core: CoreStages = CoreStages(0)
     stage_output: int = 0
 
     def __post_init__(self) -> None:
@@ -199,7 +199,7 @@ class _Rint(wiring.Component):
         )
         payload = Signal(shifted, name="decoded")
         m.d.comb += payload.eq(decoded)
-        valid, sh = pipe(m, "mask", valid, shifted, payload, int(Rint.Core.MASK in model.stage_core))
+        valid, sh = pipe(m, "mask", valid, shifted, payload, int(Rint.CoreStages.MASK in model.stage_core))
 
         # The rounding decision; `unit_bit` marks the bit of the significand that weighs one.
         mask, below = sh.mask, Cat(sh.mask[1:], Const(0, 1))

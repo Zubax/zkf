@@ -54,7 +54,7 @@ MODELS: tuple[type[Block], ...] = (
 
 def test_names() -> None:
     f = ZkfFormat(7, 18)
-    add = Add(f, stage_input=1, stage_core=Add.Core.PACK | Add.Core.SUM, stage_output=2)
+    add = Add(f, stage_input=1, stage_core=Add.CoreStages.PACK | Add.CoreStages.SUM, stage_output=2)
     assert add.name == "zkf_add_e7m18_input1_core_sum_pack_output2_latency5"
     mul = Mul(F36, stage_core_mul=3, wmultiplier=18)
     assert mul.name == "zkf_mul_e8m36_input0_core_mul3_output0_wmultiplier18_latency3"
@@ -135,10 +135,10 @@ def test_multiplier_width_is_required(cls: type[Operator]) -> None:
 
 def test_a_set_of_another_type_is_refused() -> None:
     """The integer of a former ladder, or another operator's set."""
-    with pytest.raises(TypeError, match=r"^stage_core=3: a set of `Add.Core` is due$"):
+    with pytest.raises(TypeError, match=r"^stage_core=3: a set of `Add.CoreStages` is due$"):
         Add(F18, stage_core=3)  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match=r"^stage_core_add=<Core.ALIGN: 1>: a set of `Add.Core` is due$"):
-        Fma(F18, wmultiplier=18, stage_core_add=Log2.Core.ALIGN)  # type: ignore[arg-type]
+    with pytest.raises(TypeError, match=r"^stage_core_add=<CoreStages.ALIGN: 1>: a set of `Add.CoreStages` is due$"):
+        Fma(F18, wmultiplier=18, stage_core_add=Log2.CoreStages.ALIGN)  # type: ignore[arg-type]
 
 
 def test_a_negative_count_of_stages_is_refused() -> None:
@@ -150,20 +150,20 @@ def test_a_negative_count_of_stages_is_refused() -> None:
 
 def test_refusals() -> None:
     knobs: tuple[Callable[[], Block], ...] = (
-        lambda: Add(F18, stage_core=Add.Core.NORMALIZE_WIDE),
-        lambda: Add(ZkfFormat(4, 6), stage_core=Add.Core.NORMALIZE | Add.Core.NORMALIZE_WIDE),
+        lambda: Add(F18, stage_core=Add.CoreStages.NORMALIZE_WIDE),
+        lambda: Add(ZkfFormat(4, 6), stage_core=Add.CoreStages.NORMALIZE | Add.CoreStages.NORMALIZE_WIDE),
         lambda: Mul(F18, wmultiplier=18, stage_core_mul=4),
         lambda: Mul(F18, wmultiplier=18, stage_core_mul=-1),
         lambda: Mul(F36, wmultiplier=18, stage_core_mul=1),
         lambda: Mul(F36, wmultiplier=18, stage_core_mul=5),
         lambda: Mul(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=2),
         lambda: Fma(F36, wmultiplier=18, stage_core_mul=1),
-        lambda: Fma(F18, wmultiplier=18, stage_core_add=Add.Core.NORMALIZE_WIDE),
-        lambda: Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.Core.FIRST_DIGIT),
+        lambda: Fma(F18, wmultiplier=18, stage_core_add=Add.CoreStages.NORMALIZE_WIDE),
+        lambda: Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
         lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, unroll100=75),
         lambda: Exp2(F18, wmultiplier=18),
         lambda: Exp2(F36, wmultiplier=18, stage_core_kernel=2),
-        lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, mode=0, stage_core=Cordic.Core.MEET),
+        lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, mode=0, stage_core=Cordic.CoreStages.MEET),
         lambda: Log2(F18, wmultiplier=18, stage_core_kernel=2),
         lambda: Pipe(w=0),
     )

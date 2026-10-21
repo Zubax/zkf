@@ -7,7 +7,7 @@ from _trans import build, others, run, simulate, staging
 from zkf import ZkfFormat
 from zkf._log2 import Log2
 
-Core = Log2.Core
+CoreStages = Log2.CoreStages
 
 # wexp, wman, kind: every table of a degree.
 FORMATS: list[tuple[int, int, str | int]] = [
@@ -24,7 +24,7 @@ def test_formats(row: tuple[int, int, str | int]) -> None:
     run("log2", *row)
 
 
-@pytest.mark.parametrize("stages", [*staging(Core), {"sm": 3}], ids=str)
+@pytest.mark.parametrize("stages", [*staging(CoreStages), {"sm": 3}], ids=str)
 def test_stages(stages: dict[str, Any]) -> None:
     """Stages change no result: the format that `test_formats` walks whole is sampled here."""
     run("log2", 2, 16, 4096, **stages)
@@ -33,7 +33,7 @@ def test_stages(stages: dict[str, Any]) -> None:
 # The last product's count apart from the kernel's, and the side path laid out by the kernel's stages: none, two, three.
 @pytest.mark.parametrize(
     "stages",
-    [{"wm": 24, "sk": 0}, {"sk": 3, "sm": 2}, {"sk": 2, "sm": 3, "sc": Core.ALIGN}, {"wm": 12, "sk": 3, "sm": 4}],
+    [{"wm": 24, "sk": 0}, {"sk": 3, "sm": 2}, {"sk": 2, "sm": 3, "sc": CoreStages.ALIGN}, {"wm": 12, "sk": 3, "sm": 4}],
     ids=str,
 )
 def test_last_product(stages: dict[str, Any]) -> None:
@@ -42,13 +42,13 @@ def test_last_product(stages: dict[str, Any]) -> None:
 
 # Every count of the kernel at degree 3, whose square takes two multipliers, and the rest beside it.
 @pytest.mark.parametrize(
-    "stages", [{"sk": 3}, {"sk": 4, "sm": 4, "sc": Core.ALIGN}, {"sk": 4, "sc": ~Core(0)}], ids=str
+    "stages", [{"sk": 3}, {"sk": 4, "sm": 4, "sc": CoreStages.ALIGN}, {"sk": 4, "sc": ~CoreStages(0)}], ids=str
 )
 def test_degree_3(stages: dict[str, Any]) -> None:
     run("log2", 8, 36, 256, **stages)
 
 
-@pytest.mark.parametrize("row", others(Core), ids=str)
+@pytest.mark.parametrize("row", others(CoreStages), ids=str)
 def test_generated_for_the_format(row: tuple[int, int, dict[str, Any]]) -> None:
     run("log2", row[0], row[1], 256, **row[2])
 
@@ -74,8 +74,8 @@ def test_timing() -> None:
     assert build("log2", fmt, stage_core_kernel=2, stage_core_mul=2).timing.latency == 7
     assert build("log2", fmt, stage_core_kernel=3, stage_core_mul=3).timing.latency == 8
     assert [build("log2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in (3, 4)] == [9, 9]
-    assert [build("log2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in Core] == [10, 10]
-    ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~Core(0), "stage_output": 3}
+    assert [build("log2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in CoreStages] == [10, 10]
+    ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~CoreStages(0), "stage_output": 3}
     assert build("log2", ZkfFormat(8, 36), **ends).timing.latency == 16
 
 
@@ -102,9 +102,9 @@ EACH: tuple[dict[str, Any], ...] = (
     {"si": 1},
     {"sk": 3},
     {"sm": 3},
-    {"sc": ~Core(0)},
+    {"sc": ~CoreStages(0)},
     {"so": 1},
-    {"sk": 3, "sc": Core.ALIGN},
+    {"sk": 3, "sc": CoreStages.ALIGN},
 )
 type Row = tuple[int, int, str | int, int, int, dict[str, Any]]
 DEEP: list[Row] = []

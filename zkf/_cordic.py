@@ -86,13 +86,13 @@ class Cordic(Operator):
     `unroll100`: the engine's iterations per cycle in hundredths: 100 or a multiple of it, or 50 for two cycles each.
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input but `in_ready`'s.
     `stage_core_mul`: the product's registers, as Mul's; a rotation passes the product twice in series.
-    `stage_core`: the registers of `Cordic.Core` that are built; a fixed mode refuses those it lacks.
+    `stage_core`: the registers of `Cordic.CoreStages` that are built; a fixed mode refuses those it lacks.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output but to `in_ready`.
     `wmultiplier`: the operand width of the target's multipliers.
     `fast`: a second packer, which packs a rotation's cosine of the octant beside its sine: a cycle less on a rotation.
     """
 
-    class Core(enum.Flag):
+    class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order: a rotation's, a vectoring's, then those of both."""
 
         SHIFT = enum.auto()
@@ -127,7 +127,7 @@ class Cordic(Operator):
     unroll100: int = 100
     stage_input: int = 0
     stage_core_mul: int = 0
-    stage_core: Core = Core(0)
+    stage_core: CoreStages = CoreStages(0)
     stage_output: int = 0
     wmultiplier: int
     mode: int = 2
@@ -233,11 +233,13 @@ class Cordic(Operator):
         return Timing(latency, latency if self.stage_core_mul else latency + 1)
 
 
-_ROTATION = Cordic.Core.SHIFT | Cordic.Core.REDUCED | Cordic.Core.FOLDED | Cordic.Core.CORRECTIONS
-_VECTORING = Cordic.Core.TAKEN | Cordic.Core.ORDERED | Cordic.Core.SHIFTED | Cordic.Core.ANGLE
-"""The members of `Cordic.Core` on the path of one mode alone; `MEET` is on both."""
-_LACKED = (_VECTORING | Cordic.Core.MEET, _ROTATION | Cordic.Core.MEET, Cordic.Core(0))
-"""The members of `Cordic.Core` that each `mode` does not build."""
+_ROTATION = (
+    Cordic.CoreStages.SHIFT | Cordic.CoreStages.REDUCED | Cordic.CoreStages.FOLDED | Cordic.CoreStages.CORRECTIONS
+)
+_VECTORING = Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.SHIFTED | Cordic.CoreStages.ANGLE
+"""The members of `Cordic.CoreStages` on the path of one mode alone; `MEET` is on both."""
+_LACKED = (_VECTORING | Cordic.CoreStages.MEET, _ROTATION | Cordic.CoreStages.MEET, Cordic.CoreStages(0))
+"""The members of `Cordic.CoreStages` that each `mode` does not build."""
 
 
 @dataclass(frozen=True)
@@ -788,7 +790,7 @@ class _Cordic(wiring.Component):
         weu_pk = wexp + ceil_log2(wmag_pk + 1) + 3 if vectors else max(weu_rot, wexp + 3)
 
         core, stages = model.stage_core, model.stage_core_mul
-        Core = Cordic.Core
+        CoreStages = Cordic.CoreStages
 
         result = data.StructLayout({"quadrant": 2, "r1": f, "r0": f})
         m.submodules.txn = txn = Txn(result, min(model.stage_output, 1), overlap=bool(stages))
@@ -807,7 +809,10 @@ class _Cordic(wiring.Component):
         if both:
             with m.If(txn.accept):
                 m.d.sync += own_vec.eq(self.vectoring)
-            fronts = (Core.SHIFT | Core.REDUCED | Core.FOLDED, Core.TAKEN | Core.ORDERED | Core.SHIFTED)
+            fronts = (
+                CoreStages.SHIFT | CoreStages.REDUCED | CoreStages.FOLDED,
+                CoreStages.TAKEN | CoreStages.ORDERED | CoreStages.SHIFTED,
+            )
             if not model.stage_input and not all(core & front for front in fronts):
                 # A transaction can start the engine in the cycle it is taken in.
                 now_vec = Signal(name="vec_now")
@@ -835,10 +840,10 @@ class _Cordic(wiring.Component):
         packer = functools.partial(
             FixedToFloat,
             fmt,
-            stage_input=int(Core.NORMALIZE_INPUT in core),
-            stage_normalize=int(Core.NORMALIZE in core),
-            stage_pack=int(Core.PACK in core),
-            stage_output=int(Core.ROUNDED in core),
+            stage_input=int(CoreStages.NORMALIZE_INPUT in core),
+            stage_normalize=int(CoreStages.NORMALIZE in core),
+            stage_pack=int(CoreStages.PACK in core),
+            stage_output=int(CoreStages.ROUNDED in core),
         )
         m.submodules.f2f = f2f = packer(
             wmag=wmag_pk,
@@ -889,14 +894,14 @@ class _Cordic(wiring.Component):
             given = bundle(
                 amount, sign=si.a.sign, inf=a_inf, tiny=low, sig=significand, lshamt=lshamt, e=(e0 - bias)[:we]
             )
-            shift_valid, sa = pipe(m, "shift", si_valid & ~si.vec, amount, given, int(Core.SHIFT in core))
+            shift_valid, sa = pipe(m, "shift", si_valid & ~si.vec, amount, given, int(CoreStages.SHIFT in core))
 
             frac_pos = Signal(wff, name="frac_pos")
             m.d.comb += frac_pos.eq((_zext(sa.sig, wff) << sa.lshamt)[:wff])
             reduction = data.StructLayout(flags | {"quad": 2, "t": wt, "e": signed(we)})
             quad = Mux(sa.inf, Const(0, 2), frac_pos[wff - 2 :])
             given = bundle(reduction, sign=sa.sign, inf=sa.inf, tiny=sa.tiny, quad=quad, t=frac_pos[:wt], e=sa.e)
-            reduced_valid, rd = pipe(m, "reduced", shift_valid, reduction, given, int(Core.REDUCED in core))
+            reduced_valid, rd = pipe(m, "reduced", shift_valid, reduction, given, int(CoreStages.REDUCED in core))
 
             # The complement's increment keeps a small reflected sine accurate next to the fold.
             flip = Signal(name="oct_flip")
@@ -915,7 +920,7 @@ class _Cordic(wiring.Component):
                 quad=rd.quad,
                 e=rd.e,
             )
-            folded_valid, fd = pipe(m, "folded", reduced_valid, octant, given, int(Core.FOLDED in core))
+            folded_valid, fd = pipe(m, "folded", reduced_valid, octant, given, int(CoreStages.FOLDED in core))
             # The angle after the first iteration, `tpw - lut[0]` with `lut[0]` half a quadrant, which bounds `tpw`.
             halfway = fd.halfway
             z1 = Cat(Const(0, _GUARD_ZF), fd.tpw[: wt - 1], (~halfway).replicate(wz - wt + 1 - _GUARD_ZF))
@@ -1015,7 +1020,7 @@ class _Cordic(wiring.Component):
             last = Signal(name="rot_last")
             m.d.comb += last.eq(mul_valid & (pm_sb == _Product.COSINE))
             corrections_valid: Value = last
-            if Core.CORRECTIONS in core:
+            if CoreStages.CORRECTIONS in core:
                 corrections_valid = Signal(name="corrections_valid")
                 m.d.sync += corrections_valid.eq(last)
             with m.If(folded_valid):
@@ -1047,15 +1052,15 @@ class _Cordic(wiring.Component):
             sin_now = (e_yn + (corr_s >> corr_shift))[:wx].as_signed()
             cos_now = (e_xn - (product >> corr_shift))[:wx].as_signed()
             sin_held, cos_held = sin_now, cos_now  # `fast` without CORRECTIONS packs both as they are made
-            if Core.CORRECTIONS in core or not model.fast:
+            if CoreStages.CORRECTIONS in core or not model.fast:
                 held_sin = Signal(signed(wx), name="held_sin", reset_less=True)
                 held_cos = Signal(signed(wx), name="held_cos", reset_less=True)
                 with m.If(last):
                     m.d.sync += held_sin.eq(sin_now)
                     m.d.sync += held_cos.eq(cos_now)
                 # Without CORRECTIONS the first of them is packed as they are made, and the second from their hold.
-                sin_held = held_sin if Core.CORRECTIONS in core else Mux(last, sin_now, held_sin)
-                cos_held = held_cos if Core.CORRECTIONS in core else Mux(last, cos_now, held_cos)
+                sin_held = held_sin if CoreStages.CORRECTIONS in core else Mux(last, sin_now, held_sin)
+                cos_held = held_cos if CoreStages.CORRECTIONS in core else Mux(last, cos_now, held_cos)
 
             sin_mag = Signal(wmag_rot, name="sin_tp_mag")
             m.d.comb += sin_mag.eq(Mux(sa_o, bypass_mag, _zext(sin_held[: xf + 1], wmag_rot)))
@@ -1088,7 +1093,7 @@ class _Cordic(wiring.Component):
                 # The sine and the cosine of the octant side by side, then unfolded.
                 cosine_in = data.StructLayout({"sign": 1, "inf": 1, "mag": xf + 1})
                 given = bundle(cosine_in, sign=Mux(swap_o, r0_sign, r1_sign), inf=inf_o, mag=cos_mag)
-                cos_valid, cs = pipe(m, "meet_cos", corrections_valid, cosine_in, given, int(Core.MEET in core))
+                cos_valid, cs = pipe(m, "meet_cos", corrections_valid, cosine_in, given, int(CoreStages.MEET in core))
                 m.submodules.f2f_cos = f2c = packer(wmag=xf + 1, weu=wexp + 2, assume_no_overflow=True, most=1)
                 m.d.comb += [f2c.in_valid.eq(cos_valid), f2c.sign.eq(cs.sign), f2c.force_inf.eq(cs.inf)]
                 m.d.comb += [f2c.exp_offset.eq(0), f2c.mag.eq(cs.mag)]
@@ -1172,7 +1177,7 @@ class _Cordic(wiring.Component):
                 yi=a_inf,
                 equal=high & (key_y[:wkl] == key_x[:wkl]),
             )
-            taken_valid, tk = pipe(m, "taken", mine_now, operands, given, int(Core.TAKEN in core))
+            taken_valid, tk = pipe(m, "taken", mine_now, operands, given, int(CoreStages.TAKEN in core))
 
             special = Signal(name="f1_special")
             m.d.comb += special.eq(tk.xz | tk.xi | tk.yz | tk.yi)
@@ -1270,7 +1275,7 @@ class _Cordic(wiring.Component):
                 shamt=shamt,
                 beyond=beyond,
             )
-            ordered_valid, od = pipe(m, "ordered", taken_valid, numerator, given, int(Core.ORDERED in core))
+            ordered_valid, od = pipe(m, "ordered", taken_valid, numerator, given, int(CoreStages.ORDERED in core))
 
             # `x2 = 3/2 x0 + ceil(y0 / 2)` and `y2 = y0 + floor(y0 / 2) - x0 / 2`, `x0` being even; where `y0 == x0`,
             # `y2 = -x0`, which the same sum gives with `-5/2 x0`.
@@ -1279,7 +1284,7 @@ class _Cordic(wiring.Component):
             if at50:
                 # The sums ahead of the register, and the sign of `y2` from the significands: `3 y0 >= x0`, always
                 # where `y0` is not shifted, never where by three or more.
-                den = held_den_sig if Core.ORDERED in core else den_sig
+                den = held_den_sig if CoreStages.ORDERED in core else den_sig
                 rises = Array([Const(1, 1), od.three >= den << 1, od.three >= den << 2, Const(0, 1)])
                 seed = data.StructLayout({"x2": signed(wx), "y2": signed(wx), "equal": 1, "rising": 1})
                 given = bundle(
@@ -1300,7 +1305,7 @@ class _Cordic(wiring.Component):
                     ya=((y0 & (y0 >> 1) | (y0 ^ (y0 >> 1)) & term) << 1)[:wx],
                     equal=od.equal,
                 )
-            shifted_valid, sd = pipe(m, "shifted", ordered_valid, seed, given, int(Core.SHIFTED in core))
+            shifted_valid, sd = pipe(m, "shifted", ordered_valid, seed, given, int(CoreStages.SHIFTED in core))
             if at50:
                 x_load, y_load, xa, ya = sd.x2, sd.y2, Const(0, wx), Const(0, wx)
             else:
@@ -1400,7 +1405,7 @@ class _Cordic(wiring.Component):
                 tmag=Mux(held_bypass, bypassed, _zext(un_tmag, wmag_vec)),
                 texp=Mux(held_bypass, byp_exp, Const(wmag_pk - 1 - zf + bias, signed(weu_pk))),
             )
-            angle_valid, ag = pipe(m, "angle", theta_ready, angle, given, int(Core.ANGLE in core))
+            angle_valid, ag = pipe(m, "angle", theta_ready, angle, given, int(CoreStages.ANGLE in core))
 
             # The length is packed first and held until theta comes; a zero or an infinity overrides both results from
             # what is held of the operands.
@@ -1480,7 +1485,7 @@ class _Cordic(wiring.Component):
         m.d.comb += pmul.b.eq(now.pm_b)
         back = data.StructLayout({"sign": 1, "inf": 1, "exp": signed(weu_pk), "mag": wmag_pk, "sb": pk_tags})
         given = bundle(back, sign=now.pk_sign, inf=now.pk_inf, exp=now.pk_exp, mag=now.pk_mag, sb=now.pk_sb)
-        pk_iv, pk = pipe(m, "meet", now.pk_iv, back, given, int(Core.MEET in core))
+        pk_iv, pk = pipe(m, "meet", now.pk_iv, back, given, int(CoreStages.MEET in core))
         m.d.comb += f2f.in_valid.eq(pk_iv)
         m.d.comb += f2f.sign.eq(pk.sign)
         m.d.comb += f2f.force_inf.eq(pk.inf)

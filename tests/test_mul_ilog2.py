@@ -75,9 +75,9 @@ def simulate(model: MulIlog2, count: int) -> None:
     run_pipeline(model.component(), model.timing.latency, cases)
 
 
-@pytest.mark.parametrize("stage_core", [MulIlog2.Core(0), MulIlog2.Core.DECODE], ids=str)
+@pytest.mark.parametrize("stage_core", [MulIlog2.CoreStages(0), MulIlog2.CoreStages.DECODE], ids=str)
 @pytest.mark.parametrize("row", [(2, 4, 0), (3, 4, 0), (5, 11, 512), (8, 24, 1024), (11, 53, 384)], ids=str)
-def test_formats(row: tuple[int, int, int], stage_core: MulIlog2.Core) -> None:
+def test_formats(row: tuple[int, int, int], stage_core: MulIlog2.CoreStages) -> None:
     run(*row, stage_core=stage_core)
 
 
@@ -86,12 +86,12 @@ def test_formats(row: tuple[int, int, int], stage_core: MulIlog2.Core) -> None:
     "knobs",
     [
         {"stage_input": 1},
-        {"stage_input": 1, "stage_core": MulIlog2.Core.DECODE},
+        {"stage_input": 1, "stage_core": MulIlog2.CoreStages.DECODE},
         {"stage_input": 2},
         {"stage_output": 1},
-        {"stage_input": 1, "stage_core": MulIlog2.Core.DECODE, "stage_output": 2},
+        {"stage_input": 1, "stage_core": MulIlog2.CoreStages.DECODE, "stage_output": 2},
         {"wk": 2},
-        {"wk": 6, "stage_core": MulIlog2.Core.DECODE},
+        {"wk": 6, "stage_core": MulIlog2.CoreStages.DECODE},
     ],
     ids=str,
 )
@@ -110,7 +110,7 @@ def test_single_cycle() -> None:
 
 
 @pytest.mark.deep
-@pytest.mark.parametrize("stage_core", [MulIlog2.Core(0), MulIlog2.Core.DECODE], ids=str)
+@pytest.mark.parametrize("stage_core", [MulIlog2.CoreStages(0), MulIlog2.CoreStages.DECODE], ids=str)
 @pytest.mark.parametrize("row", [(2, 5, 0), (4, 5, 0), (3, 6, 0), (2, 6, 0), (6, 17, 512), (8, 23, 512)], ids=str)
-def test_deep(row: tuple[int, int, int], stage_core: MulIlog2.Core) -> None:
+def test_deep(row: tuple[int, int, int], stage_core: MulIlog2.CoreStages) -> None:
     run(*row, stage_core=stage_core)

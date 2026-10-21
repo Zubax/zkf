@@ -44,9 +44,9 @@ class CoreSpec:
 
 F18, F24, F36 = ZkfFormat(6, 18), ZkfFormat(8, 24), ZkfFormat(8, 36)
 _FMA36: dict[str, Any] = dict(stage_core_mul=3, wmultiplier=18)
-_CORDIC_SHARED = Cordic.Core.NORMALIZE_INPUT | Cordic.Core.NORMALIZE | Cordic.Core.PACK
-_CORDIC_ROTATION = _CORDIC_SHARED | Cordic.Core.REDUCED | Cordic.Core.CORRECTIONS
-_CORDIC_VECTORING = _CORDIC_SHARED | Cordic.Core.TAKEN | Cordic.Core.ORDERED | Cordic.Core.ANGLE
+_CORDIC_SHARED = Cordic.CoreStages.NORMALIZE_INPUT | Cordic.CoreStages.NORMALIZE | Cordic.CoreStages.PACK
+_CORDIC_ROTATION = _CORDIC_SHARED | Cordic.CoreStages.REDUCED | Cordic.CoreStages.CORRECTIONS
+_CORDIC_VECTORING = _CORDIC_SHARED | Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.ANGLE
 CATALOG: dict[str, Block | CoreSpec] = {
     spec.name: spec
     for spec in (
@@ -66,26 +66,38 @@ CATALOG: dict[str, Block | CoreSpec] = {
         Mul(F36, stage_input=1, stage_core_mul=3, wmultiplier=18),
         Mul(ZkfFormat(8, 25), stage_core_mul=3, wmultiplier=18),
         # Without ALIGN Diamond makes 97.2 MHz, in the alignment; without OPERANDS Yosys makes 74.8.
-        Add(F18, stage_core=Add.Core.OPERANDS | Add.Core.ALIGN | Add.Core.SUM | Add.Core.NORMALIZE),
+        Add(
+            F18,
+            stage_core=Add.CoreStages.OPERANDS | Add.CoreStages.ALIGN | Add.CoreStages.SUM | Add.CoreStages.NORMALIZE,
+        ),
         # With ALIGNED for ALIGN Yosys makes 99.7 MHz; each register less misses Diamond.
-        Add(F36, stage_core=Add.Core.OPERANDS | Add.Core.ALIGN | Add.Core.SUM | Add.Core.NORMALIZE),
+        Add(
+            F36,
+            stage_core=Add.CoreStages.OPERANDS | Add.CoreStages.ALIGN | Add.CoreStages.SUM | Add.CoreStages.NORMALIZE,
+        ),
         # Without PACK Yosys makes 98.2 MHz, in the rounding, even with DECODE and ALIGN.
         Fma(
             F18,
             stage_core_mul=1,
-            stage_core_add=Add.Core.OPERANDS | Add.Core.ALIGNED | Add.Core.SUM | Add.Core.NORMALIZE | Add.Core.PACK,
+            stage_core_add=Add.CoreStages.OPERANDS
+            | Add.CoreStages.ALIGNED
+            | Add.CoreStages.SUM
+            | Add.CoreStages.NORMALIZE
+            | Add.CoreStages.PACK,
             wmultiplier=18,
         ),
         # With NORMALIZED for PACK Diamond makes 97.3 MHz, in the rounding.
-        Fma(F36, stage_output=1, stage_core_add=~(Add.Core.NORMALIZE_INPUT | Add.Core.NORMALIZED), **_FMA36),
+        Fma(
+            F36, stage_output=1, stage_core_add=~(Add.CoreStages.NORMALIZE_INPUT | Add.CoreStages.NORMALIZED), **_FMA36
+        ),
         # Each register less misses Diamond, at 74.9 to 95.8 MHz.
-        Fma(F36, stage_input=1, stage_core_add=~(Add.Core.NORMALIZE_INPUT | Add.Core.PACK), **_FMA36),
+        Fma(F36, stage_input=1, stage_core_add=~(Add.CoreStages.NORMALIZE_INPUT | Add.CoreStages.PACK), **_FMA36),
         Divsqrt(F18),
         Divsqrt(F18, mode=0),
         Divsqrt(F18, mode=1),
         Divsqrt(ZkfFormat(8, 27)),
         # Folded into stage 0 beside the root, the divider's first digit makes 98.7 MHz on Yosys.
-        Divsqrt(F36, stage_core=Divsqrt.Core.FIRST_DIGIT),
+        Divsqrt(F36, stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
         Divsqrt(F36, mode=0),
         Divsqrt(F36, mode=1),
         Cmp(F18),
@@ -93,12 +105,12 @@ CATALOG: dict[str, Block | CoreSpec] = {
         MulIlog2(F18, wk=7),
         MulIlog2(F36, wk=9),
         # Unstaged, the decode of k into the selection makes 84.3 MHz on Diamond.
-        MulIlog2(F36, wk=44, stage_core=MulIlog2.Core.DECODE),
-        MulIlog2(F36, wk=9, stage_core=MulIlog2.Core.DECODE),
+        MulIlog2(F36, wk=44, stage_core=MulIlog2.CoreStages.DECODE),
+        MulIlog2(F36, wk=9, stage_core=MulIlog2.CoreStages.DECODE),
         # The normalizer's middle alone makes 96.3, 94.3 and 92.3 MHz on Diamond, |a| into it; |a| alone, 66.9 to 76.5.
-        FromInt(F18, stage_core=FromInt.Core.ABS | FromInt.Core.NORMALIZE),
-        FromInt(F18, stage_input=1, stage_core=FromInt.Core.ABS | FromInt.Core.NORMALIZE),
-        FromInt(F36, stage_core=FromInt.Core.ABS | FromInt.Core.NORMALIZE),
+        FromInt(F18, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
+        FromInt(F18, stage_input=1, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
+        FromInt(F36, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
         Resize(ZkfFormat(5, 11), fmt_in=ZkfFormat(6, 18)),
         Resize(ZkfFormat(5, 11), fmt_in=ZkfFormat(6, 18), stage_input=1),
         Resize(F18, fmt_in=ZkfFormat(5, 11)),
@@ -106,21 +118,23 @@ CATALOG: dict[str, Block | CoreSpec] = {
         Resize(F18, fmt_in=ZkfFormat(8, 36)),
         Resize(F36, fmt_in=ZkfFormat(6, 18)),
         # Unstaged, the discard mask into the rounding decision makes 74.1 and 59.5 MHz on Diamond.
-        Rint(F18, stage_core=Rint.Core.MASK),
-        Rint(F36, wint=44, stage_core=Rint.Core.MASK),
+        Rint(F18, stage_core=Rint.CoreStages.MASK),
+        Rint(F36, wint=44, stage_core=Rint.CoreStages.MASK),
         # Without SUM Diamond makes 98.2 MHz, at stage_core_kernel=2 Vivado 150.04, under a 0.5% margin.
-        Exp2(F18, stage_core_kernel=3, stage_core=Exp2.Core.SUM, wmultiplier=18),
+        Exp2(F18, stage_core_kernel=3, stage_core=Exp2.CoreStages.SUM, wmultiplier=18),
         # Without ALIGN Diamond makes 93.6 and 90.9 MHz.
-        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.Core.ALIGN, wmultiplier=18),
-        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.Core.ALIGN, stage_output=1, wmultiplier=18),
+        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
+        Log2(
+            F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.CoreStages.ALIGN, stage_output=1, wmultiplier=18
+        ),
         # Without SUM Diamond makes 78.2 MHz, at stage_core_kernel=2 Vivado 149.1.
-        Exp2(F24, stage_core_kernel=3, stage_core=Exp2.Core.SUM, wmultiplier=18),
+        Exp2(F24, stage_core_kernel=3, stage_core=Exp2.CoreStages.SUM, wmultiplier=18),
         # Without ALIGN Diamond makes 97.0 MHz, at stage_core_kernel=2 Vivado 149.1.
-        Log2(F24, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.Core.ALIGN, wmultiplier=18),
+        Log2(F24, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
         # Without SUM Diamond makes 81.0 MHz.
-        Exp2(F36, stage_core_kernel=3, stage_core=Exp2.Core.SUM, wmultiplier=18),
+        Exp2(F36, stage_core_kernel=3, stage_core=Exp2.CoreStages.SUM, wmultiplier=18),
         # Without ALIGN Diamond makes 80.6 MHz.
-        Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.Core.ALIGN, wmultiplier=18),
+        Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
         # Without NORMALIZE_INPUT Diamond makes 80.5 MHz.
         Cordic(F18, mode=0, stage_core_mul=3, stage_core=_CORDIC_ROTATION, wmultiplier=18),
         # At stage_core_mul=2 Yosys makes 90.7 MHz in the length's product.
@@ -131,7 +145,7 @@ CATALOG: dict[str, Block | CoreSpec] = {
             mode=0,
             unroll100=50,
             stage_core_mul=4,
-            stage_core=_CORDIC_ROTATION | Cordic.Core.SHIFT | Cordic.Core.FOLDED,
+            stage_core=_CORDIC_ROTATION | Cordic.CoreStages.SHIFT | Cordic.CoreStages.FOLDED,
             wmultiplier=18,
         ),
         # Without stage_output=1 one of nextpnr's seeds 1 to 6 makes 99.7 MHz, in the rounding into the result; with
@@ -141,12 +155,14 @@ CATALOG: dict[str, Block | CoreSpec] = {
             mode=1,
             unroll100=50,
             stage_core_mul=4,
-            stage_core=_CORDIC_VECTORING | Cordic.Core.SHIFTED,
+            stage_core=_CORDIC_VECTORING | Cordic.CoreStages.SHIFTED,
             stage_output=1,
             wmultiplier=18,
         ),
         # Without NORMALIZE_INPUT nextpnr's seeds 1 to 6 make 95.7 to 99.3 MHz, in the normalizer.
-        Cordic(F36, unroll100=50, stage_core_mul=5, stage_core=~Cordic.Core.CORRECTIONS, wmultiplier=18, fast=True),
+        Cordic(
+            F36, unroll100=50, stage_core_mul=5, stage_core=~Cordic.CoreStages.CORRECTIONS, wmultiplier=18, fast=True
+        ),
     )
 }
 """The specs by their module names."""

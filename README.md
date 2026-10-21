@@ -57,7 +57,7 @@ paths from external circuits.
 When zero, internal combinational paths are exposed directly;
 when greater than one, dummy stages are added which helps with retiming or when routing delays dominate.
 
-- `stage_core` -- a set of the operator's own registers, e.g. `zkf.Add.Core.SUM | zkf.Add.Core.PACK`;
+- `stage_core` -- a set of the operator's own registers, e.g. `zkf.Add.CoreStages.SUM | zkf.Add.CoreStages.PACK`;
 operators made of parts take one knob per part, such as the product's `stage_core_mul`.
 The docstrings describe the knobs of each operator.
 

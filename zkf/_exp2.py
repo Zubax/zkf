@@ -29,12 +29,12 @@ class Exp2(Operator):
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
     `stage_core_kernel`: the registers of every product of the kernel, as `stage_core_mul` of `Mul`, each capped at its
     own positions, those of one multiplier at its output and operands.
-    `stage_core`: the registers of `Exp2.Core` that are built.
+    `stage_core`: the registers of `Exp2.CoreStages` that are built.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     `wmultiplier`: the operand width of the target's multipliers, which the table is generated for.
     """
 
-    class Core(enum.Flag):
+    class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
         REDUCE = enum.auto()
@@ -45,7 +45,7 @@ class Exp2(Operator):
     operator = "exp2"
     stage_input: int = 0
     stage_core_kernel: int = 0
-    stage_core: Core = Core(0)
+    stage_core: CoreStages = CoreStages(0)
     stage_output: int = 0
     wmultiplier: int
     rom_attrs: Attrs | None = field(default=None, compare=False)
@@ -148,12 +148,12 @@ class _Exp2(wiring.Component):
         )
         argument = data.StructLayout({"f": spec.cf, "side": side})
         given = bundle(argument, f=reduce.f, side=reduced)
-        f_valid, r = pipe(m, "reduce", valid, argument, given, int(Exp2.Core.REDUCE in core))
+        f_valid, r = pipe(m, "reduce", valid, argument, given, int(Exp2.CoreStages.REDUCE in core))
         m.d.comb += kernel.in_valid.eq(f_valid)
         m.d.comb += kernel.f.eq(r.f)
         total = data.StructLayout({"s": spec.cf + 2, "side": side})
         given = bundle(total, s=kernel.s, side=delay(m, "side", side, r.side, kernel.latency))
-        s_valid, q = pipe(m, "sum", kernel.out_valid, total, given, int(Exp2.Core.SUM in core))
+        s_valid, q = pipe(m, "sum", kernel.out_valid, total, given, int(Exp2.CoreStages.SUM in core))
         m.submodules.pack = pack = _Pack(fmt, spec.cf)
         m.d.comb += pack.sign.eq(q.side.sign)
         m.d.comb += pack.zero.eq(q.side.zero)

@@ -219,9 +219,9 @@ def simulate(model: Divsqrt, kind: str | int, shard: int = 0, shards: int = 1) -
     run_pipeline(model.component(), model.timing.latency, cases)
 
 
-def decodes(wman: int) -> tuple[Divsqrt.Core, ...]:
+def decodes(wman: int) -> tuple[Divsqrt.CoreStages, ...]:
     """The values of `stage_core`: an odd significand has no first digit to unfold."""
-    return (Divsqrt.Core(0), Divsqrt.Core.FIRST_DIGIT) if wman % 2 == 0 else (Divsqrt.Core(0),)
+    return (Divsqrt.CoreStages(0), Divsqrt.CoreStages.FIRST_DIGIT) if wman % 2 == 0 else (Divsqrt.CoreStages(0),)
 
 
 # mode, wexp, wman, kind: division where two operands can be walked, roots further, the runtime mode on both.
@@ -256,19 +256,19 @@ def test_catalog(model: Divsqrt) -> None:
 
 def test_refusals() -> None:
     fmt = ZkfFormat(6, 18)
-    unfolded = Divsqrt(fmt, stage_core=Divsqrt.Core.FIRST_DIGIT, stage_output=3)
+    unfolded = Divsqrt(fmt, stage_core=Divsqrt.CoreStages.FIRST_DIGIT, stage_output=3)
     assert Divsqrt(fmt).timing.latency == 8 and unfolded.timing.latency == 12
     with pytest.raises(ValueError):
         Divsqrt(fmt, mode=3)
     with pytest.raises(
-        ValueError, match=re.escape("stage_core=Core.FIRST_DIGIT: WMAN=17 is odd; leave FIRST_DIGIT out")
+        ValueError, match=re.escape("stage_core=CoreStages.FIRST_DIGIT: WMAN=17 is odd; leave FIRST_DIGIT out")
     ):
-        Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.Core.FIRST_DIGIT)
+        Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT)
 
 
 # mode, wexp, wman, kind, stage_core, shard, shards: a shard holds 2**18 divisions at most.
-NONE = Divsqrt.Core(0)
-DEEP: list[tuple[int, int, int, str | int, Divsqrt.Core, int, int]] = (
+NONE = Divsqrt.CoreStages(0)
+DEEP: list[tuple[int, int, int, str | int, Divsqrt.CoreStages, int, int]] = (
     [(mode, 4, 6, "every", NONE, shard, shards) for mode, shards in ((0, 4), (2, 4)) for shard in range(shards)]
     + [(mode, 4, 7, "every", NONE, shard, 16) for mode in (0, 2) for shard in range(16)]
     + [(mode, 5, m, "significands", sd, 0, 1) for mode in (0, 1, 2) for m in (8, 9, 10) for sd in decodes(m)]
@@ -289,7 +289,7 @@ DEEP: list[tuple[int, int, int, str | int, Divsqrt.Core, int, int]] = (
 
 @pytest.mark.deep
 @pytest.mark.parametrize("row", DEEP, ids=str)
-def test_deep(row: tuple[int, int, int, str | int, Divsqrt.Core, int, int]) -> None:
+def test_deep(row: tuple[int, int, int, str | int, Divsqrt.CoreStages, int, int]) -> None:
     mode, wexp, wman, kind, stage_core, shard, shards = row
     run(wexp, wman, kind, mode, shard, shards, stage_core=stage_core)
 
@@ -299,5 +299,5 @@ def test_deep(row: tuple[int, int, int, str | int, Divsqrt.Core, int, int]) -> N
 @pytest.mark.parametrize("mode", [0, 1, 2])
 @pytest.mark.parametrize("stages", [stages for stages in range(8) if stages & (stages - 1)])
 def test_deep_stages(mode: int, stages: int) -> None:
-    values: dict[str, Any] = {"stage_input": 1, "stage_core": Divsqrt.Core.FIRST_DIGIT, "stage_output": 1}
+    values: dict[str, Any] = {"stage_input": 1, "stage_core": Divsqrt.CoreStages.FIRST_DIGIT, "stage_output": 1}
     run(3, 4, "every", mode, **{name: value for bit, (name, value) in enumerate(values.items()) if (stages >> bit) & 1})

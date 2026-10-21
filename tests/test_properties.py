@@ -19,9 +19,14 @@ from zkf._pmul import counts
 FORMATS = [(2, 4), (3, 4), (3, 5), (4, 6), (5, 11), (6, 18), (7, 17), (8, 24), (11, 53)]
 STAGES: dict[str, list[dict[str, Any]]] = {
     "add": [
-        {"stage_core": Add.Core.SUM},
-        {"stage_core": Add.Core.OPERANDS | Add.Core.ALIGNED | Add.Core.SUM | Add.Core.NORMALIZED},
-        {"stage_core": ~Add.Core.NORMALIZE_WIDE},
+        {"stage_core": Add.CoreStages.SUM},
+        {
+            "stage_core": Add.CoreStages.OPERANDS
+            | Add.CoreStages.ALIGNED
+            | Add.CoreStages.SUM
+            | Add.CoreStages.NORMALIZED
+        },
+        {"stage_core": ~Add.CoreStages.NORMALIZE_WIDE},
     ],
     "mul": [{"stage_core_mul": count} for count in (2, 3)],
 }

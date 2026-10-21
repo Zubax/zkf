@@ -46,12 +46,12 @@ class Log2(Operator):
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
     `stage_core_kernel`: the registers of every product of the kernel, as that of `Exp2`.
     `stage_core_mul`: the registers of the last product, `f * C(f)`, as Mul's.
-    `stage_core`: the registers of `Log2.Core` that are built.
+    `stage_core`: the registers of `Log2.CoreStages` that are built.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     `wmultiplier`: the operand width of the target's multipliers, which the table is generated for.
     """
 
-    class Core(enum.Flag):
+    class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
         ALIGN = enum.auto()
@@ -63,7 +63,7 @@ class Log2(Operator):
     stage_input: int = 0
     stage_core_kernel: int = 0
     stage_core_mul: int = 0
-    stage_core: Core = Core(0)
+    stage_core: CoreStages = CoreStages(0)
     stage_output: int = 0
     wmultiplier: int
     rom_attrs: Attrs | None = field(default=None, compare=False)
@@ -222,7 +222,7 @@ class _Log2(wiring.Component):
         ready = bundle(aligned, side=side, lz=normalize.count, operand=Mux(n.ezero, normalize.y, n.fmag), c=kernel.c)
         payload = Signal(aligned, name="ready")
         m.d.comb += payload.eq(ready)
-        a_valid, q = pipe(m, "align", kernel.out_valid, aligned, payload, int(Log2.Core.ALIGN in core))
+        a_valid, q = pipe(m, "align", kernel.out_valid, aligned, payload, int(Log2.CoreStages.ALIGN in core))
 
         m.submodules.final = final = Pmul(
             *_last(spec, fmt),
@@ -236,7 +236,7 @@ class _Log2(wiring.Component):
         m.d.comb += final.b.eq(Cat(Const(0, _G2 + 1), q.c) >> q.side.sh)
         flags = data.StructLayout({"pole": 1, "domain_error": 1})
         m.submodules.pack = pack = _Pack(
-            fmt, wgb=_GB, stage=final.latency, stage_select=int(Log2.Core.SELECT in core), sideband=flags
+            fmt, wgb=_GB, stage=final.latency, stage_select=int(Log2.CoreStages.SELECT in core), sideband=flags
         )
         m.d.comb += [pack.p1.eq(q.side.p1), pack.ezero.eq(q.side.ezero), pack.sub.eq(q.side.sub)]
         m.d.comb += [pack.neg.eq(q.side.neg), pack.one.eq(q.side.one), pack.is_inf.eq(q.side.is_inf)]

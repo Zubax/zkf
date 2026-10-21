@@ -17,7 +17,7 @@ class Fma(Operator):
 
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
     `stage_core_mul`: the product's registers, as Mul's.
-    `stage_core_add`: the sum's registers, a set of `Add.Core`; its decoded operands are the product and `c`.
+    `stage_core_add`: the sum's registers, a set of `Add.CoreStages`; its decoded operands are the product and `c`.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     `wmultiplier`: the operand width of the target's multipliers.
     """
@@ -25,7 +25,7 @@ class Fma(Operator):
     operator = "fma"
     stage_input: int = 0
     stage_core_mul: int = 0
-    stage_core_add: Add.Core = Add.Core(0)
+    stage_core_add: Add.CoreStages = Add.CoreStages(0)
     stage_output: int = 0
     wmultiplier: int
     mul_attrs: Attrs | None = field(default=None, compare=False)
@@ -187,7 +187,7 @@ class _Fma(wiring.Component):
         )
         payload = Signal(keys, name="decoded")
         m.d.comb += payload.eq(decoded)
-        valid, d = pipe(m, "decode", pmul.out_valid, keys, payload, int(Add.Core.DECODE in model.stage_core_add))
+        valid, d = pipe(m, "decode", pmul.out_valid, keys, payload, int(Add.CoreStages.DECODE in model.stage_core_add))
 
         c_wide = Cat(Const(0, wman), d.c_key)
         apart = Signal(signed(weu + 1), name="apart")

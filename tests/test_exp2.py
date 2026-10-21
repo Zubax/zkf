@@ -7,7 +7,7 @@ from _trans import build, others, run, simulate, staging
 from zkf import ZkfFormat
 from zkf._exp2 import Exp2
 
-Core = Exp2.Core
+CoreStages = Exp2.CoreStages
 
 # wexp, wman, kind: every table of a degree.
 FORMATS: list[tuple[int, int, str | int]] = [
@@ -24,7 +24,7 @@ def test_formats(row: tuple[int, int, str | int]) -> None:
     run("exp2", *row)
 
 
-@pytest.mark.parametrize("stages", staging(Core), ids=str)
+@pytest.mark.parametrize("stages", staging(CoreStages), ids=str)
 def test_stages(stages: dict[str, Any]) -> None:
     """Stages change no result: the format that `test_formats` walks whole is sampled here."""
     run("exp2", 2, 16, 4096, **stages)
@@ -32,12 +32,12 @@ def test_stages(stages: dict[str, Any]) -> None:
 
 # Every count of the kernel at degree 3, whose square takes two multipliers, and the core beside it; the least is the
 # catalog's.
-@pytest.mark.parametrize("stages", [{"sk": 4, "sc": Core.SUM}, {"sk": 4, "sc": ~Core(0)}], ids=str)
+@pytest.mark.parametrize("stages", [{"sk": 4, "sc": CoreStages.SUM}, {"sk": 4, "sc": ~CoreStages(0)}], ids=str)
 def test_degree_3(stages: dict[str, Any]) -> None:
     run("exp2", 8, 36, 256, **stages)
 
 
-@pytest.mark.parametrize("row", others(Core), ids=str)
+@pytest.mark.parametrize("row", others(CoreStages), ids=str)
 def test_generated_for_the_format(row: tuple[int, int, dict[str, Any]]) -> None:
     run("exp2", row[0], row[1], 256, **row[2])
 
@@ -66,8 +66,8 @@ def test_timing() -> None:
     assert [Exp2(fmt, wmultiplier=24, stage_core_kernel=k).timing.latency for k in range(3)] == [1, 3, 5]
     assert [Exp2(fmt, wmultiplier=18, stage_core_kernel=k).timing.latency for k in (2, 3)] == [5, 5]
     assert [build("exp2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in (3, 4)] == [6, 6]
-    assert [build("exp2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in Core] == [7, 7]
-    ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~Core(0), "stage_output": 3}
+    assert [build("exp2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in CoreStages] == [7, 7]
+    ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~CoreStages(0), "stage_output": 3}
     assert build("exp2", ZkfFormat(8, 36), **ends).timing.latency == 13
 
 
@@ -87,7 +87,14 @@ def test_refusals() -> None:
 
 # wexp, wman, kind, shard, shards, stages
 type Row = tuple[int, int, str | int, int, int, dict[str, Any]]
-EACH: tuple[dict[str, Any], ...] = ({}, {"si": 1}, {"sk": 3}, {"sc": ~Core(0)}, {"so": 1}, {"sk": 3, "sc": Core.SUM})
+EACH: tuple[dict[str, Any], ...] = (
+    {},
+    {"si": 1},
+    {"sk": 3},
+    {"sc": ~CoreStages(0)},
+    {"so": 1},
+    {"sk": 3, "sc": CoreStages.SUM},
+)
 DEEP: list[Row] = []
 DEEP += [(2, 16, "every", 0, 1, stages) for stages in EACH[1:]]  # bare, it is a row of `test_formats`
 DEEP += [(3, 16, "every", shard, 2, stages) for shard in (0, 1) for stages in EACH]

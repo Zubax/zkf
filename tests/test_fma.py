@@ -160,10 +160,15 @@ def test_formats(row: tuple[int, int, int]) -> None:
     [
         {"stage_input": 1},
         {"stage_core_mul": 1},
-        {"stage_core_add": Add.Core.SUM},
+        {"stage_core_add": Add.CoreStages.SUM},
         {"stage_output": 1},
-        {"stage_input": 2, "stage_core_mul": 2, "stage_core_add": Add.Core.SUM | Add.Core.OPERANDS, "stage_output": 2},
-        {"stage_core_mul": 3, "stage_core_add": ~Add.Core.NORMALIZE_WIDE},
+        {
+            "stage_input": 2,
+            "stage_core_mul": 2,
+            "stage_core_add": Add.CoreStages.SUM | Add.CoreStages.OPERANDS,
+            "stage_output": 2,
+        },
+        {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages.NORMALIZE_WIDE},
     ],
     ids=str,
 )
@@ -172,8 +177,8 @@ def test_stages(knobs: dict[str, Any]) -> None:
 
 
 # Each register of the sum alone and all of them; NORMALIZE_WIDE needs 17 bits, which 4/7 has.
-@pytest.mark.parametrize("stage_core", [alone(member) for member in Add.Core] + [~Add.Core(0)], ids=str)
-def test_registers(stage_core: Add.Core) -> None:
+@pytest.mark.parametrize("stage_core", [alone(member) for member in Add.CoreStages] + [~Add.CoreStages(0)], ids=str)
+def test_registers(stage_core: Add.CoreStages) -> None:
     run(4, 7, 256, stage_core_add=stage_core)
 
 
@@ -186,8 +191,14 @@ def test_registers(stage_core: Add.Core) -> None:
         (4, 12, 256, 8, {"stage_core_mul": 3}),
         (4, 17, 256, 8, {"stage_core_mul": 3}),
         (4, 17, 256, 8, {"stage_core_mul": 4}),
-        (6, 18, 384, 18, {"stage_core_mul": 2, "stage_core_add": ~Add.Core(0)}),
-        (6, 18, 384, 18, {"stage_input": 1, "stage_core_mul": 3, "stage_core_add": ~Add.Core(0), "stage_output": 1}),
+        (6, 18, 384, 18, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages(0)}),
+        (
+            6,
+            18,
+            384,
+            18,
+            {"stage_input": 1, "stage_core_mul": 3, "stage_core_add": ~Add.CoreStages(0), "stage_output": 1},
+        ),
     ],
     ids=str,
 )
@@ -207,8 +218,8 @@ def test_every_triple() -> None:
 def test_refusals() -> None:
     fmt = ZkfFormat(4, 6)
     for wman, core, message in (
-        (6, ~Add.Core(0), "a 15-bit normalizer has two levels; leave NORMALIZE_WIDE out"),
-        (7, Add.Core.NORMALIZE_WIDE | Add.Core.PACK, "NORMALIZE_WIDE needs NORMALIZE; set both"),
+        (6, ~Add.CoreStages(0), "a 15-bit normalizer has two levels; leave NORMALIZE_WIDE out"),
+        (7, Add.CoreStages.NORMALIZE_WIDE | Add.CoreStages.PACK, "NORMALIZE_WIDE needs NORMALIZE; set both"),
     ):
         with pytest.raises(ValueError, match=re.escape(f"stage_core_add={core}: {message}")):
             Fma(ZkfFormat(4, wman), wmultiplier=18, stage_core_add=core)
@@ -237,7 +248,13 @@ def test_deep(row: tuple[int, int, int]) -> None:
 @pytest.mark.deep
 @pytest.mark.parametrize("stages", [stages for stages in range(16) if stages & (stages - 1)])  # two knobs or more
 def test_deep_stages(stages: int) -> None:
-    core = Add.Core.OPERANDS | Add.Core.ALIGNED | Add.Core.SUM | Add.Core.NORMALIZE | Add.Core.NORMALIZED
+    core = (
+        Add.CoreStages.OPERANDS
+        | Add.CoreStages.ALIGNED
+        | Add.CoreStages.SUM
+        | Add.CoreStages.NORMALIZE
+        | Add.CoreStages.NORMALIZED
+    )
     values: dict[str, Any] = {"stage_core_mul": 2, "stage_input": 1, "stage_core_add": core, "stage_output": 1}
     run(4, 6, 256, **{name: value for bit, (name, value) in enumerate(values.items()) if (stages >> bit) & 1})
 
@@ -248,16 +265,29 @@ def test_deep_stages(stages: int) -> None:
     [
         (7, 12, 512, {}),
         (9, 24, 512, {}),
-        (8, 36, 768, {"stage_core_mul": 2, "stage_core_add": ~Add.Core(0)}),
-        (8, 36, 768, {"stage_core_mul": 3, "stage_core_add": ~Add.Core(0)}),
+        (8, 36, 768, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages(0)}),
+        (8, 36, 768, {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages(0)}),
         (
             2,
             4,
             0,
-            {"stage_input": 1, "stage_core_mul": 2, "stage_core_add": ~Add.Core.NORMALIZE_WIDE, "stage_output": 1},
+            {
+                "stage_input": 1,
+                "stage_core_mul": 2,
+                "stage_core_add": ~Add.CoreStages.NORMALIZE_WIDE,
+                "stage_output": 1,
+            },
         ),
-        (3, 4, 4096, {"stage_core_mul": 2, "stage_core_add": ~Add.Core.NORMALIZE_WIDE, "stage_output": 1}),
-        (6, 18, 1024, {"stage_core_mul": 2, "stage_core_add": Add.Core.SUM | Add.Core.NORMALIZE | Add.Core.PACK}),
+        (3, 4, 4096, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages.NORMALIZE_WIDE, "stage_output": 1}),
+        (
+            6,
+            18,
+            1024,
+            {
+                "stage_core_mul": 2,
+                "stage_core_add": Add.CoreStages.SUM | Add.CoreStages.NORMALIZE | Add.CoreStages.PACK,
+            },
+        ),
     ],
     ids=str,
 )

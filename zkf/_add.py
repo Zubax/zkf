@@ -18,11 +18,11 @@ class Add(Operator):
     `y = a + b`; `a - b` with the sign bit of `b` flipped.
 
     `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `Add.Core` that are built.
+    `stage_core`: the registers of `Add.CoreStages` that are built.
     `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
-    class Core(enum.Flag):
+    class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
         DECODE = enum.auto()
@@ -48,7 +48,7 @@ class Add(Operator):
 
     operator = "add"
     stage_input: int = 0
-    stage_core: Core = Core(0)
+    stage_core: CoreStages = CoreStages(0)
     stage_output: int = 0
 
     def __post_init__(self) -> None:
@@ -84,12 +84,12 @@ class Add(Operator):
         return fmt.encode(a.to_fraction() + b.to_fraction())
 
 
-def check_core(knob: str, stages: Add.Core, wsig: int) -> None:
+def check_core(knob: str, stages: Add.CoreStages, wsig: int) -> None:
     """Refuses, as `knob`, what an adder of `wsig`-bit magnitudes cannot build, saying what to set."""
-    if Add.Core.NORMALIZE_WIDE in stages:
+    if Add.CoreStages.NORMALIZE_WIDE in stages:
         if split_points(wsig + 3) < 2:
             raise ValueError(f"{knob}={stages}: a {wsig + 3}-bit normalizer has two levels; leave NORMALIZE_WIDE out")
-        if Add.Core.NORMALIZE not in stages:
+        if Add.CoreStages.NORMALIZE not in stages:
             raise ValueError(f"{knob}={stages}: NORMALIZE_WIDE needs NORMALIZE; set both")
 
 
@@ -125,7 +125,7 @@ class AddCore(wiring.Component):
         wsig: int | None = None,
         we: int | None = None,
         wshift: int | None = None,
-        stages: Add.Core = Add.Core(0),
+        stages: Add.CoreStages = Add.CoreStages(0),
         stage_output: int = 0,
     ) -> None:
         self._fmt = fmt
@@ -156,7 +156,7 @@ class AddCore(wiring.Component):
         fmt, wman, wsig, we = self._fmt, self._fmt.wman, self._wsig, self._we
         w = wsig + 3  # guard, round and sticky below the operands
         wen = max(we, ceil_log2(w) + 2)  # `exp` less a normalize count
-        on = {member: int(member in self._stages) for member in Add.Core}
+        on = {member: int(member in self._stages) for member in Add.CoreStages}
 
         # The alignment of `smaller`.
         side = data.StructLayout(
@@ -173,15 +173,17 @@ class AddCore(wiring.Component):
             exp=self.exp,
             larger=self.larger,
         )
-        ordered_valid, ordered = pipe(m, "operands", self.in_valid, side, waiting, on[Add.Core.OPERANDS])
-        aligning_valid, aligning = pipe(m, "align", ordered_valid, side, ordered, on[Add.Core.ALIGN])
-        m.submodules.align = align = RshiftSticky(w, wshift=self._wshift, stage_split=on[Add.Core.ALIGN])
-        m.d.comb += align.x.eq(Cat(Const(0, 3), delay(m, "operands_small", wsig, self.smaller, on[Add.Core.OPERANDS])))
-        m.d.comb += align.shamt.eq(delay(m, "operands_shamt", self._wshift, self.shamt, on[Add.Core.OPERANDS]))
+        ordered_valid, ordered = pipe(m, "operands", self.in_valid, side, waiting, on[Add.CoreStages.OPERANDS])
+        aligning_valid, aligning = pipe(m, "align", ordered_valid, side, ordered, on[Add.CoreStages.ALIGN])
+        m.submodules.align = align = RshiftSticky(w, wshift=self._wshift, stage_split=on[Add.CoreStages.ALIGN])
+        m.d.comb += align.x.eq(
+            Cat(Const(0, 3), delay(m, "operands_small", wsig, self.smaller, on[Add.CoreStages.OPERANDS]))
+        )
+        m.d.comb += align.shamt.eq(delay(m, "operands_shamt", self._wshift, self.shamt, on[Add.CoreStages.OPERANDS]))
         # The aligned operand is inverted for a difference as it is registered, so that the select, which fans out over
         # the whole operand, is clear of the carry chain.
-        s1_small = delay(m, "aligned_small", w, Mux(aligning.same_sign, align.y, ~align.y), on[Add.Core.ALIGNED])
-        s1_valid, s1 = pipe(m, "aligned", aligning_valid, side, aligning, on[Add.Core.ALIGNED])
+        s1_small = delay(m, "aligned_small", w, Mux(aligning.same_sign, align.y, ~align.y), on[Add.CoreStages.ALIGNED])
+        s1_valid, s1 = pipe(m, "aligned", aligning_valid, side, aligning, on[Add.CoreStages.ALIGNED])
 
         # One carry chain adds or subtracts. `larger` is zero below its `wsig` bits, so the sticky in bit 0 of `smaller`
         # survives.
@@ -208,7 +210,7 @@ class AddCore(wiring.Component):
                 exp=Cat(s1.exp, s1.exp[-1].replicate(wen - we)).as_signed(),
                 raw=raw[: w + 1],
             ),
-            on[Add.Core.SUM],
+            on[Add.CoreStages.SUM],
         )
         carry = s2.raw[-1]
         rounded = data.StructLayout(
@@ -217,8 +219,8 @@ class AddCore(wiring.Component):
         )
         m.submodules.normalize = normalize = Normshift(
             w,
-            stage_input=on[Add.Core.NORMALIZE_INPUT],
-            stage_split=on[Add.Core.NORMALIZE] + on[Add.Core.NORMALIZE_WIDE],
+            stage_input=on[Add.CoreStages.NORMALIZE_INPUT],
+            stage_split=on[Add.CoreStages.NORMALIZE] + on[Add.CoreStages.NORMALIZE_WIDE],
             sideband=rounded,
         )
         m.d.comb += normalize.in_valid.eq(s2_valid)
@@ -247,12 +249,16 @@ class AddCore(wiring.Component):
             normalize.out_valid,
             normalized,
             bundle(normalized, r=normalize.sb_out, zero=normalize.zero, count=normalize.count, aligned=normalize.y),
-            on[Add.Core.NORMALIZED],
+            on[Add.CoreStages.NORMALIZED],
         )
         same = s3.r.same_sign
         finite_zero = Mux(same, ~Cat(s3.r.sig, s3.r.guard, s3.r.round, s3.r.sticky).any(), s3.zero)
         m.submodules.pack = pack = Pack(
-            fmt, wexp_unbiased=wen, exp_is_biased=True, stage_input=on[Add.Core.PACK], stage_output=self._stage_output
+            fmt,
+            wexp_unbiased=wen,
+            exp_is_biased=True,
+            stage_input=on[Add.CoreStages.PACK],
+            stage_output=self._stage_output,
         )
         m.d.comb += pack.in_valid.eq(s3_valid)
         m.d.comb += pack.sign.eq(s3.r.sign)
@@ -318,7 +324,7 @@ class _Add(wiring.Component):
         )
         payload = Signal(decoded, name="decoded")
         m.d.comb += payload.eq(operands_decoded)
-        valid, d = pipe(m, "decode", valid, decoded, payload, int(Add.Core.DECODE in model.stage_core))
+        valid, d = pipe(m, "decode", valid, decoded, payload, int(Add.CoreStages.DECODE in model.stage_core))
 
         same_sign = Signal(name="same_sign")
         m.d.comb += same_sign.eq(~(d.a_sign ^ d.b_sign))

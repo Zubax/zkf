@@ -69,7 +69,7 @@ def test_every_width(function: str, wman: int) -> None:
         assert spec.d == degree(spec.wman)
     for width, spec in found.items():
         every_row(spec, Kernel(spec, wmultiplier=width, stages=kernel_counts(spec, width).stop - 1))
-    every = ~(Exp2 if function == "exp2" else Log2).Core(0)
+    every = ~(Exp2 if function == "exp2" else Log2).CoreStages(0)
     for width in sorted({min(found), 18, 24}):
         simulate(build(function, ZkfFormat(8, wman), width, stage_core=every), 1000)
 

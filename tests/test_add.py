@@ -228,20 +228,20 @@ FORMATS = [
 ]
 
 
-def every(wman: int) -> Add.Core:
+def every(wman: int) -> Add.CoreStages:
     """Every register that an adder of the significand's width has."""
-    return ~Add.Core(0) if split_points(wman + 3) == 2 else ~Add.Core.NORMALIZE_WIDE
+    return ~Add.CoreStages(0) if split_points(wman + 3) == 2 else ~Add.CoreStages.NORMALIZE_WIDE
 
 
-def alone(member: Add.Core) -> Add.Core:
+def alone(member: Add.CoreStages) -> Add.CoreStages:
     """A register, with the one it needs."""
-    return member | Add.Core.NORMALIZE if member is Add.Core.NORMALIZE_WIDE else member
+    return member | Add.CoreStages.NORMALIZE if member is Add.CoreStages.NORMALIZE_WIDE else member
 
 
 @pytest.mark.parametrize("every_register", [False, True])
 @pytest.mark.parametrize("row", FORMATS, ids=str)
 def test_formats(row: tuple[int, int, int], every_register: bool) -> None:
-    run(*row, stage_core=every(row[1]) if every_register else Add.Core(0))
+    run(*row, stage_core=every(row[1]) if every_register else Add.CoreStages(0))
 
 
 @pytest.mark.parametrize(
@@ -261,10 +261,14 @@ def test_stages(knobs: dict[str, Any]) -> None:
 # Each register alone and all of them, below the width that NORMALIZE_WIDE needs and above it.
 @pytest.mark.parametrize(
     "wman, stage_core",
-    [(wman, core) for wman in (6, 18) for core in (*(alone(m) for m in Add.Core if m in every(wman)), every(wman))],
+    [
+        (wman, core)
+        for wman in (6, 18)
+        for core in (*(alone(m) for m in Add.CoreStages if m in every(wman)), every(wman))
+    ],
     ids=str,
 )
-def test_registers(wman: int, stage_core: Add.Core) -> None:
+def test_registers(wman: int, stage_core: Add.CoreStages) -> None:
     run(4, wman, 256, stage_core=stage_core)
 
 
@@ -272,8 +276,8 @@ def test_registers(wman: int, stage_core: Add.Core) -> None:
 @pytest.mark.deep
 @pytest.mark.parametrize("shard", range(16))
 def test_every_set(shard: int) -> None:
-    sets = [Add.Core(bits) for bits in range(1 << len(Add.Core))]
-    legal = [core for core in sets if Add.Core.NORMALIZE_WIDE not in core or Add.Core.NORMALIZE in core]
+    sets = [Add.CoreStages(bits) for bits in range(1 << len(Add.CoreStages))]
+    legal = [core for core in sets if Add.CoreStages.NORMALIZE_WIDE not in core or Add.CoreStages.NORMALIZE in core]
     assert len(legal) == 768
     for core in legal[shard::16]:
         run(4, 14, 48, stage_core=core)
@@ -281,7 +285,11 @@ def test_every_set(shard: int) -> None:
 
 def test_refusals() -> None:
     for fmt, core, message in (
-        (ZkfFormat(6, 18), Add.Core.SUM | Add.Core.NORMALIZE_WIDE, "NORMALIZE_WIDE needs NORMALIZE; set both"),
+        (
+            ZkfFormat(6, 18),
+            Add.CoreStages.SUM | Add.CoreStages.NORMALIZE_WIDE,
+            "NORMALIZE_WIDE needs NORMALIZE; set both",
+        ),
         (ZkfFormat(4, 6), every(18), "a 9-bit normalizer has two levels; leave NORMALIZE_WIDE out"),
     ):
         with pytest.raises(ValueError, match=re.escape(f"stage_core={core}: {message}")):
@@ -328,13 +336,13 @@ DEEP = [
 @pytest.mark.parametrize(
     "stage_core",
     [
-        Add.Core(0),
-        Add.Core.SUM | Add.Core.NORMALIZED,
-        Add.Core.DECODE | Add.Core.ALIGN | Add.Core.NORMALIZE | Add.Core.PACK,
-        ~Add.Core.NORMALIZE_WIDE,
+        Add.CoreStages(0),
+        Add.CoreStages.SUM | Add.CoreStages.NORMALIZED,
+        Add.CoreStages.DECODE | Add.CoreStages.ALIGN | Add.CoreStages.NORMALIZE | Add.CoreStages.PACK,
+        ~Add.CoreStages.NORMALIZE_WIDE,
     ],
     ids=str,
 )
 @pytest.mark.parametrize("row", DEEP, ids=str)
-def test_deep(row: tuple[int, int, int], stage_core: Add.Core, stage_output: int) -> None:
+def test_deep(row: tuple[int, int, int], stage_core: Add.CoreStages, stage_output: int) -> None:
     run(*row, stage_core=stage_core, stage_output=stage_output)

@@ -112,7 +112,7 @@ def test_formats(row: tuple[int, int, int, int]) -> None:
     run(*row)
 
 
-EVERY: dict[str, Any] = {"stage_input": 1, "stage_core": Rint.Core.MASK, "stage_output": 1}
+EVERY: dict[str, Any] = {"stage_input": 1, "stage_core": Rint.CoreStages.MASK, "stage_output": 1}
 
 
 @pytest.mark.parametrize(
