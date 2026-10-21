@@ -298,6 +298,10 @@ Roughly ordered by severity.
   These sit within about 5% of 100 MHz on the ECP5, about as much as placement moves them. One iteration a cycle
   there closes on neither Yosys nor Diamond.
 
+- `divsqrt` and `cordic`'s division could take a radix-8 SRT digit a stage on a carry-save remainder, behind a `fast`
+  knob: two thirds of the digits (`divsqrt` at 8/36: 17 cycles to about 12). Two radix-4 SRT digits a stage, built in
+  `cordic` and bit-identical, run at 55 to 89 MHz on the ECP5.
+
 - Transcendental operator refinements (`exp2`, `log2`):
   - The kernels of WMAN 44 to 53 can start their chain a cycle earlier (measured bit-identical at the catalog's widths);
     no spec that wide is timed yet.
