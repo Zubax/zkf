@@ -84,8 +84,12 @@ jobs:
     steps:
       - *checkout_step
       - *python_cache_step
-      # Vivado's first start installs its Tcl store in the home, which the parallel runs would otherwise race over.
-      - run: vivado -mode batch -nojournal -nolog -source /dev/null
+      # Vivado installs its Tcl store in the home at its first start and the store's apps at its first `read_verilog`,
+      # which the parallel runs would otherwise race over.
+      - run: |
+          echo 'module warm; endmodule' > /tmp/warm.v
+          echo 'read_verilog /tmp/warm.v' > /tmp/warm.tcl
+          vivado -mode batch -nojournal -nolog -source /tmp/warm.tcl
       - run: nox -s synth_vendor
       - if: always()
         uses: actions/upload-artifact@v7
