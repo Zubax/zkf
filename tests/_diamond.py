@@ -9,7 +9,8 @@ from pathlib import Path
 from _harness import FREQ_MHZ, Design, Row, Sources, run
 
 TOOLS = ("diamond",)
-DEVICE = "LFE5U-12F-6BG381C"
+DEVICE, LARGE_DEVICE = "LFE5U-12F-{grade}BG381C", "LFE5U-45F-{grade}BG381C"
+SPEED_GRADE, FASTER_GRADE = 6, 7
 ROUTE_PASSES = 3
 PAR_EFFORT = 3
 ROUTER = "NBR"
@@ -18,6 +19,10 @@ ROUTER = "NBR"
 PROJECT = "spec"
 """The project's name, which Diamond repeats in every file it writes: short, since its map refuses long paths and the
 spec's directory already names it."""
+
+
+def part(design: Design) -> str:
+    return (LARGE_DEVICE if design.large else DEVICE).format(grade=FASTER_GRADE if design.faster else SPEED_GRADE)
 
 
 def xml_attr(text: str) -> str:
@@ -123,7 +128,7 @@ def project(design: Design, sources: Sources, lpf: Path, sty: Path) -> str:
         '<?xml version="1.0" encoding="UTF-8"?>',
         (
             f'<BaliProject version="3.2" title="{PROJECT}" '
-            f'device="{xml_attr(DEVICE)}" default_implementation="impl1">'
+            f'device="{xml_attr(part(design))}" default_implementation="impl1">'
         ),
         "    <Options/>",
         '    <Implementation title="impl1" dir="impl1" description="impl1" synthesis="lse"'

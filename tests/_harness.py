@@ -131,6 +131,10 @@ class Design:
 
     name: str
     model: Block | CoreSpec
+    large: bool = False
+    """Placed on the larger part, by the flows that offer one."""
+    faster: bool = False
+    """Placed on the faster speed grade, by the flows that offer one."""
 
     @property
     def top(self) -> str:

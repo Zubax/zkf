@@ -524,12 +524,7 @@ def _atan2(y: Zkf, x: Zkf) -> CordicResult[Zkf]:
     assert (x_k * kinv_mag).bit_length() >= spec.least[1], "the packer's bound"
     mag_bits = fixed_to_float_reference(fmt, 0, x_k * kinv_mag, exp_off_m, wmag, saturate_round_carry=True)
 
-    # The quotients are truncated as the divider's: the residual's at `f2` fraction bits, of operands cut to the
-    # division's width, the bypass's at the digits.
-    f_bits = spec.f2
-    cut = spec.wx - spec.wd
-
-    # The bypass: the sticky bit of the quotient beside the product.
+    # The bypass: the quotient truncated as the divider's, at the digits, and its sticky bit beside the product.
     if (not swap) and (sx == 0) and (shift_dn > _atan2_bypass_shift(fmt)):
         fb = 2 * spec.steps
         r, rest = divmod(num_sig << fb, den_sig)
@@ -540,10 +535,7 @@ def _atan2(y: Zkf, x: Zkf) -> CordicResult[Zkf]:
         )
         return CordicResult(Zkf(fmt, theta_bits), Zkf(fmt, mag_bits), 0)
 
-    # The residual: a0 = z_K + (y_K / x_K) / (2 * pi), at the scale of the angle; x_K > 0.
-    q = (((abs(y_k) << spec.lead) >> cut) << (2 * spec.steps)) // (x_k >> cut)
-    delta = (q * inv_tau) >> (f_bits + invtau_s - zf)
-    a0 = z_k - delta if y_k < 0 else z_k + delta
+    a0 = _vector_residual(spec, x_k, y_k, z_k)
 
     # The octant and the quadrant unfolded.
     quarter = 1 << (zf - 2)
@@ -589,6 +581,17 @@ def _cordic_vector(spec: _Constants, x0: int, y0: int) -> tuple[int, int, int]:
         y = bits_to_signed(ny & ((1 << xw) - 1), xw)
         z = bits_to_signed(nz & ((1 << zw) - 1), zw)
     return x, y, z
+
+
+def _vector_residual(spec: _Constants, x_k: int, y_k: int, z_k: int) -> int:
+    """
+    The vectoring's reduced angle `z_K + (y_K / x_K) / (2 * pi)` at the scale of the angle, `x_K > 0`; the quotient is
+    truncated as the divider's, at `f2` fraction bits, of operands cut to the division's width.
+    """
+    cut = spec.wx - spec.wd
+    q = (((abs(y_k) << spec.lead) >> cut) << (2 * spec.steps)) // (x_k >> cut)
+    delta = (q * spec.inv_tau) >> (spec.f2 + spec.invtau_s - spec.zf)
+    return z_k - delta if y_k < 0 else z_k + delta
 
 
 def _atan2_turn(fmt: ZkfFormat, sign: int, frac: Fraction) -> int:
@@ -1406,6 +1409,10 @@ class _Cordic(wiring.Component):
                 texp=Mux(held_bypass, byp_exp, Const(wmag_pk - 1 - zf + bias, signed(weu_pk))),
             )
             angle_valid, ag = pipe(m, "angle", theta_ready, angle, given, int(CoreStages.ANGLE in core))
+            # Minus a half turn is packed as the canonical plus a half: what rounds to a half, from half an ULP below
+            # it, takes the plus sign ahead of the packer, which leaves no compare behind its rounding.
+            to_half = Signal(name="to_half")
+            m.d.comb += to_half.eq(~held_bypass & (ag.tmag[zf - 1] | ag.tmag[zf - 3 - wfrac : zf - 1].all()))
 
             # The length is packed first and held until theta comes; a zero or an infinity overrides both results from
             # what is held of the operands.
@@ -1418,8 +1425,7 @@ class _Cordic(wiring.Component):
             mag_num = Signal(f, name="mag_num", reset_less=True)
             with m.If(packed & ~pk_sb.vectoring.theta):
                 m.d.sync += mag_num.eq(pk_y)
-            # Eighths of a turn are constants: no carry chain on the output. Minus a half folds onto the canonical plus
-            # a half, which alone has its exponent.
+            # Eighths of a turn are constants: no carry chain on the output.
             turn8 = Signal(f, name="turn8")
             eighth = {1: (bias - 3, 0), 2: (bias - 2, 0), 3: (bias - 2, 1 << (wfrac - 1)), 4: (bias - 1, 0)}
             with m.Switch(held_spk):
@@ -1429,13 +1435,12 @@ class _Cordic(wiring.Component):
                         m.d.comb += turn8.eq(bundle(f, frac=Const(frac, wfrac), exp=Const(exp, wexp), sign=sign))
                 with m.Default():
                     m.d.comb += turn8.eq(f.const(Zkf(fmt, 0)))
-            folded = bundle(f, frac=pk_y.frac, exp=pk_y.exp, sign=pk_y.sign & (pk_y.exp != bias - 1))
             theta, length = Signal(f, name="vec_theta"), Signal(f, name="vec_mag")
             with m.If(held_special):
                 m.d.comb += theta.eq(turn8)
                 m.d.comb += length.eq(held_sp_mag)
             with m.Else():
-                m.d.comb += theta.eq(folded)
+                m.d.comb += theta.eq(pk_y)
                 m.d.comb += length.eq(mag_num)
             return _Share(
                 start=shifted_valid,
@@ -1450,7 +1455,7 @@ class _Cordic(wiring.Component):
                 pm_a=_zext(dv_xn[:wa_mul], wa_pm),
                 pm_b=_zext(Const(c.kinv_mag, wfactor), wb_pm),
                 pk_iv=pk_iv,
-                pk_sign=angle_valid & held_sy,
+                pk_sign=angle_valid & held_sy & ~to_half,
                 pk_inf=Const(0, 1),
                 pk_exp=Mux(angle_valid, ag.texp, mag_exp),
                 pk_mag=_zext(Mux(angle_valid, ag.tmag, product), wmag_pk),

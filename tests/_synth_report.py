@@ -49,14 +49,16 @@ TABLES = {
     "yosys_ecp5": Table(
         "Kulibin Float Yosys Synthesis Report",
         f"""<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 (sequential -dff retiming disabled), nextpnr-ecp5 out of
-context (no I/O pads) for {_yosys.ECP5_DEVICE} {_yosys.ECP5_PACKAGE} speed grade {_yosys.ECP5_SPEED_GRADE} at
+context (no I/O pads) for {_yosys.ECP5_DEVICE}, or {_yosys.ECP5_LARGE_DEVICE} where the row says so,
+{_yosys.ECP5_PACKAGE} speed grade {_yosys.ECP5_SPEED_GRADE}, or {_yosys.ECP5_FASTER_GRADE} where the row says so, at
 {FREQ_MHZ:g} MHz.</p>
 <p class="note"><strong>Note on LUT4 counts:</strong> nextpnr-ecp5 <code>--12k</code> targets the LFE5U-25F fabric
-&mdash; the LFE5U-12F is the same silicon die, marketed with a reduced capacity. All LUT4, slice, and utilization
-figures below (including the <code>/24288</code> denominators) therefore reflect the 25F array, not the 12F&rsquo;s
-12096-LUT4 marketing limit, and nextpnr will not enforce the smaller limit. For true 12F fit/capacity, use the Lattice
-Diamond report.</p>""",
+&mdash; the LFE5U-12F is the same silicon die, marketed with a reduced capacity. The utilization figures of its rows
+(the <code>/24288</code> denominators) therefore reflect the 25F array, not the 12F&rsquo;s 12096-LUT4 marketing limit,
+and nextpnr will not enforce the smaller limit; for true 12F fit/capacity, use the Lattice Diamond report. The rows on
+the 45F (<code>--45k</code>) show its own array, <code>/43848</code>.</p>""",
         (
+            ("Part", "part", None),
             ("Yosys LUT4", "lut", None),
             ("Placed LUT4", "lut_placed", False),
             ("FF", "ff", None),
@@ -74,10 +76,12 @@ Diamond report.</p>""",
     ),
     "diamond_ecp5": Table(
         "Kulibin Float Diamond Synthesis Report",
-        f"""<p>Flow: Lattice Diamond LSE ({_diamond.DEVICE}) at {FREQ_MHZ:g} MHz. Synthesis optimization goal
-is Timing, MAP register retiming is disabled, PAR placement effort is {_diamond.PAR_EFFORT} with one placement, router
-is {_diamond.ROUTER}, and routing passes are {_diamond.ROUTE_PASSES}.</p>""",
+        f"""<p>Flow: Lattice Diamond LSE ({_diamond.DEVICE.format(grade=_diamond.SPEED_GRADE)}, or another size or speed
+grade where the row says so) at {FREQ_MHZ:g} MHz. Synthesis optimization goal is Timing, MAP register retiming is
+disabled, PAR placement effort is {_diamond.PAR_EFFORT} with one placement, router is {_diamond.ROUTER}, and routing
+passes are {_diamond.ROUTE_PASSES}.</p>""",
         (
+            ("Part", "part", None),
             ("Slack", "slack", None),
             ("LUT4", "lut4", None),
             ("Registers", "registers", None),

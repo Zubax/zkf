@@ -21,8 +21,9 @@ class Normshift(wiring.Component):
     A radix-4 cascade, largest shift first, at half the depth of radix 2: the level of weight `4**k` shifts by as many
     of the top one, two and three groups of `4**k` bits as are zero, which is the base-4 digit k of `count`.
 
-    `stage_split=1` puts a register in the middle of the cascade; 2 adds one right behind the widest level, and needs
-    three built levels (unbounded, a width of 17 or more). `stage_input=1` registers `x` with the zero-detects of the
+    `stage_split=1` puts a register in the middle of the cascade; 2 adds one right behind the widest level, which takes
+    the zero-detects of the next level with the data so that its shift starts at registers, and needs three built
+    levels (unbounded, a width of 17 or more). `stage_input=1` registers `x` with the zero-detects of the
     widest level, found ahead of the register, so that the shift of that level, whose select has the widest fan-out,
     starts at registers. `most`, where given, is the most leading zeros of a nonzero `x`, and only the levels that reach
     it are built.
@@ -66,11 +67,11 @@ class Normshift(wiring.Component):
         data = self.x
         digits: list[Value] = []
         for s in range(levels):
-            staged = bool(self._stage_input) and not s
+            staged = (bool(self._stage_input) and not s) or (split >= 2 and s == 1)
             m.submodules[f"level{s}"] = level = _NormLevel(self._width, 1 << (2 * (levels - 1 - s)), staged)
             m.d.comb += level.data.eq(data)
             data = level.out
-            if s + 1 in barriers:
+            if split and s + 1 == middle:
                 data = Signal(self._width, name=f"data{s + 1}", reset_less=True)
                 m.d.sync += data.eq(level.out)
             # A digit waits for the barriers its level is ahead of.

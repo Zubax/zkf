@@ -292,15 +292,21 @@ not all states are mappable between the formats.
 
 Roughly ordered by severity.
 
-- `cordic` at 8/36 is bound next by the division's digit, a recurrence, by the sum of a product's rows,
+- `cordic` at e8m36 is bound next by the division's digit, a recurrence, by the sum of a product's rows,
   two carry chains in a row, by the rounding into the result, and by the normalizer, whose detects of the later levels
   wait for the shifts ahead of them; the packer's sticky is gathered behind its last shift.
   These sit within about 5% of 100 MHz on the ECP5, about as much as placement moves them. One iteration a cycle
   there closes on neither Yosys nor Diamond.
 
 - `divsqrt` and `cordic`'s division could take a radix-8 SRT digit a stage on a carry-save remainder, behind a `fast`
-  knob: two thirds of the digits (`divsqrt` at 8/36: 17 cycles to about 12). Two radix-4 SRT digits a stage, built in
+  knob: two thirds of the digits (`divsqrt` at e8m36: 17 cycles to about 12). Two radix-4 SRT digits a stage, built in
   `cordic` and bit-identical, run at 55 to 89 MHz on the ECP5.
+
+- `divsqrt` at e8m27 needs ECP5 speed grade 7 because LSE puts the packer's fraction mask on the set and reset of the
+  result's register. An attribute hook on the masked fraction would take `syn_keep`, which keeps the mask in LUTs
+  (115 to 122 MHz on speed grade 6), but LSE takes the attribute value only unsized (e.g., `1`), and Yosys's
+  `write_verilog`, which prints Amaranth's Verilog, sizes every integer attribute (`32'd1`).
+  The [PR fixing this](https://github.com/YosysHQ/yosys/pull/6387) has been submitted to Yosys already, blocked on that.
 
 - Transcendental operator refinements (`exp2`, `log2`):
   - The kernels of WMAN 44 to 53 can start their chain a cycle earlier (measured bit-identical at the catalog's widths);

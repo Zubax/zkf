@@ -32,8 +32,10 @@ class Target:
     """What the flow runs, all on the path."""
     synth: Callable[[str, Path], str]
     """The lines of the Yosys script that synthesize a top into a netlist."""
-    args: Callable[[Path, Path], list[str | Path]]
-    """The arguments of nextpnr, given the netlist and the report it writes."""
+    part: Callable[[Design], str]
+    """The device that a spec is placed on."""
+    args: Callable[[Design, Path, Path], list[str | Path]]
+    """The arguments of nextpnr, given the spec, the netlist and the report it writes."""
     util_resources: tuple[str, ...]
     """The resources that a row lists even where none is used."""
     resources: Callable[[Mapping[str, int], Report, str], Row]
@@ -57,7 +59,7 @@ def synthesize(target: Target, design: Design, directory: Path) -> Row:
     sources = design.write(directory, rom_attrs=ROM_ATTRS)
     ys.write_text(script(target, design, sources, netlist))
     run(["yosys", "-s", ys], directory / "yosys.log", YOSYS_TIMEOUT_S)
-    run([target.nextpnr, *target.args(netlist, report)], directory / "nextpnr.log", NEXTPNR_TIMEOUT_S)
+    run([target.nextpnr, *target.args(design, netlist, report)], directory / "nextpnr.log", NEXTPNR_TIMEOUT_S)
 
     nextpnr_text = (directory / "nextpnr.log").read_text()
     data = read_report(report)
@@ -267,18 +269,30 @@ def utilization(nextpnr_log: str, report: Report, util_resources: tuple[str, ...
     return "\n".join(useful[-12:]) if useful else "not reported"
 
 
-ECP5_DEVICE = "LFE5U-12F"
+ECP5_DEVICE, ECP5_LARGE_DEVICE = "LFE5U-12F", "LFE5U-45F"
 ECP5_PACKAGE = "CABGA381"
-ECP5_SPEED_GRADE = "6"
+ECP5_SPEED_GRADE, ECP5_FASTER_GRADE = "6", "7"
 
 
-def ecp5_args(netlist: Path, report: Path) -> list[str | Path]:
+def ecp5_device(design: Design) -> str:
+    return ECP5_LARGE_DEVICE if design.large else ECP5_DEVICE
+
+
+def ecp5_grade(design: Design) -> str:
+    return ECP5_FASTER_GRADE if design.faster else ECP5_SPEED_GRADE
+
+
+def ecp5_part(design: Design) -> str:
+    return f"{ecp5_device(design)}-{ecp5_grade(design)}"
+
+
+def ecp5_args(design: Design, netlist: Path, report: Path) -> list[str | Path]:
     return [
-        "--12k",
+        {ECP5_DEVICE: "--12k", ECP5_LARGE_DEVICE: "--45k"}[ecp5_device(design)],
         "--package",
         ECP5_PACKAGE,
         "--speed",
-        ECP5_SPEED_GRADE,
+        ecp5_grade(design),
         "--freq",
         f"{FREQ_MHZ:g}",
         "--timing-allow-fail",
@@ -319,6 +333,7 @@ ECP5 = Target(
     nextpnr="nextpnr-ecp5",
     tools=("yosys", "nextpnr-ecp5"),
     synth=ecp5_synth,
+    part=ecp5_part,
     args=ecp5_args,
     util_resources=(
         "TRELLIS_COMB",
@@ -361,7 +376,7 @@ def chipdb(directory: Path) -> Path:
     return database
 
 
-def spartan_args(netlist: Path, report: Path) -> list[str | Path]:
+def spartan_args(design: Design, netlist: Path, report: Path) -> list[str | Path]:
     """
     nextpnr-xilinx has no report: the figures come from its log. It refuses a top port with no IOSTANDARD, so every one
     is given one and no pin; the harness registers every port, so where the pads land is not timed.
@@ -405,6 +420,7 @@ SPARTAN = Target(
     nextpnr="nextpnr-xilinx",
     tools=("yosys", "nextpnr-xilinx", "bbasm", "bbaexport.py"),
     synth=spartan_synth,
+    part=lambda design: SPARTAN_DEVICE,
     args=spartan_args,
     util_resources=("SLICE_LUTX", "SLICE_FFX", "CARRY4", "DSP48E1", "RAMB18E1", "RAMB36E1"),
     resources=spartan_resources,

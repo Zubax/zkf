@@ -23,7 +23,16 @@ from _operands import (
     random_zero,
 )
 from zkf import Timing, Zkf, ZkfFormat
-from zkf._cordic import _GUARD_DIV, _LACKED, Cordic, _constants, _geometry
+from zkf._cordic import (
+    _GUARD_DIV,
+    _LACKED,
+    Cordic,
+    _atan2_bypass_shift,
+    _constants,
+    _cordic_vector,
+    _geometry,
+    _vector_residual,
+)
 from zkf._pmul import counts
 
 SHORT = {
@@ -113,7 +122,8 @@ def pairs(fmt: ZkfFormat) -> list[tuple[int, int]]:
     """
     `(y, x)`: every pair of the zeros and infinities; the quadrants and the diagonals of the octants; the axes; one
     far smaller than the other, where the angle rounds to an end of its range; a ratio across the bypass at every
-    exponent; and lengths up to the largest finite one and past it.
+    exponent, and bypassed ones whose magnitude has the bit of a half turn set; lengths up to the largest finite one
+    and past it; and angles either side of where they round onto a half turn, and one at a half turn or past it.
     """
     sign_bit, inf = 1 << fmt.sign_shift, fmt.exp_inf << fmt.wfrac
     raw = [0, sign_bit, inf, sign_bit | inf, (1 << fmt.wfull) - 1]
@@ -129,6 +139,18 @@ def pairs(fmt: ZkfFormat) -> list[tuple[int, int]]:
     out += [(one, sign_bit | inf), (minus_one, sign_bit | inf)]
     for exp in range(1, fmt.exp_inf):
         out += [(fmt.pack(0, exp, fmt.frac_mask).bits, one), (one, fmt.pack(0, exp, 1).bits)]
+    # Bypassed next to its threshold, `y` negative, its significand the largest whose magnitude has the bit of a half
+    # turn set, which a half turn's test must not read on the bypass.
+    c = _constants(fmt.wman)
+    sig_x = Zkf(fmt, one).significand()
+
+    def half_bit(frac: int) -> bool:
+        r, rest = divmod((frac | 1 << fmt.wfrac) << 2 * c.steps, sig_x)
+        return bool((r * c.inv_tau | bool(rest)) >> (c.zf - 1) & 1)
+
+    frac = next(frac for frac in range(fmt.frac_mask, -1, -1) if half_bit(frac))
+    below = fmt.bias - _atan2_bypass_shift(fmt)
+    out += [(fmt.pack(1, exp, frac).bits, one) for exp in range(max(1, below - 3), max(1, below))]
     top = fmt.pack(0, fmt.exp_max_finite, fmt.frac_mask).bits
     for exp in range(max(1, fmt.exp_max_finite - fmt.wman // 2 - 3), fmt.exp_max_finite + 1):
         out += [(fmt.pack(0, exp, frac).bits, top) for frac in (0, fmt.frac_mask)]
@@ -136,7 +158,51 @@ def pairs(fmt: ZkfFormat) -> list[tuple[int, int]]:
     edge, model = _saturating(fmt), build(fmt, mode=1)
     assert fmt.encode(model.evaluate(1, Zkf(fmt, edge), Zkf(fmt, top), oracle=True).r1).is_inf
     assert model.evaluate(1, Zkf(fmt, edge), Zkf(fmt, top)).r1.bits == top
-    return [*out, (edge, top)]
+    out.append((edge, top))
+    # Either side of where an angle next to a half turn rounds onto it, `y` of both signs, `x` minus the least power of
+    # two from 1 up that leaves them normal, where there is one.
+    half = fmt.encode(Fraction(1, 2)).bits
+    k = next(
+        (
+            k
+            for k in range(fmt.exp_max_finite - fmt.bias + 1)
+            if fmt.encode(Fraction(math.pi) * Fraction(2) ** (k - 3 - fmt.wfrac)).exp
+        ),
+        None,
+    )
+    if k is not None:
+        x = fmt.pack(1, fmt.bias + k, 0).bits
+        lo, hi = (
+            fmt.encode(Fraction(math.pi) * Fraction(2) ** (k - 2 - fmt.wfrac) * m).bits for m in (Fraction(1, 2), 2)
+        )
+
+        def rounds_to_half(y: int) -> bool:
+            return model.evaluate(1, Zkf(fmt, y), Zkf(fmt, x)).r0.bits == half
+
+        assert rounds_to_half(lo) and not rounds_to_half(hi)
+        while hi - lo > 1:
+            mid = (lo + hi) // 2
+            lo, hi = (mid, hi) if rounds_to_half(mid) else (lo, mid)
+        out += [(y | sy, x) for y in (lo, hi) for sy in (0, sign_bit)]
+    # The angle at a half turn or past it before its rounding, where the engine leaves a negative residual: a first
+    # one among small angles, where the format has one.
+    rng = np.random.default_rng(fmt.wman)
+
+    def random_frac() -> int:
+        return int(rng.integers(0, fmt.frac_mask + 1))
+
+    small = (
+        (fmt.pack(0, exp - shift, random_frac()).bits, fmt.pack(1, exp, random_frac()).bits)
+        for shift in range(c.xf, 0, -1)
+        for exp in [max(fmt.bias, shift + 1)]
+        if exp <= fmt.exp_max_finite
+        for _ in range(64)
+    )
+    past = next(((y | sign_bit, x) for y, x in small if _engine_angle(fmt, y, x) <= 0), None)
+    if past is None:
+        return out
+    assert model.evaluate(1, Zkf(fmt, past[0]), Zkf(fmt, past[1])).r0.bits == half
+    return [*out, past]
 
 
 def operands(
@@ -358,3 +424,11 @@ def _random_pair(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int]:
     if kind in exponents:
         return tuple(random_normal_near(fmt, rng, exps, fractions) for exps in exponents[kind])  # type: ignore
     return random_operand(fmt, rng), random_operand(fmt, rng)
+
+
+def _engine_angle(fmt: ZkfFormat, y: int, x: int) -> int:
+    """The angle in turns of `(|x|, |y|)` that the reference sums before it unfolds, for `|y| < |x|` off the bypass."""
+    spec, a, b = _constants(fmt.wman), Zkf(fmt, x), Zkf(fmt, y)
+    up = spec.xf - fmt.wfrac - 2
+    vector = _cordic_vector(spec, a.significand() << up, (b.significand() << up) >> (a.exp - b.exp))
+    return _vector_residual(spec, *vector)
