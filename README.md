@@ -315,6 +315,10 @@ Roughly ordered by severity.
     than four multipliers. Shortening an operand to a multiple of the width where it passes one by up to three bits
     saves 4 to 8% of LUTs and 3 to 5 DSP48E1 on Spartan-7 at WMAN 44 and 53, and changes some tables of degree 3.
 
+- Pre-tuned stage sets per operator and format, measured per flow and chip and ordered by latency, so that a user takes
+  the first that closes; or an API that takes the clock and the speed grade and picks one (preferred).
+  Each set is judged by its worst placement; a timing model would not do, as the binding paths are often mostly routing.
+
 - The table of `cordic`'s angles becomes a memory on Yosys, which doubles the engine's LUTs at two iterations a
   cycle, and the equivalence test's proof does not finish at two or four; no spec runs at those rates.
 
