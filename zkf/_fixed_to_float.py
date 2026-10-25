@@ -15,9 +15,9 @@ class FixedToFloat(wiring.Component):
     overrides the result. `sideband` is delayed with `y`.
 
     `wmag`, the width of `mag`, is at least WMAN + 3, and `weu` is the width of `exp_offset`. `exp_is_biased`,
-    `assume_no_overflow` and `saturate_round_carry` are those of `Pack`, and `stage_input`, `stage_normalize` and `most`
-    are `stage_input`, `stage_split` and `most` of `Normshift`. `stage_pack` registers the packer's inputs and
-    `stage_output` the result; there is no other register.
+    `assume_no_overflow`, `saturate_round_carry` and `classify_ahead` are those of `Pack`, and `stage_input`,
+    `stage_normalize`, `stage_wide` and `most` are `stage_input`, `stage_split`, `stage_wide` and `most` of `Normshift`.
+    `stage_pack` registers the packer's inputs and `stage_output` the result; there is no other register.
     """
 
     in_valid: Signal
@@ -40,9 +40,11 @@ class FixedToFloat(wiring.Component):
         sideband: ShapeLike | None = None,
         stage_input: int = 0,
         stage_normalize: int = 0,
+        stage_wide: int = 0,
         stage_pack: int = 0,
         stage_output: int = 0,
         most: int | None = None,
+        classify_ahead: bool = False,
     ) -> None:
         self._fmt = fmt
         self._most = most
@@ -52,10 +54,12 @@ class FixedToFloat(wiring.Component):
             "exp_is_biased": exp_is_biased,
             "assume_no_overflow": assume_no_overflow,
             "saturate_round_carry": saturate_round_carry,
+            "classify_ahead": classify_ahead,
         }
         self._sideband = sideband
         self._stage_input = stage_input
         self._stage_normalize = stage_normalize
+        self._stage_wide = stage_wide
         self._stage_pack = stage_pack
         self._stage_output = stage_output
         members = {
@@ -84,8 +88,10 @@ class FixedToFloat(wiring.Component):
         )
         m.submodules.normalize = normalize = Normshift(
             self._wmag,
+            wsticky=low - 2,
             stage_input=self._stage_input,
             stage_split=self._stage_normalize,
+            stage_wide=self._stage_wide,
             sideband=carried,
             most=self._most,
         )
@@ -105,7 +111,7 @@ class FixedToFloat(wiring.Component):
         m.d.comb += pack.significand.eq(aligned[low:])
         m.d.comb += pack.guard.eq(aligned[low - 1])
         m.d.comb += pack.round.eq(aligned[low - 2])
-        m.d.comb += pack.sticky.eq(aligned[: low - 2].any())
+        m.d.comb += pack.sticky.eq(normalize.sticky)
         m.d.comb += self.out_valid.eq(pack.out_valid)
         m.d.comb += self.y.eq(pack.y)
         if self._sideband is not None:

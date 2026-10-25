@@ -190,7 +190,7 @@ def heat(text: str, values: Sequence[float], higher_is_better: bool) -> str:
 def links(row: Row, pairs: Sequence[tuple[str, str]]) -> str:
     """The files of the row, and its directory, which holds all that the flow was handed and left."""
     found = [f'<a href="{escape(row[key])}">{escape(label)}</a>' for label, key in pairs if row.get(key)]
-    return " | ".join([*found, f'<a href="{escape(row["key"])}/">all</a>'])
+    return " | ".join([*found, f'<a href="{escape(row["name"])}/">all</a>'])
 
 
 def table(spec: Table, rows: Sequence[Row]) -> str:
@@ -203,7 +203,7 @@ def table(spec: Table, rows: Sequence[Row]) -> str:
     for index, row in enumerate(rows):
         start = ' class="group-start"' if index and row["group"] != rows[index - 1]["group"] else ""
         status = row["status"]
-        cells = [escape(row[key]) for key in ("name", "register_stages")]
+        cells = [escape(row[key]) for key in ("name", "knobs", "register_stages")]
         line = f"<tr{start}>" + "".join(f"<td>{cell}</td>" for cell in cells)
         line += f"<td>{escape(row.get('target', ''))}</td>"
         line += f"<td{heat(row.get('fmax', ''), fmax, True)}>{escape(row.get('fmax', ''))}</td>"
@@ -214,10 +214,10 @@ def table(spec: Table, rows: Sequence[Row]) -> str:
         body.append(line + f"<td>{links(row, spec.links)}</td></tr>")
         shown = [("Note", "note"), *spec.details]
         details.append(
-            f"<h2>{escape(row['name'])}</h2><p>{links(row, spec.links)}</p>"
+            f"<h2>{escape(row['name'])}</h2><p>{escape(row['knobs'])}</p><p>{links(row, spec.links)}</p>"
             + "".join(f"<h3>{heading}</h3><pre>{escape(row[key])}</pre>" for heading, key in shown if row.get(key))
         )
-    headings = ["Module", "DUT latency", "Target", "f max", "Status"]
+    headings = ["Module", "Knobs", "DUT latency", "Target", "f max", "Status"]
     headings += [heading for heading, _, _ in spec.columns] + ["Files"]
     generated = datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z (%z)")
     return f"""<!doctype html>

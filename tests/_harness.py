@@ -4,7 +4,6 @@ to a flip-flop and none is lost to an unconstrained pin. The registers are count
 """
 
 import dataclasses
-import hashlib
 import shlex
 import subprocess
 from collections.abc import Mapping, Sequence
@@ -141,28 +140,26 @@ class Design:
         return f"{self.name}_synth_top"
 
     @property
-    def key(self) -> str:
-        """The name of the spec's directory: its name, cut short and told apart by a digest where Diamond's map would
-        refuse the paths."""
-        if len(self.name) <= 64:
-            return self.name
-        return f"{self.name[:55]}_{hashlib.sha1(self.name.encode()).hexdigest()[:8]}"
-
-    @property
     def latency(self) -> int | tuple[int, ...]:
         timing = self.model.timing
         return timing.latency if isinstance(timing, Timing) else tuple(t.latency for t in timing.values())
 
     @property
     def row(self) -> Row:
-        """What every row of the spec begins with: its name, the module's, its directory, latency and group."""
+        """What every row of the spec begins with: its name, which its directory takes, its knobs, latency and group."""
         latency = self.latency
         if isinstance(latency, tuple):
             stages = f"{' / '.join(map(str, latency))} stages (rotation / vectoring)"
         else:
             stages = f"{latency} {'stage' if latency == 1 else 'stages'}"
         group = f"{type(self.model).__name__} {getattr(self.model, 'fmt', '')}"
-        return {"name": self.name, "key": self.key, "register_stages": stages, "group": group}
+        config = self.model.config if isinstance(self.model, Block) else {}
+        return {
+            "name": self.name,
+            "knobs": ", ".join(f"{knob}={value}" for knob, value in config.items()),
+            "register_stages": stages,
+            "group": group,
+        }
 
     def write(self, directory: Path, *, rom_attrs: Attrs | None = None) -> Sources:
         """The compiled text, with the attributes that the flow puts on a table's memory, and the harness."""

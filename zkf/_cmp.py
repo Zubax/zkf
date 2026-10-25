@@ -23,9 +23,6 @@ class Cmp(Operator):
     `a_gt_b = a > b`, `a_eq_b = a == b`, `a_lt_b = a < b`, `min = min(a, b)`, `max = max(a, b)`; `min` and `max` are
     operands as given, not canonicalized. All zeros are equal, and so are infinities of one sign whatever their
     fractions.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
     operator = "cmp"

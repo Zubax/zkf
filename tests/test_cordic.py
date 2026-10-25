@@ -10,8 +10,11 @@ import pytest
 from _catalog import CATALOG
 from _cordic import build, cut, run, simulate, synthesized
 from _operands import SEED
+from amaranth.sim import Simulator
 from zkf import Timing, UnsupportedFormat, ZkfFormat
-from zkf._cordic import _LACKED, _ROTATION, _VECTORING, Cordic, _constants
+
+from zkf._cordic import _GUARD_ZF, _LACKED, _ROTATION, _SEED, _VECTORING, Cordic, _constants, _Engine, _Seed
+from zkf._value import bits_to_signed
 
 CoreStages = Cordic.CoreStages
 SHARED = CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK
@@ -25,14 +28,23 @@ VECTORINGS = [(6, 18, 1536), (8, 24, 1024), (8, 36, 768), (11, 53, 384), (5, 16,
 # The knobs at 5/16 unless a row has a format, where they change no result; of both modes unless it has one; the
 # product's count the fewest unless a row has one. Half a rate with the recurrence of `z` ahead, several iterations a
 # cycle with a last group that is not whole, the product from none of its registers at a width where it is one
-# multiplier to the pairs of rows of a grid on narrower multipliers, the registers of the rest one by one and all, and
-# the second packer.
+# multiplier to the pairs of rows of a grid on narrower multipliers, the registers of the rest one by one and all, the
+# second packer, the seeds off and in part, and products as long as the iterations that the seed leaves and longer.
 KNOBS: list[dict[str, Any]] = [
     {"un": 50},
-    {"un": 200},
-    {"un": 400, "mode": 1},
+    {"un": 100},
+    {"un": 100, "mode": 1},
     {"un": 200, "wexp": 6, "wman": 18},
-    {"un": 300, "wexp": 6, "wman": 18, "mode": 2},
+    {"un": 100, "wexp": 6, "wman": 18, "mode": 2},
+    {"rs": 0},
+    {"rs": 1},
+    {"un": 100, "rs": 1, "mode": 0},
+    {"un": 50, "rs": 0, "mode": 0},
+    {"un": 50, "rs": 1, "vs": 0},
+    {"un": 50, "vs": 0, "mode": 1},
+    {"un": 100, "sm": 6, "wm": 9, "mode": 2},
+    {"un": 50, "sm": 5, "wm": 8, "mode": 0},
+    {"un": 50, "sm": 6, "wm": 8, "mode": 0},
     {"si": 1},
     {"so": 1},
     {"si": 1, "so": 1},
@@ -82,7 +94,7 @@ BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {"un": 50}), (11, 53, {}), (4, 16, {"m
 
 
 # The deep tier: the formats of the default one and others at more operands, under the knobs one by one.
-DEEP_KNOBS: list[dict[str, Any]] = [{}, {"un": 50}, {"un": 200}, {"un": 400}, {"sm": 3}, {"sm": 4}, {"sm": 4, "wm": 10}]
+DEEP_KNOBS: list[dict[str, Any]] = [{}, {"un": 50}, {"un": 100}, {"rs": 1}, {"sm": 3}, {"sm": 4}, {"sm": 4, "wm": 10}]
 DEEP_KNOBS += [
     {"si": 1, "so": 1, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK}
 ]
@@ -95,7 +107,7 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     *((14, 16, 128, {"mode": 0} | knobs) for knobs in DEEP_KNOBS),
     (3, 16, 4000, {"mode": 0}),
     (5, 16, 4000, {"mode": 0}),
-    (5, 16, 4000, {"mode": 0, "un": 200}),
+    (5, 16, 4000, {"mode": 0, "un": 100}),
     (5, 16, 4000, {"mode": 0, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE}),
     (5, 16, 4000, {"mode": 0, "un": 50}),
     (5, 16, 2000, {"mode": 0, "sm": 0, "wm": 32}),
@@ -103,7 +115,7 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (5, 16, 1000, {"sm": 1, "wm": 32}),
     (8, 24, 768, {"mode": 0}),
     *((wexp, wman, count, {"mode": 2}) for wexp, wman, count in VECTORINGS[:4]),
-    *((5, 16, 512, {"mode": 1, "un": u}) for u in (50, 200, 400)),
+    *((5, 16, 512, {"mode": 1, "un": u}) for u in (50, 100)),
     (
         5,
         16,
@@ -114,7 +126,7 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (5, 16, 4000, {"mode": 1}),
     (5, 16, "directed", {"mode": 1}),
     (5, 16, 2000, {"mode": 1, "un": 200}),
-    (6, 18, 2000, {"mode": 1, "un": 300}),
+    (6, 18, 2000, {"mode": 1, "un": 100}),
     (5, 16, 2000, {"mode": 1, "sc": CoreStages.ORDERED | CoreStages.NORMALIZE}),
     (5, 16, 2000, {"mode": 1, "sm": 0, "wm": 32}),
     (5, 16, 512, {"un": 50}),
@@ -253,16 +265,163 @@ def test_cut_each_register(mode: int) -> None:
 
 
 def test_timing() -> None:
-    """A register is a cycle of the modes on whose path it is."""
+    """A register is a cycle of the modes on whose path it is; a seed takes its iterations off the engine."""
     fmt = ZkfFormat(6, 18)
-    assert timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18)) == [(15, 15), (25, 25)]
-    assert timings(Cordic(fmt, unroll100=50, stage_core_mul=3, wmultiplier=18)) == [(23, 23), (33, 33)]
+    plain: dict[str, Any] = {
+        "unroll100": 100,
+        "rotation_seed": 0,
+        "vectoring_seed": 0,
+        "stage_core_mul": 3,
+        "wmultiplier": 18,
+    }
+    assert timings(Cordic(fmt, **plain)) == [(15, 15), (25, 25)]
+    assert timings(Cordic(fmt, **plain | {"unroll100": 50})) == [(23, 23), (33, 33)]
     steps = {member: (1, 0) for member in _ROTATION} | {member: (0, 1) for member in _VECTORING}
     for member in CoreStages:
         rot, vec = steps.get(member, (1, 1))
-        found = timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18, stage_core=member))
+        found = timings(Cordic(fmt, **plain, stage_core=member))
         assert found == [(15 + rot, 15 + rot), (25 + vec, 25 + vec)], member
-    assert timings(Cordic(fmt, stage_core_mul=3, wmultiplier=18, fast=True)) == [(14, 14), (25, 25)]
+    assert timings(Cordic(fmt, **plain, fast=True)) == [(14, 14), (25, 25)]
+    for seed in (1, 2):
+        assert timings(Cordic(fmt, **plain | {"rotation_seed": seed})) == [(15 - seed,) * 2, (25, 25)]
+        assert timings(Cordic(fmt, **plain | {"rotation_seed": seed, "unroll100": 50}))[0] == (23 - 2 * seed,) * 2
+    assert timings(Cordic(fmt, **plain | {"unroll100": 50, "vectoring_seed": 1}))[1] == (31, 31)
+    # No effect at full rate, nor in the mode that does not take it.
+    assert timings(Cordic(fmt, **plain | {"vectoring_seed": 1})) == timings(Cordic(fmt, **plain))
+    one: dict[str, Any] = {"stage_core_mul": 2, "wmultiplier": 18, "unroll100": 50, "vectoring_seed": 0}
+    assert Cordic(fmt, **one, mode=1, rotation_seed=2).timing == Cordic(fmt, **one, mode=1, rotation_seed=0).timing
+    one = {"stage_core_mul": 3, "wmultiplier": 18, "unroll100": 50, "rotation_seed": 0}
+    assert Cordic(fmt, **one, mode=0, vectoring_seed=1).timing == Cordic(fmt, **one, mode=0, vectoring_seed=0).timing
+
+
+@pytest.mark.parametrize("wman", range(16, 54))
+def test_seed_tables(wman: int) -> None:
+    """Each interval of the seed, and `halfway`, give the state of the reference's iterations at the engine's start."""
+    c = _constants(wman)
+
+    def iterated(tpw: int, count: int) -> tuple[int, int, int]:
+        x, y, z = c.kinv, 0, tpw << _GUARD_ZF
+        for i in range(count):
+            x, y, z = (
+                (x + (y >> i), y - (x >> i), z + c.lut[i]) if z < 0 else (x - (y >> i), y + (x >> i), z - c.lut[i])
+            )
+        return x, y, z
+
+    half = 1 << (c.wt - 1)
+    for signs in range(3):
+        seed = _Seed(c, signs, merged=False)
+        ends = [entry[0] for entry in seed.entries[1:]] + [half]
+        assert ends == sorted(ends) and seed.entries[0][0] == 0
+        for (low, x, y, take), high in zip(seed.entries, ends):
+            for tpw in {low, (low + high) // 2, high - 1}:
+                assert iterated(tpw, _SEED + signs) == (x, y, (tpw << _GUARD_ZF) - c.lut[0] + take), (signs, tpw)
+        assert iterated(half, _SEED + signs) == seed.halfway_state, signs
+
+
+@pytest.mark.parametrize("wman", [16, 36])
+@pytest.mark.parametrize("unroll100", [50, 100, 200])
+@pytest.mark.parametrize("mode", [0, 1, 2])
+def test_engine_from_its_seeds(wman: int, unroll100: int, mode: int) -> None:
+    """
+    The engine started at the state of each mode's seed ends where the reference's own iterations from that state do:
+    what the outputs cannot show, early signs being corrected.
+    """
+    c = _constants(wman)
+    rng = np.random.default_rng(wman * unroll100 + mode)
+    seeds = (_SEED + 2 * (mode != 1), _SEED + (unroll100 == 50) * (mode != 0))
+
+    def iterate(x: int, y: int, z: int, start: int, vectoring: bool) -> tuple[int, int, int]:
+        for i in range(start, c.n):
+            up = y >= 0 if vectoring else z >= 0
+            x, y = (x + (y >> i), y - (x >> i)) if up == vectoring else (x - (y >> i), y + (x >> i))
+            z = z + c.lut[i] if up == vectoring else z - c.lut[i]
+            x, y, z = (bits_to_signed(v & ((1 << w) - 1), w) for v, w in ((x, c.wx), (y, c.wx), (z, c.wz)))
+        return x, y, z
+
+    cases = []
+    for _ in range(12):
+        for vectoring in [(0,), (1,), (0, 1)][mode]:
+            if vectoring:
+                x = int(rng.integers(1 << (c.xf - 2), 1 << (c.xf - 1)))
+                x0, y0, z0 = x, int(rng.integers(-x, x + 1)), 0
+                for i in range(seeds[1]):
+                    up = y0 >= 0
+                    x0, y0 = (x0 + (y0 >> i), y0 - (x0 >> i)) if up else (x0 - (y0 >> i), y0 + (x0 >> i))
+                    z0 = z0 + c.lut[i] if up else z0 - c.lut[i]
+                start, neg0 = seeds[1], int(y0 >= 0)
+                expected = iterate(x0, y0, z0, start, True)
+            else:
+                tpw = int(rng.integers(1, 1 << (c.wt - 1)))
+                x0, y0, z0 = c.kinv, 0, tpw << _GUARD_ZF
+                for i in range(seeds[0]):
+                    up = z0 >= 0
+                    x0, y0 = (x0 - (y0 >> i), y0 + (x0 >> i)) if up else (x0 + (y0 >> i), y0 - (x0 >> i))
+                    z0 = z0 - c.lut[i] if up else z0 + c.lut[i]
+                start, neg0 = seeds[0], int(z0 < 0)
+                expected = iterate(x0, y0, z0, start, False)
+            cases.append((vectoring, x0, y0, z0, neg0, expected))
+    dut = _Engine(c.lut, wx=c.wx, wz=c.wz, unroll100=unroll100, mode=mode, seeds=seeds)
+
+    async def bench(ctx: Any) -> None:
+        for vectoring, x0, y0, z0, neg0, expected in cases:
+            for port, value in ((dut.vectoring, vectoring), (dut.x0, x0), (dut.y0, y0), (dut.z0, z0), (dut.neg0, neg0)):
+                ctx.set(port, value)
+            ctx.set(dut.start, 1)
+            await ctx.tick()
+            ctx.set(dut.start, 0)
+            for _ in range(4 * c.n):
+                if ctx.get(dut.done):
+                    break
+                await ctx.tick()
+            assert (ctx.get(dut.xn), ctx.get(dut.yn), ctx.get(dut.zn)) == expected, (vectoring, x0, y0, z0)
+            await ctx.tick()
+
+    sim = Simulator(dut)
+    sim.add_clock(1e-6)
+    sim.add_testbench(bench)
+    sim.run()
+
+
+@pytest.mark.parametrize("wman", [16, 18, 36, 53])
+def test_seed_decoder(wman: int) -> None:
+    """At the coordinates next to each threshold, on both sides of the fold, and at the ends and half a quadrant."""
+    c = _constants(wman)
+    wt, half = c.wt, 1 << (c.wt - 1)
+    for signs in (1, 2):
+        for merged in (False, True):
+            dut = _Seed(c, signs, merged)
+            ends = [entry[0] for entry in dut.entries[1:]]
+            folded = {0, 1, half - 1, half}
+            for end in ends:
+                folded |= {end - 1, end, end + 1}
+            coordinates = sorted(
+                {tpw for tpw in folded if 0 <= tpw <= half} | {(1 << wt) - tpw for tpw in folded if 0 < tpw < half}
+            )
+
+            def expected(t: int) -> tuple[int, int | None, int]:
+                tpw = (1 << wt) - t if t > half else t
+                if tpw == half:
+                    return (
+                        (1 << len(dut.entries)) if merged else 1 << len(ends),
+                        dut.halfway_state[2] if merged else None,
+                        1,
+                    )
+                k = sum(tpw >= end for end in ends)
+                return 1 << k, dut.entries[k][3], 0
+
+            async def bench(ctx: Any) -> None:
+                for t in coordinates:
+                    ctx.set(dut.t, t)
+                    picks, take, halfway = expected(t)
+                    assert ctx.get(dut.halfway) == halfway, (signs, merged, t)
+                    if picks is not None and (merged or not halfway):
+                        assert ctx.get(dut.picks) == picks, (signs, merged, t)
+                    if take is not None:
+                        assert ctx.get(dut.z_take) == take, (signs, merged, t)
+
+            sim = Simulator(dut)
+            sim.add_testbench(bench)
+            sim.run()
 
 
 def test_refusals() -> None:
@@ -272,6 +431,11 @@ def test_refusals() -> None:
     refused: list[dict[str, Any]] = [
         {"unroll100": 0},
         {"unroll100": 150},
+        {"unroll100": 300},
+        {"rotation_seed": -1},
+        {"rotation_seed": 3},
+        {"vectoring_seed": -1},
+        {"vectoring_seed": 2},
         {"stage_core_mul": 2},
         {"stage_core_mul": 6},
         {"stage_core_mul": 1, "mode": 0},

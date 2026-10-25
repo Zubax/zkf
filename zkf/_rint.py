@@ -33,10 +33,6 @@ class Rint(Operator):
     `a` rounded to an integer by `round_mode`, as `y_float` of the format of `a` and as `y_int`, a signed `wint`-bit
     integer. An infinity and a zero result come out canonical, and a rounded value beyond the format gives `+-inf`;
     `y_int` saturates on an infinity and on overflow.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `Rint.CoreStages` that are built.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
     class CoreStages(enum.Flag):
@@ -49,6 +45,7 @@ class Rint(Operator):
     wint: int = 32
     stage_input: int = 0
     stage_core: CoreStages = CoreStages(0)
+    """See `Rint.CoreStages`."""
     stage_output: int = 0
 
     def __post_init__(self) -> None:

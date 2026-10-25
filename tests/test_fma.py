@@ -1,4 +1,3 @@
-import re
 from typing import Any
 
 import numpy as np
@@ -15,7 +14,6 @@ from _operands import (
     random_operand,
     random_zero,
 )
-from test_add import alone
 from zkf import Add, Fma, Zkf, ZkfFormat
 from zkf._pmul import counts
 
@@ -168,7 +166,7 @@ def test_formats(row: tuple[int, int, int]) -> None:
             "stage_core_add": Add.CoreStages.SUM | Add.CoreStages.OPERANDS,
             "stage_output": 2,
         },
-        {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages.NORMALIZE_WIDE},
+        {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages(0)},
     ],
     ids=str,
 )
@@ -176,8 +174,8 @@ def test_stages(knobs: dict[str, Any]) -> None:
     run(4, 6, 256, **knobs)
 
 
-# Each register of the sum alone and all of them; NORMALIZE_WIDE needs 17 bits, which 4/7 has.
-@pytest.mark.parametrize("stage_core", [alone(member) for member in Add.CoreStages] + [~Add.CoreStages(0)], ids=str)
+# Each register of the sum alone and all of them.
+@pytest.mark.parametrize("stage_core", [*Add.CoreStages, ~Add.CoreStages(0)], ids=str)
 def test_registers(stage_core: Add.CoreStages) -> None:
     run(4, 7, 256, stage_core_add=stage_core)
 
@@ -217,12 +215,6 @@ def test_every_triple() -> None:
 
 def test_refusals() -> None:
     fmt = ZkfFormat(4, 6)
-    for wman, core, message in (
-        (6, ~Add.CoreStages(0), "a 15-bit normalizer has two levels; leave NORMALIZE_WIDE out"),
-        (7, Add.CoreStages.NORMALIZE_WIDE | Add.CoreStages.PACK, "NORMALIZE_WIDE needs NORMALIZE; set both"),
-    ):
-        with pytest.raises(ValueError, match=re.escape(f"stage_core_add={core}: {message}")):
-            Fma(ZkfFormat(4, wman), wmultiplier=18, stage_core_add=core)
     refused: list[dict[str, Any]] = [
         {"stage_core_mul": 4},
         {"stage_core_mul": -1},
@@ -274,11 +266,11 @@ def test_deep_stages(stages: int) -> None:
             {
                 "stage_input": 1,
                 "stage_core_mul": 2,
-                "stage_core_add": ~Add.CoreStages.NORMALIZE_WIDE,
+                "stage_core_add": ~Add.CoreStages(0),
                 "stage_output": 1,
             },
         ),
-        (3, 4, 4096, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages.NORMALIZE_WIDE, "stage_output": 1}),
+        (3, 4, 4096, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages(0), "stage_output": 1}),
         (
             6,
             18,

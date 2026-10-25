@@ -13,23 +13,15 @@ from ._value import UnsupportedFormat, Zkf
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class FromInt(Operator):
-    """
-    `y = float(a)` for a signed `wint`-bit `a`, rounded to nearest even.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `FromInt.CoreStages` that are built.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
-    """
+    """`y = float(a)` for a signed `wint`-bit `a`, rounded to nearest even."""
 
     class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
         ABS = enum.auto()
         """`|a|`, ahead of the normalizer."""
-        NORMALIZE_INPUT = enum.auto()
-        """`|a|` with the zero-detects of the normalizer's widest level, ahead of its shift."""
         NORMALIZE = enum.auto()
-        """The middle of the normalizer."""
+        """Behind the widest level of the normalizer's shift."""
         PACK = enum.auto()
         """The packer's input: the normalized magnitude and its exponent."""
 
@@ -37,6 +29,7 @@ class FromInt(Operator):
     wint: int = 32
     stage_input: int = 0
     stage_core: CoreStages = CoreStages(0)
+    """See `FromInt.CoreStages`."""
     stage_output: int = 0
 
     def __post_init__(self) -> None:
@@ -95,8 +88,7 @@ class _FromInt(wiring.Component):
             wmag=wx,
             weu=weu,
             exp_is_biased=True,
-            stage_input=int(FromInt.CoreStages.NORMALIZE_INPUT in model.stage_core),
-            stage_normalize=int(FromInt.CoreStages.NORMALIZE in model.stage_core),
+            stage_wide=int(FromInt.CoreStages.NORMALIZE in model.stage_core),
             stage_pack=int(FromInt.CoreStages.PACK in model.stage_core),
             stage_output=model.stage_output,
         )

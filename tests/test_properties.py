@@ -26,7 +26,7 @@ STAGES: dict[str, list[dict[str, Any]]] = {
             | Add.CoreStages.SUM
             | Add.CoreStages.NORMALIZED
         },
-        {"stage_core": ~Add.CoreStages.NORMALIZE_WIDE},
+        {"stage_core": ~Add.CoreStages(0)},
     ],
     "mul": [{"stage_core_mul": count} for count in (2, 3)],
 }

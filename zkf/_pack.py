@@ -1,4 +1,4 @@
-from amaranth.hdl import Cat, Const, Module, Signal, signed
+from amaranth.hdl import Cat, Const, Module, Mux, Signal, Value, signed
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
@@ -18,7 +18,9 @@ class Pack(wiring.Component):
     rounding carry out of the largest finite exponent still give an infinity. `saturate_round_carry`: that carry gives
     `+-max` instead, for a caller with an inexact input that must not invent an infinity; the result is then faithful,
     not correctly rounded. `wexp_unbiased` is the width of `exp_unbiased`: at least WEXP, plus one if biased.
-    `stage_input` registers the inputs and `stage_output` the result.
+    `stage_input` registers the inputs and `stage_output` the result. `classify_ahead` classifies the result ahead of
+    `stage_input`'s register, which then holds the class and the exponent: only the rounding adder is left behind it,
+    with the significand masked ahead of it. It has no effect without that register.
     """
 
     in_valid: Signal
@@ -43,8 +45,10 @@ class Pack(wiring.Component):
         saturate_round_carry: bool = False,
         stage_input: int = 0,
         stage_output: int = 0,
+        classify_ahead: bool = False,
     ) -> None:
         self._fmt = fmt
+        self._classify_ahead = classify_ahead
         self._wexp_unbiased = fmt.wexp + 2 if wexp_unbiased is None else wexp_unbiased
         self._exp_is_biased = exp_is_biased
         self._assume_no_overflow = assume_no_overflow
@@ -71,21 +75,26 @@ class Pack(wiring.Component):
         m = Module()
         fmt, wexp, wfrac = self._fmt, self._fmt.wexp, self._fmt.wfrac
         wext = self._wexp_unbiased + 1
+        ahead = self._classify_ahead and bool(self._stage_input)
 
-        def taken(port: Signal) -> Signal:
+        def taken(value: Value, name: str) -> Value:
             if not self._stage_input:
-                return port
-            captured = Signal(port.shape(), name=f"{port.name}_r", reset_less=True)
-            m.d.sync += captured.eq(port)
+                return value
+            captured = Signal(len(value), name=f"{name}_r", reset_less=True)
+            m.d.sync += captured.eq(value)
             return captured
 
         valid = self.in_valid
         if self._stage_input:
             valid = Signal(name="valid_r")
             m.d.sync += valid.eq(self.in_valid)
-        sign, force_zero, force_inf = taken(self.sign), taken(self.force_zero), taken(self.force_inf)
-        exp, significand = taken(self.exp_unbiased), taken(self.significand)
-        guard, round_bit, sticky = taken(self.guard), taken(self.round), taken(self.sticky)
+        sign, significand = self.sign, self.significand
+        force_zero, force_inf, exp = self.force_zero, self.force_inf, self.exp_unbiased
+        guard, round_bit, sticky = self.guard, self.round, self.sticky
+        if not ahead:
+            sign, significand = taken(sign, "sign"), taken(significand, "significand")
+            force_zero, force_inf = taken(force_zero, "force_zero"), taken(force_inf, "force_inf")
+            exp = taken(exp, "exp_unbiased").as_signed()
 
         # A biased exponent of 0 is in `[min_normal / 2, min_normal)`, which gives `min_normal`.
         biased = Cat(exp, exp[-1]) if self._exp_is_biased else (exp + Const(fmt.bias, wexp))[:wext]
@@ -95,15 +104,8 @@ class Pack(wiring.Component):
         high = exp_ext[wexp : self._wexp_unbiased].any() if self._wexp_unbiased > wexp else Const(0, 1)
         above = ~underflow & (high | exp_biased.all())
         overflow = Const(0, 1) if self._assume_no_overflow else above
-
-        # The increment goes into exponent and significand at once, so a carry out of the significand reaches the
-        # exponent, and from the largest finite one lands on the infinity with a zero fraction.
-        increment = guard & (round_bit | sticky | significand[0])
-        rounded = Signal(fmt.wfull, name="expsig_rounded")
-        m.d.comb += rounded.eq((Cat(significand, exp_biased) + increment)[: fmt.wfull])
-        saturating = Const(0, 1)
-        if self._saturate_round_carry:
-            saturating = significand.all() & (exp_biased == fmt.exp_max_finite)
+        at_max = Signal(name="exp_at_max")
+        m.d.comb += at_max.eq(exp_biased == fmt.exp_max_finite)
 
         zero = Signal(name="result_zero")
         m.d.comb += zero.eq(force_zero | (~force_inf & underflow))
@@ -113,27 +115,58 @@ class Pack(wiring.Component):
         m.d.comb += min_normal.eq(~zero & ~force_inf & ~exp_ext.any())
         finite = Signal(name="result_finite")
         m.d.comb += finite.eq(~zero & ~infinity)
-        saturate = Signal(name="result_saturate")
-        m.d.comb += saturate.eq(finite & saturating)
-        normal = Signal(name="result_normal")
-        m.d.comb += normal.eq(finite & ~min_normal & ~saturate)
 
-        # The fraction is masked, not selected, which keeps it off the tree that selects the exponent.
-        out_exp = Signal(wexp, name="out_exp")
-        with m.If(zero):
-            m.d.comb += out_exp.eq(0)
-        with m.Elif(infinity):
-            m.d.comb += out_exp.eq(fmt.exp_inf)
-        with m.Elif(min_normal):
-            m.d.comb += out_exp.eq(1)
-        with m.Elif(saturate):
-            m.d.comb += out_exp.eq(fmt.exp_max_finite)
-        with m.Else():
-            m.d.comb += out_exp.eq(rounded[fmt.wman :])
-        out_frac = (rounded[:wfrac] & normal.replicate(wfrac)) | saturate.replicate(wfrac)
+        def exponent(name: str, saturate: Value | None, rounded: Value) -> Signal:
+            out = Signal(wexp, name=name)
+            with m.If(zero):
+                m.d.comb += out.eq(0)
+            with m.Elif(infinity):
+                m.d.comb += out.eq(fmt.exp_inf)
+            with m.Elif(min_normal):
+                m.d.comb += out.eq(1)
+            if saturate is not None:
+                with m.Elif(saturate):
+                    m.d.comb += out.eq(fmt.exp_max_finite)
+            with m.Else():
+                m.d.comb += out.eq(rounded)
+            return out
+
+        if ahead:
+            keep = Signal(name="result_keep")
+            m.d.comb += keep.eq(finite & ~min_normal)
+            exp_held = exponent("exp_held", None, exp_biased)
+            sign, keep, exp_held = taken(sign & ~zero, "sign"), taken(keep, "keep"), taken(exp_held, "exp_held")
+            significand = taken(significand, "significand")
+            guard, round_bit, sticky = taken(guard, "guard"), taken(round_bit, "round"), taken(sticky, "sticky")
+            increment = guard & (round_bit | sticky | significand[0]) & keep
+            held = Signal(fmt.wfull, name="expsig_held")
+            m.d.comb += held.eq(Cat(significand & keep.replicate(fmt.wman), exp_held))
+            rounded = Signal(fmt.wfull, name="expsig_rounded")
+            m.d.comb += rounded.eq((held + increment)[: fmt.wfull])
+            if self._saturate_round_carry:
+                # A saturated result is the held one, picked rather than masked so that no set or reset takes it.
+                saturating = Signal(name="result_saturating")
+                m.d.comb += saturating.eq(significand.all() & taken(at_max, "at_max"))
+                rounded = Mux(saturating, held, rounded)
+            out_frac, out_exp = rounded[:wfrac], rounded[fmt.wman :]
+        else:
+            guard, round_bit, sticky = taken(guard, "guard"), taken(round_bit, "round"), taken(sticky, "sticky")
+            # The increment goes into exponent and significand at once, so a carry out of the significand reaches
+            # the exponent, and from the largest finite one lands on the infinity with a zero fraction.
+            increment = guard & (round_bit | sticky | significand[0])
+            rounded = Signal(fmt.wfull, name="expsig_rounded")
+            m.d.comb += rounded.eq((Cat(significand, exp_biased) + increment)[: fmt.wfull])
+            saturate = Signal(name="result_saturate")
+            m.d.comb += saturate.eq(finite & significand.all() & at_max if self._saturate_round_carry else 0)
+            normal = Signal(name="result_normal")
+            m.d.comb += normal.eq(finite & ~min_normal & ~saturate)
+            # The fraction is masked, not selected, which keeps it off the tree that selects the exponent.
+            out_exp = exponent("out_exp", saturate, rounded[fmt.wman :])
+            out_frac = (rounded[:wfrac] & normal.replicate(wfrac)) | saturate.replicate(wfrac)
+            sign = sign & ~zero
         layout = FloatLayout(fmt)
         packed = Signal(layout, name="packed")
-        m.d.comb += packed.eq(bundle(layout, frac=out_frac, exp=out_exp, sign=sign & ~zero))
+        m.d.comb += packed.eq(bundle(layout, frac=out_frac, exp=out_exp, sign=sign))
         out_valid, y = pipe(m, "out", valid, layout, packed, self._stage_output)
         m.d.comb += self.out_valid.eq(out_valid)
         m.d.comb += self.y.eq(y)

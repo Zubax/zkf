@@ -42,6 +42,8 @@ SHORT = {
     "sc": "stage_core",
     "so": "stage_output",
     "fa": "fast",
+    "rs": "rotation_seed",
+    "vs": "vectoring_seed",
 }
 """The knobs as the rows name them."""
 
@@ -50,7 +52,7 @@ def synthesized(wman: int, mode: int = 2) -> dict[str, Any]:
     """
     The knobs of the catalog's specs at 6/18, or at 8/36 above WMAN 24: the rate, the product's count and the packers of
     the mode's spec, or of them all, which agree, where it has none, the count brought within what the width takes; the
-    registers of them all that the mode builds.
+    seeds of the specs of the modes that take them; the registers of them all that the mode builds.
     """
     width = 18 if wman <= 24 else 36
     found = [model for model in CATALOG.values() if isinstance(model, Cordic) and model.fmt.wman == width]
@@ -58,7 +60,10 @@ def synthesized(wman: int, mode: int = 2) -> dict[str, Any]:
     ((un, sm, fa),) = {(model.unroll100, model.stage_core_mul, model.fast) for model in own}
     taken = counts(*_geometry(wman).operands(mode), signed=mode != 1, wmultiplier=18)
     sm = min(max(sm, taken.start), taken.stop - 1)
-    return {"un": un, "sm": sm, "fa": fa, "sc": reduce(or_, (model.stage_core for model in found)) & ~_LACKED[mode]}
+    (rs,) = {model.rotation_seed for model in own if model.mode != 1} or {0}
+    (vs,) = {model.vectoring_seed for model in own if model.mode != 0} or {0}
+    sc = reduce(or_, (model.stage_core for model in found)) & ~_LACKED[mode]
+    return {"un": un, "sm": sm, "fa": fa, "rs": rs, "vs": vs, "sc": sc}
 
 
 # Operands that were once more than an ULP off, by wexp and wman: a rotation's, and `(y, x)` on either result. Of

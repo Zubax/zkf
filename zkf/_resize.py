@@ -14,9 +14,6 @@ class Resize(Operator):
     """
     `y = a` converted from `fmt_in` to `fmt`: exact if `fmt` holds every value of `fmt_in`, else rounded to nearest
     even, with `+-inf` above the range and +0 or `+-fmt.lowest` below it. Zeros and infinities come out canonical.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
     operator = "resize"

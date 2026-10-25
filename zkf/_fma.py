@@ -4,7 +4,7 @@ from amaranth.hdl import Cat, Const, Module, Mux, Signal, signed
 from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 
-from ._add import Add, AddCore, check_core
+from ._add import Add, AddCore
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, pipe
 from ._pmul import Pmul, check
 from ._value import Zkf
@@ -12,22 +12,17 @@ from ._value import Zkf
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class Fma(Operator):
-    """
-    `y = a * b + c`, rounded once; `a * b - c` with the sign bit of `c` flipped.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core_mul`: the product's registers, as Mul's.
-    `stage_core_add`: the sum's registers, a set of `Add.CoreStages`; its decoded operands are the product and `c`.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
-    `wmultiplier`: the operand width of the target's multipliers.
-    """
+    """`y = a * b + c`, rounded once; `a * b - c` with the sign bit of `c` flipped."""
 
     operator = "fma"
     stage_input: int = 0
     stage_core_mul: int = 0
+    """As `Mul`'s."""
     stage_core_add: Add.CoreStages = Add.CoreStages(0)
+    """See `Add.CoreStages`; the sum's decoded operands are the product and `c`."""
     stage_output: int = 0
     wmultiplier: int
+    """As `Mul`'s."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
     """
     On the last input stage at `stage_core_mul=1`, which the multiplier takes the factors from; from 2 on, on the
@@ -44,7 +39,6 @@ class Fma(Operator):
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
         wman = self.fmt.wman
         check("stage_core_mul", self.stage_core_mul, wman, wman, signed=False, wmultiplier=self.wmultiplier)
-        check_core("stage_core_add", self.stage_core_add, 2 * wman)
 
     @property
     def timing(self) -> Timing:

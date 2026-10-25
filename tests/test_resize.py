@@ -108,7 +108,6 @@ def test_catalog(model: Resize) -> None:
 
 def test_no_register_is_no_clock() -> None:
     fmt = ZkfFormat(3, 4)
-    assert Resize(fmt, fmt_in=fmt).name == "zkf_resize_e3m4_e3m4_input0_output0_latency0"
     assert not Resize(fmt, fmt_in=fmt).clocked
 
 

@@ -42,13 +42,6 @@ class Log2(Operator):
     is 0, and elsewhere `C` is shifted down against the leading one predicted for the result, which keeps the multiplier
     as wide as the fraction. The sum of `e` and that product is then rounded at both of those positions, and one of the
     two is selected.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core_kernel`: the registers of every product of the kernel, as that of `Exp2`.
-    `stage_core_mul`: the registers of the last product, `f * C(f)`, as Mul's.
-    `stage_core`: the registers of `Log2.CoreStages` that are built.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
-    `wmultiplier`: the operand width of the target's multipliers, which the table is generated for.
     """
 
     class CoreStages(enum.Flag):
@@ -62,10 +55,14 @@ class Log2(Operator):
     operator = "log2"
     stage_input: int = 0
     stage_core_kernel: int = 0
+    """As `Exp2`'s."""
     stage_core_mul: int = 0
+    """Of the last product, `f * C(f)`, as `Mul`'s."""
     stage_core: CoreStages = CoreStages(0)
+    """See `Log2.CoreStages`."""
     stage_output: int = 0
     wmultiplier: int
+    """As `Exp2`'s."""
     rom_attrs: Attrs | None = field(default=None, compare=False)
     """As that of `Exp2`."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
@@ -208,7 +205,7 @@ class _Log2(wiring.Component):
 
         # `|f|` is normalized for `e = 0`; `|e|` is shifted so that the predicted leading one of the result lands on its
         # bit `wexp - 2`.
-        m.submodules.normalize = normalize = Normshift(wfrac, stage_split=1, sideband=decoded)
+        m.submodules.normalize = normalize = Normshift(wfrac, stage_wide=1, sideband=decoded)
         up = Signal(len(d.p1), name="up")
         m.d.comb += up.eq((Const(wexp - 1, len(d.p1)) - d.p1)[: len(d.p1)])
         placed = {name: d[name] for name in names} | {"emag": (d.emag << up)[:wexp]}

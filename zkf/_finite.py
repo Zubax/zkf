@@ -16,12 +16,7 @@ class FiniteResult(NamedTuple):
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class Finite(Operator):
-    """
-    `finite = not isinf(x)`; `saturated` is `x` bit for bit if finite, else `copysign(max, x)`.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
-    """
+    """`finite = not isinf(x)`; `saturated` is `x` bit for bit if finite, else `copysign(max, x)`."""
 
     operator = "finite"
     stage_input: int = 0

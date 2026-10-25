@@ -25,13 +25,6 @@ class Exp2(Operator):
     [1, 2): the top bits of `f` select a segment's coefficients from a table, and a polynomial of degree 2 to 5, by
     WMAN, is evaluated in the rest. The kernel adds half an ULP, so that its truncation is the rounded significand; `i`
     is the exponent, or `i + 1` where the significand rounds up to 2.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core_kernel`: the registers of every product of the kernel, as `stage_core_mul` of `Mul`, each capped at its
-    own positions, those of one multiplier at its output and operands.
-    `stage_core`: the registers of `Exp2.CoreStages` that are built.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
-    `wmultiplier`: the operand width of the target's multipliers, which the table is generated for.
     """
 
     class CoreStages(enum.Flag):
@@ -45,9 +38,15 @@ class Exp2(Operator):
     operator = "exp2"
     stage_input: int = 0
     stage_core_kernel: int = 0
+    """
+    Of every product of the kernel, as `Mul`'s `stage_core_mul`, each capped at its own positions, those of one
+    multiplier at its output and operands.
+    """
     stage_core: CoreStages = CoreStages(0)
+    """See `Exp2.CoreStages`."""
     stage_output: int = 0
     wmultiplier: int
+    """As `Mul`'s; the table is generated for it."""
     rom_attrs: Attrs | None = field(default=None, compare=False)
     """
     Synthesis attributes of the table's memory, such as `{"rom_style": "block"}`; those of several tools can be mixed.

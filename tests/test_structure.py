@@ -185,15 +185,19 @@ def test_lint(linter: str, tmp_path: Path) -> None:
         pytest.skip(f"no {linter}")
     side = data.StructLayout({"tag": 3, "flag": 1})
     convert = partial(verilog.convert, strip_internal_attrs=True)
-    texts = [convert(Txn(side, 0), name="txn"), convert(Normshift(39, stage_split=2, sideband=side), name="normshift")]
+    texts = [
+        convert(Txn(side, 0), name="txn"),
+        convert(Normshift(39, stage_split=1, stage_wide=1, sideband=side), name="normshift"),
+    ]
     for function in ("exp2", "log2"):
         kernel = Kernel(table(function, 36, 18), wmultiplier=18, stages=4)
         texts.append(convert(kernel, name=f"kernel_{function}"))
     for cls, fmt, fixed in MODELS:
         swept = list(models(cls, fmt, fixed, every_pair=False))
         texts += [model.compile() for model in {swept[at].name: swept[at] for at in (0, len(swept) // 2, -1)}.values()]
-    # What the ends of its sweep do not have: half a rate, where a sign is replayed, and several iterations a cycle.
-    for mode, rate in product((0, 1, 2), (50, 300)):
+    # What the ends of its sweep do not have: half a rate, where a sign is replayed, and one iteration a cycle, where
+    # the angle's product starts ahead.
+    for mode, rate in product((0, 1, 2), (50, 100)):
         every = ~_LACKED[mode]
         staged = make(
             Cordic, ZkfFormat(5, 17), wmultiplier=18, mode=mode, unroll100=rate, stage_core_mul=3, stage_core=every

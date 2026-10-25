@@ -4,8 +4,6 @@ wraps equivalent to the Amaranth design, and its top module only hands its ports
 """
 
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
@@ -15,9 +13,7 @@ from amaranth.hdl import Shape
 from amaranth.lib import wiring
 
 from _catalog import CATALOG, CoreSpec
-
-YOSYS = shutil.which(os.environ.get("YOSYS", "yosys"))
-"""The Yosys of the system, as Amaranth finds it: the one that comes with Amaranth reads no Verilog."""
+from _yosys import YOSYS
 
 # Proved from equal states: the initial values are not compared.
 PREPARE = "proc\nmemory\nflatten\nopt_clean\n"

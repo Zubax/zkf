@@ -20,6 +20,8 @@ type Report = dict[str, object]
 """The JSON report of nextpnr-ecp5; nextpnr-xilinx gives none."""
 
 ROM_ATTRS = {"rom_style": "block"}
+YOSYS = shutil.which(os.environ.get("YOSYS", "yosys"))
+"""The Yosys of the system, as Amaranth finds it: the one that comes with Amaranth reads no Verilog, has no solver."""
 # A diverging place-and-route fails its spec instead of stalling the run.
 YOSYS_TIMEOUT_S = 900.0
 NEXTPNR_TIMEOUT_S = 1200.0

@@ -292,12 +292,6 @@ not all states are mappable between the formats.
 
 Roughly ordered by severity.
 
-- `cordic` at e8m36 is bound next by the division's digit, a recurrence, by the sum of a product's rows,
-  two carry chains in a row, by the rounding into the result, and by the normalizer, whose detects of the later levels
-  wait for the shifts ahead of them; the packer's sticky is gathered behind its last shift.
-  These sit within about 5% of 100 MHz on the ECP5, about as much as placement moves them. One iteration a cycle
-  there closes on neither Yosys nor Diamond.
-
 - `divsqrt` and `cordic`'s division could take a radix-8 SRT digit a stage on a carry-save remainder, behind a `fast`
   knob: two thirds of the digits (`divsqrt` at e8m36: 17 cycles to about 12). Two radix-4 SRT digits a stage, built in
   `cordic` and bit-identical, run at 55 to 89 MHz on the ECP5.
@@ -320,7 +314,7 @@ Roughly ordered by severity.
   Each set is judged by its worst placement; a timing model would not do, as the binding paths are often mostly routing.
 
 - The table of `cordic`'s angles becomes a memory on Yosys, which doubles the engine's LUTs at two iterations a
-  cycle, and the equivalence test's proof does not finish at two or four; no spec runs at those rates.
+  cycle, the default, and the equivalence test's proof does not finish there; no spec runs at that rate.
 
 ### Postponed as YAGNI
 

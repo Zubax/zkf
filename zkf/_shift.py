@@ -1,32 +1,24 @@
-"""The normalizing shifter and the sticky right shifter."""
+"""The normalizing shifters and the sticky right shifter."""
 
 from amaranth.hdl import Cat, Const, Module, Mux, ShapeLike, Signal, Value
-from amaranth.lib import wiring
+from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
-from ._block import delay, pipe
-
-
-def split_points(width: int) -> int:
-    """How many registers `stage_split` of `Normshift` can place at `width`: two from three levels on, else one."""
-    return 2 if _levels(width) >= 3 else 1
+from ._block import bundle, delay, pipe
 
 
 class Normshift(wiring.Component):
     """
     `y = x << count`, `count` being the number of leading zeros of `x`; `zero = x == 0`, with `count` and `y`
-    meaningless then. `sideband` is delayed with `y`.
+    meaningless then; `sticky`: whether `y[:wsticky]` has a set bit. `sideband` is delayed with `y`.
 
-    A radix-4 cascade, largest shift first, at half the depth of radix 2: the level of weight `4**k` shifts by as many
-    of the top one, two and three groups of `4**k` bits as are zero, which is the base-4 digit k of `count`.
+    A tree counts the leading zeros, whose base-4 digits select a radix-4 shift, largest first; the sticky is found from
+    `x` beside the shift. `most`, where given, is the most leading zeros of a nonzero `x`, and only the tree and the
+    levels that reach it are built.
 
-    `stage_split=1` puts a register in the middle of the cascade; 2 adds one right behind the widest level, which takes
-    the zero-detects of the next level with the data so that its shift starts at registers, and needs three built
-    levels (unbounded, a width of 17 or more). `stage_input=1` registers `x` with the zero-detects of the
-    widest level, found ahead of the register, so that the shift of that level, whose select has the widest fan-out,
-    starts at registers. `most`, where given, is the most leading zeros of a nonzero `x`, and only the levels that reach
-    it are built.
+    `stage_input` registers `x`, `stage_split` `x` with its count ahead of the shift, and `stage_wide` the shift behind
+    its widest level.
     """
 
     in_valid: Signal
@@ -35,15 +27,23 @@ class Normshift(wiring.Component):
     zero: Signal
     count: Signal
     y: Signal
+    sticky: Signal
 
     def __init__(
-        self, width: int, *, stage_input: int = 0, stage_split: int = 0, sideband: ShapeLike, most: int | None = None
+        self,
+        width: int,
+        *,
+        wsticky: int = 0,
+        stage_input: int = 0,
+        stage_split: int = 0,
+        stage_wide: int = 0,
+        sideband: ShapeLike,
+        most: int | None = None,
     ) -> None:
-        self._width = width
-        self._levels = _levels(width) if most is None else min(_levels(width), max(_levels(most + 1), 1))
-        assert stage_split < 2 or self._levels >= 3, (width, most, stage_split)
-        self._stage_input = stage_input
-        self._stage_split = stage_split
+        self._width, self._wsticky = width, wsticky
+        # The tree spans the top bits that can hold the leading one, as a power of two.
+        self._span = 1 << ceil_log2(max(width if most is None else min(most + 1, width), 2))
+        self._stage_input, self._stage_split, self._stage_wide = stage_input, stage_split, stage_wide
         self._sideband = sideband
         super().__init__(
             {
@@ -51,8 +51,9 @@ class Normshift(wiring.Component):
                 "x": In(width),
                 "out_valid": Out(1),
                 "zero": Out(1),
-                "count": Out(ceil_log2(width)),
+                "count": Out(ceil_log2(self._span)),
                 "y": Out(width),
+                "sticky": Out(1),
                 "sb_in": In(sideband),
                 "sb_out": Out(sideband),
             }
@@ -60,32 +61,47 @@ class Normshift(wiring.Component):
 
     def elaborate(self, platform: object) -> Module:
         m = Module()
-        levels, split, depth = self._levels, self._stage_split, self._stage_input + self._stage_split
-        middle = (levels - 1) // 2 + 1
-        barriers = ({middle} if split else set()) | ({1} if split >= 2 else set())
+        width, span, wsticky = self._width, self._span, self._wsticky
+        taken = data.StructLayout({"x": width, "sb": self._sideband})
+        valid, given = pipe(m, "in", self.in_valid, taken, bundle(taken, x=self.x, sb=self.sb_in), self._stage_input)
+        x = Signal(width, name="x_in")
+        m.d.comb += x.eq(given.x)
 
-        data = self.x
-        digits: list[Value] = []
-        for s in range(levels):
-            staged = (bool(self._stage_input) and not s) or (split >= 2 and s == 1)
-            m.submodules[f"level{s}"] = level = _NormLevel(self._width, 1 << (2 * (levels - 1 - s)), staged)
-            m.d.comb += level.data.eq(data)
-            data = level.out
-            if split and s + 1 == middle:
-                data = Signal(self._width, name=f"data{s + 1}", reset_less=True)
-                m.d.sync += data.eq(level.out)
-            # A digit waits for the barriers its level is ahead of.
-            digits.insert(0, delay(m, f"digit{s}_", 2, level.count, sum(barrier > s for barrier in barriers)))
+        zero, count = _leading_zeros(m, Cat(Const(0, max(span - width, 0)), x[max(width - span, 0) :]), "lz")
+        counted = data.StructLayout({"x": width, "count": len(count), "zero": 1, "sb": self._sideband})
+        found = bundle(counted, x=x, count=count, zero=zero, sb=given.sb)
+        valid, held = pipe(m, "counted", valid, counted, found, self._stage_split)
+        x, count = Signal(width, name="x_counted"), Signal(len(count), name="count_counted")
+        m.d.comb += [x.eq(held.x), count.eq(held.count)]
 
-        zero = Signal(name="zero_in")
-        m.d.comb += zero.eq(~self.x.any())
-        valid, side = pipe(m, "side", self.in_valid, self._sideband, self.sb_in, depth)
-        m.d.comb += self.sb_out.eq(side)
-        zero = delay(m, "zero", 1, zero, depth)
+        zero, sb, sticky = held.zero, held.sb, None
+        shifted: Value = x
+        top = (len(count) + 1) // 2 - 1
+        for k in reversed(range(top + 1)):
+            digit = count[2 * k : 2 * k + 2]
+            level = Signal(width, name=f"level{k}")
+            with m.Switch(digit):
+                for d in range(1 << len(digit)):
+                    with m.Case(d):
+                        m.d.comb += level.eq(shifted << (d << (2 * k)))
+            shifted = level
+            if k == top and self._stage_wide:
+                behind = data.StructLayout(
+                    {"y": width, "count": len(count), "zero": 1, "sticky": 1, "sb": self._sideband}
+                )
+                found = bundle(behind, y=shifted, count=count, zero=zero, sticky=_sticky(m, x, count, wsticky), sb=sb)
+                valid, staged = pipe(m, "shifted", valid, behind, found, 1)
+                shifted, count, zero, sticky, sb = staged.y, staged.count, staged.zero, staged.sticky, staged.sb
+
+        if sticky is None:
+            sticky = _sticky(m, x, count, wsticky)
+
         m.d.comb += self.out_valid.eq(valid)
+        m.d.comb += self.sb_out.eq(sb)
         m.d.comb += self.zero.eq(zero)
-        m.d.comb += self.count.eq(Cat(*digits)[: len(self.count)])
-        m.d.comb += self.y.eq(data)
+        m.d.comb += self.count.eq(count)
+        m.d.comb += self.y.eq(shifted)
+        m.d.comb += self.sticky.eq(sticky)
         return m
 
 
@@ -155,52 +171,6 @@ def normshift_reference(width: int, value: int) -> tuple[int, int, int]:
     return 0, count, (value << count) & ((1 << width) - 1)
 
 
-class _NormLevel(wiring.Component):
-    """
-    `count` is how many of the leading `group`-bit groups of `data` are zero, 0 to 3, and `out = data << count * group`.
-    A group reaching past the width is zero only for a zero input, whose count is not read, so it is not examined, which
-    keeps the widest levels shallow. `staged` registers `data` and its zero-detects ahead of the shift.
-    """
-
-    data: Signal
-    count: Signal
-    out: Signal
-
-    def __init__(self, width: int, group: int, staged: bool = False) -> None:
-        self._group, self._staged = group, staged
-        super().__init__({"data": In(width), "count": Out(2), "out": Out(width)})
-
-    def elaborate(self, platform: object) -> Module:
-        m = Module()
-        data, group, width = self.data, self._group, len(self.data)
-        zeros: list[Value] = []
-        for n in (1, 2, 3):
-            if n * group < width:
-                zero = Signal(name=f"z{n}")
-                m.d.comb += zero.eq(~data[width - n * group :].any())
-                zeros.append(zero)
-            else:
-                zeros.append(Const(0, 1))
-        if self._staged:
-            for n in (1, 2, 3):
-                if n * group < width:
-                    found = Signal(name=f"zr{n}", reset_less=True)
-                    m.d.sync += found.eq(zeros[n - 1])
-                    zeros[n - 1] = found
-            held = Signal(width, name="held", reset_less=True)
-            m.d.sync += held.eq(data)
-            data = held
-        shifted = [
-            Cat(Const(0, n * group), data[: width - n * group]) if n * group < width else Const(0, width)
-            for n in (1, 2, 3)
-        ]
-        count = Mux(zeros[0], Mux(zeros[1], Mux(zeros[2], Const(3, 2), Const(2, 2)), Const(1, 2)), Const(0, 2))
-        m.d.comb += self.count.eq(count)
-        # Selected by the zero-detects in priority order, not by the count, which keeps the select one level deep.
-        m.d.comb += self.out.eq(Mux(zeros[2], shifted[2], Mux(zeros[1], shifted[1], Mux(zeros[0], shifted[0], data))))
-        return m
-
-
 class _RightLevel(wiring.Component):
     """
     `out = data >> sel * unit`, `sticky = sticky_in | (a set bit is dropped)`; `sel` is one bit wide where the amount
@@ -237,5 +207,31 @@ class _RightLevel(wiring.Component):
         return m
 
 
+def _sticky(m: Module, x: Value, count: Value, wsticky: int) -> Value:
+    """Whether `(x << count)[:wsticky]` has a set bit."""
+    if not wsticky:
+        return Const(0, 1)
+    # A constant shifted by the count: compares of the count per bit map to carry chains.
+    mask = Signal(wsticky, name="mask")
+    m.d.comb += mask.eq(Const((1 << wsticky) - 1, wsticky) >> count)
+    return (x[:wsticky] & mask).any()
+
+
 def _levels(width: int) -> int:
     return (ceil_log2(width) + 1) // 2
+
+
+def _leading_zeros(m: Module, v: Value, name: str) -> tuple[Value, Value]:
+    """
+    `(v == 0, leading zeros of v)` for a `v` of a power-of-two width, by halves. Each node is a signal: its parent
+    reads it twice, which the netlist would expand otherwise.
+    """
+    if len(v) == 1:
+        return ~v[0], Const(0, 0)
+    half = len(v) // 2
+    high, high_count = _leading_zeros(m, v[half:], f"{name}h")
+    low, low_count = _leading_zeros(m, v[:half], f"{name}l")
+    zero, count = Signal(name=f"{name}_zero"), Signal(len(high_count) + 1, name=f"{name}_count")
+    m.d.comb += zero.eq(high & low)
+    m.d.comb += count.eq(Cat(Mux(high, low_count, high_count), high) if half > 1 else high)
+    return zero, count

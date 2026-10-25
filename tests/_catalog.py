@@ -44,7 +44,7 @@ class CoreSpec:
 
 F18, F24, F36 = ZkfFormat(6, 18), ZkfFormat(8, 24), ZkfFormat(8, 36)
 _FMA36: dict[str, Any] = dict(stage_core_mul=3, wmultiplier=18)
-_CORDIC_SHARED = Cordic.CoreStages.NORMALIZE_INPUT | Cordic.CoreStages.NORMALIZE | Cordic.CoreStages.PACK
+_CORDIC_SHARED = Cordic.CoreStages.NORMALIZE | Cordic.CoreStages.PACK
 _CORDIC_ROTATION = _CORDIC_SHARED | Cordic.CoreStages.REDUCED | Cordic.CoreStages.CORRECTIONS
 _CORDIC_VECTORING = _CORDIC_SHARED | Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.ANGLE
 _LARGE: list[str] = []
@@ -84,7 +84,7 @@ CATALOG: dict[str, Block | CoreSpec] = {
             F18,
             stage_core=Add.CoreStages.OPERANDS | Add.CoreStages.ALIGN | Add.CoreStages.SUM | Add.CoreStages.NORMALIZE,
         ),
-        # Without NORMALIZED one of nextpnr's seeds makes 99.3 MHz, from the normalizer into the result.
+        # Without NORMALIZED nextpnr makes 93.5 to 97.6 MHz.
         Add(
             F36,
             stage_core=Add.CoreStages.OPERANDS
@@ -93,7 +93,8 @@ CATALOG: dict[str, Block | CoreSpec] = {
             | Add.CoreStages.NORMALIZE
             | Add.CoreStages.NORMALIZED,
         ),
-        # Without DECODE nextpnr's seeds make 93.2 to 104.5 MHz, from the product into the ordered operands.
+        # Without PACK nextpnr makes 92.1 to 96.0 MHz and Diamond 95.0, from the normalizer's count through the rounding
+        # into the result; without SUM nextpnr's seeds make 97.0 to 99.0, from the sum into the count.
         Fma(
             F18,
             stage_core_mul=1,
@@ -101,12 +102,13 @@ CATALOG: dict[str, Block | CoreSpec] = {
             | Add.CoreStages.OPERANDS
             | Add.CoreStages.ALIGNED
             | Add.CoreStages.SUM
-            | Add.CoreStages.NORMALIZE,
+            | Add.CoreStages.NORMALIZE
+            | Add.CoreStages.PACK,
             wmultiplier=18,
         ),
-        # Without NORMALIZE_WIDE nextpnr's seeds make 94.9 to 102.9 MHz, Diamond 92.7, from the sum into the normalizer.
+        # Without PACK nextpnr's seeds make 96.5 to 100.8 MHz.
         Fma(F36, stage_output=1, stage_core_add=~Add.CoreStages.NORMALIZE_INPUT, **_FMA36),
-        # Without PACK nextpnr's seeds make 93.8 to 98.8 MHz, in the rounding into the result.
+        # Without PACK nextpnr makes 97.1 to 103.7 MHz and Diamond 97.8.
         Fma(F36, stage_input=1, stage_core_add=~Add.CoreStages.NORMALIZE_INPUT, **_FMA36),
         Divsqrt(F18),
         Divsqrt(F18, mode=0),
@@ -126,7 +128,8 @@ CATALOG: dict[str, Block | CoreSpec] = {
         # Unstaged, LSE puts the forcing of the result on the set/reset of its register, a slow net: one of Diamond's
         # placement cost tables makes 98.0 MHz, 99.3 on speed grade 7.
         MulIlog2(F36, wk=9, stage_core=MulIlog2.CoreStages.DECODE),
-        # The normalizer's middle alone makes 96.3, 94.3 and 92.3 MHz on Diamond, |a| into it; |a| alone, 66.9 to 76.5.
+        # Without ABS nextpnr makes 76.4 to 84.5 MHz at e6m18 and 95.0 to 99.8 at e8m36; without NORMALIZE 79.1 to
+        # 85.2 and 71.6 to 76.3.
         FromInt(F18, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
         FromInt(F18, stage_input=1, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
         FromInt(F36, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
@@ -141,7 +144,7 @@ CATALOG: dict[str, Block | CoreSpec] = {
         Rint(F36, wint=44, stage_core=Rint.CoreStages.MASK),
         # Without SUM Diamond makes 98.2 MHz, at stage_core_kernel=2 Vivado 150.04, under a 0.5% margin.
         Exp2(F18, stage_core_kernel=3, stage_core=Exp2.CoreStages.SUM, wmultiplier=18),
-        # Without ALIGN Diamond makes 93.6 and 90.9 MHz.
+        # Without ALIGN Diamond makes 87.3 to 94.4 MHz.
         Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
         Log2(
             F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.CoreStages.ALIGN, stage_output=1, wmultiplier=18
@@ -155,13 +158,23 @@ CATALOG: dict[str, Block | CoreSpec] = {
         ),
         # Without SUM Diamond makes 81.0 MHz.
         Exp2(F36, stage_core_kernel=3, stage_core=Exp2.CoreStages.SUM, wmultiplier=18),
-        # Without ALIGN Diamond makes 80.6 MHz.
-        Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
-        # Without NORMALIZE_INPUT Diamond makes 80.5 MHz.
-        Cordic(F18, mode=0, stage_core_mul=3, stage_core=_CORDIC_ROTATION, wmultiplier=18),
+        # Without SELECT one of nextpnr's seeds makes 99.5 MHz, from the packer's side inputs into the result, and
+        # stage_output=1 in its place 98.8, Diamond 97.7; without ALIGN Diamond makes 76.5 to 84.8.
+        Log2(
+            F36,
+            stage_core_kernel=3,
+            stage_core_mul=3,
+            stage_core=Log2.CoreStages.ALIGN | Log2.CoreStages.SELECT,
+            wmultiplier=18,
+        ),
+        # Without PACK nextpnr makes 88.4 to 93.6 MHz, from the normalizer's count into the result; at rotation_seed=1
+        # nextpnr's seeds make 95.9 to 100.8, from the reduced coordinate into the engine.
+        Cordic(
+            F18, mode=0, unroll100=100, stage_core_mul=3, stage_core=_CORDIC_ROTATION, rotation_seed=0, wmultiplier=18
+        ),
         # At stage_core_mul=2 Yosys makes 90.7 MHz in the length's product.
-        Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-        # Without NORMALIZE_INPUT nextpnr's seeds make 88.9 to 98.7 MHz and Diamond's cost tables 82.2 to 93.8.
+        Cordic(F18, mode=1, unroll100=100, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
+        # Without FOLDED nextpnr's seeds make 74.1 to 77.6 MHz, from the reduced coordinate into the engine.
         _large(
             Cordic(
                 F36,
@@ -172,17 +185,30 @@ CATALOG: dict[str, Block | CoreSpec] = {
                 wmultiplier=18,
             )
         ),
-        # Without ANGLE nextpnr's seeds make 82.1 to 85.3 MHz, in the normalizer.
-        _large(Cordic(F36, mode=1, unroll100=50, stage_core_mul=4, stage_core=_CORDIC_VECTORING, wmultiplier=18)),
-        # Without NORMALIZE_INPUT one of nextpnr's seeds makes 99.4 MHz, in the normalizer.
+        # Without ANGLE nextpnr's seeds make 72.7 to 76.5 MHz, from the division into the normalizer; without SHIFTED
+        # 62.1 to 68.6, from the ordered operands into the engine's load.
+        _large(
+            Cordic(
+                F36,
+                mode=1,
+                unroll100=50,
+                stage_core_mul=4,
+                stage_core=_CORDIC_VECTORING | Cordic.CoreStages.SHIFTED,
+                wmultiplier=18,
+            )
+        ),
+        # Without ANGLE nextpnr's seeds make 89.7 to 93.0 MHz, from the division into the angle; at vectoring_seed=1
+        # nextpnr makes 93.5 to 109.9, from the seed's iteration into the engine.
         _large(
             Cordic(
                 F36,
                 unroll100=50,
                 stage_core_mul=5,
-                stage_core=~Cordic.CoreStages.CORRECTIONS,
+                stage_core=~(Cordic.CoreStages.CORRECTIONS | Cordic.CoreStages.NORMALIZE_INPUT),
                 wmultiplier=18,
                 fast=True,
+                rotation_seed=1,
+                vectoring_seed=0,
             )
         ),
     )

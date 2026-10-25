@@ -1,4 +1,3 @@
-import re
 from typing import Any
 
 import numpy as np
@@ -16,7 +15,6 @@ from _operands import (
     raw_corners,
 )
 from zkf import Add, Zkf, ZkfFormat
-from zkf._shift import split_points
 
 # Operands and the sum, worked by hand at 8/24.
 BINARY32 = [
@@ -228,27 +226,17 @@ FORMATS = [
 ]
 
 
-def every(wman: int) -> Add.CoreStages:
-    """Every register that an adder of the significand's width has."""
-    return ~Add.CoreStages(0) if split_points(wman + 3) == 2 else ~Add.CoreStages.NORMALIZE_WIDE
-
-
-def alone(member: Add.CoreStages) -> Add.CoreStages:
-    """A register, with the one it needs."""
-    return member | Add.CoreStages.NORMALIZE if member is Add.CoreStages.NORMALIZE_WIDE else member
-
-
 @pytest.mark.parametrize("every_register", [False, True])
 @pytest.mark.parametrize("row", FORMATS, ids=str)
 def test_formats(row: tuple[int, int, int], every_register: bool) -> None:
-    run(*row, stage_core=every(row[1]) if every_register else Add.CoreStages(0))
+    run(*row, stage_core=~Add.CoreStages(0) if every_register else Add.CoreStages(0))
 
 
 @pytest.mark.parametrize(
     "knobs",
     [
         {"stage_input": 1},
-        {"stage_input": 2, "stage_core": every(4), "stage_output": 1},
+        {"stage_input": 2, "stage_core": ~Add.CoreStages(0), "stage_output": 1},
         {"stage_input": 3},
         {"stage_output": 2},
     ],
@@ -258,42 +246,20 @@ def test_stages(knobs: dict[str, Any]) -> None:
     run(3, 4, 0, **knobs)
 
 
-# Each register alone and all of them, below the width that NORMALIZE_WIDE needs and above it.
+# Each register alone and all of them, at a normalizer of two levels and of three.
 @pytest.mark.parametrize(
-    "wman, stage_core",
-    [
-        (wman, core)
-        for wman in (6, 18)
-        for core in (*(alone(m) for m in Add.CoreStages if m in every(wman)), every(wman))
-    ],
-    ids=str,
+    "wman, stage_core", [(wman, core) for wman in (6, 18) for core in (*Add.CoreStages, ~Add.CoreStages(0))], ids=str
 )
 def test_registers(wman: int, stage_core: Add.CoreStages) -> None:
     run(4, wman, 256, stage_core=stage_core)
 
 
-# Every set of registers that an adder of three normalizer levels takes, 768 of them, at its narrowest width.
+# Every set of registers, at the narrowest width of three normalizer levels.
 @pytest.mark.deep
 @pytest.mark.parametrize("shard", range(16))
 def test_every_set(shard: int) -> None:
-    sets = [Add.CoreStages(bits) for bits in range(1 << len(Add.CoreStages))]
-    legal = [core for core in sets if Add.CoreStages.NORMALIZE_WIDE not in core or Add.CoreStages.NORMALIZE in core]
-    assert len(legal) == 768
-    for core in legal[shard::16]:
-        run(4, 14, 48, stage_core=core)
-
-
-def test_refusals() -> None:
-    for fmt, core, message in (
-        (
-            ZkfFormat(6, 18),
-            Add.CoreStages.SUM | Add.CoreStages.NORMALIZE_WIDE,
-            "NORMALIZE_WIDE needs NORMALIZE; set both",
-        ),
-        (ZkfFormat(4, 6), every(18), "a 9-bit normalizer has two levels; leave NORMALIZE_WIDE out"),
-    ):
-        with pytest.raises(ValueError, match=re.escape(f"stage_core={core}: {message}")):
-            Add(fmt, stage_core=core)
+    for bits in range(shard, 1 << len(Add.CoreStages), 16):
+        run(4, 14, 48, stage_core=Add.CoreStages(bits))
 
 
 # Wider, with every register; a significand of 100 bits.
@@ -301,7 +267,7 @@ def test_refusals() -> None:
     "row",
     [
         (8, 18, 256, {"stage_input": 2}),
-        (8, 36, 768, {"stage_core": every(36)}),
+        (8, 36, 768, {"stage_core": ~Add.CoreStages(0)}),
         (6, 100, None, {}),
     ],
     ids=str,
@@ -339,7 +305,7 @@ DEEP = [
         Add.CoreStages(0),
         Add.CoreStages.SUM | Add.CoreStages.NORMALIZED,
         Add.CoreStages.DECODE | Add.CoreStages.ALIGN | Add.CoreStages.NORMALIZE | Add.CoreStages.PACK,
-        ~Add.CoreStages.NORMALIZE_WIDE,
+        ~Add.CoreStages(0),
     ],
     ids=str,
 )

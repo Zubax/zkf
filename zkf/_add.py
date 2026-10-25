@@ -8,19 +8,13 @@ from amaranth.utils import ceil_log2
 
 from ._block import FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe
 from ._pack import Pack
-from ._shift import Normshift, RshiftSticky, split_points
+from ._shift import Normshift, RshiftSticky
 from ._value import Zkf, ZkfFormat
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class Add(Operator):
-    """
-    `y = a + b`; `a - b` with the sign bit of `b` flipped.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `Add.CoreStages` that are built.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
-    """
+    """`y = a + b`; `a - b` with the sign bit of `b` flipped."""
 
     class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
@@ -36,19 +30,18 @@ class Add(Operator):
         SUM = enum.auto()
         """The raw sum or difference."""
         NORMALIZE_INPUT = enum.auto()
-        """The raw sum or difference with the zero-detects of the normalizer's widest level, ahead of its shift."""
-        NORMALIZE_WIDE = enum.auto()
-        """Behind the normalizer's widest level, where it has three levels or more; it needs `NORMALIZE`."""
+        """The raw sum or difference with the exponent and the sticky of what the normalizer carries beside it."""
         NORMALIZE = enum.auto()
-        """The middle of the normalizer."""
+        """The sum or difference with that count, ahead of the normalizer's shift."""
         NORMALIZED = enum.auto()
         """The sum or the normalized difference."""
         PACK = enum.auto()
-        """The packer's input."""
+        """The packer's input: the class and exponent of the result, decided ahead of it, and the significand."""
 
     operator = "add"
     stage_input: int = 0
     stage_core: CoreStages = CoreStages(0)
+    """See `Add.CoreStages`."""
     stage_output: int = 0
 
     def __post_init__(self) -> None:
@@ -57,7 +50,6 @@ class Add(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
-        check_core("stage_core", self.stage_core, self.fmt.wman)
 
     @property
     def timing(self) -> Timing:
@@ -82,15 +74,6 @@ class Add(Operator):
         if b.is_inf:
             return fmt.inf(b.negative)
         return fmt.encode(a.to_fraction() + b.to_fraction())
-
-
-def check_core(knob: str, stages: Add.CoreStages, wsig: int) -> None:
-    """Refuses, as `knob`, what an adder of `wsig`-bit magnitudes cannot build, saying what to set."""
-    if Add.CoreStages.NORMALIZE_WIDE in stages:
-        if split_points(wsig + 3) < 2:
-            raise ValueError(f"{knob}={stages}: a {wsig + 3}-bit normalizer has two levels; leave NORMALIZE_WIDE out")
-        if Add.CoreStages.NORMALIZE not in stages:
-            raise ValueError(f"{knob}={stages}: NORMALIZE_WIDE needs NORMALIZE; set both")
 
 
 class AddCore(wiring.Component):
@@ -220,7 +203,7 @@ class AddCore(wiring.Component):
         m.submodules.normalize = normalize = Normshift(
             w,
             stage_input=on[Add.CoreStages.NORMALIZE_INPUT],
-            stage_split=on[Add.CoreStages.NORMALIZE] + on[Add.CoreStages.NORMALIZE_WIDE],
+            stage_split=on[Add.CoreStages.NORMALIZE],
             sideband=rounded,
         )
         m.d.comb += normalize.in_valid.eq(s2_valid)
@@ -259,6 +242,7 @@ class AddCore(wiring.Component):
             exp_is_biased=True,
             stage_input=on[Add.CoreStages.PACK],
             stage_output=self._stage_output,
+            classify_ahead=True,
         )
         m.d.comb += pack.in_valid.eq(s3_valid)
         m.d.comb += pack.sign.eq(s3.r.sign)

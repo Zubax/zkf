@@ -1,3 +1,4 @@
+import re
 from dataclasses import replace
 from collections.abc import Callable
 from typing import Any
@@ -55,24 +56,42 @@ MODELS: tuple[type[Block], ...] = (
 def test_names() -> None:
     f = ZkfFormat(7, 18)
     add = Add(f, stage_input=1, stage_core=Add.CoreStages.PACK | Add.CoreStages.SUM, stage_output=2)
-    assert add.name == "zkf_add_e7m18_input1_core_sum_pack_output2_latency5"
-    mul = Mul(F36, stage_core_mul=3, wmultiplier=18)
-    assert mul.name == "zkf_mul_e8m36_input0_core_mul3_output0_wmultiplier18_latency3"
-    assert Pipe(w=24, n=4).name == "zkf_pipe_w24_n4_latency4"
-    assert MulIlog2(F18).name == "zkf_mul_ilog2_e6m18_wk7_input0_core_none_output0_latency0"
-    assert Resize(F18, fmt_in=ZkfFormat(8, 36)).name == "zkf_resize_e6m18_e8m36_input0_output0_latency0"
-    both = Cordic(F36, stage_core_mul=3, wmultiplier=18)
-    assert both.name.endswith("_mode2_fast0_latency_rotation24_latency_vectoring43")
-    assert "_unroll100_100_" in both.name
-    assert Cordic(F36, stage_core_mul=3, wmultiplier=18, mode=1).name.endswith("_mode1_fast0_latency43")
+    assert re.fullmatch(r"zkf_add_[0-9a-f]{12}", add.name)
     assert Add(f, stage_input=True).name == Add(f, stage_input=1).name  # equal configurations, one name
+    assert add.name != Add(f, stage_input=1, stage_core=Add.CoreStages.PACK, stage_output=2).name
+    assert add.compile().splitlines()[1:8] == [
+        "// add:",
+        "//   fmt: e7m18",
+        "//   stage_input: 1",
+        "//   stage_core: CoreStages.SUM|PACK",
+        "//   stage_output: 2",
+        "//   timing: Timing(latency=5, initiation_interval=1)",
+        f"module {add.name}(clk, rst, in_valid, a, b, out_valid, y);",
+    ]
+    both = Cordic(F36, stage_core_mul=3, wmultiplier=18).compile().splitlines()
+    timing = (
+        "//   timing: {0: Timing(latency=17, initiation_interval=17), 1: Timing(latency=34, initiation_interval=34)}"
+    )
+    assert "//   unroll100: 200" in both and timing in both
+
+
+def test_a_latency_renames(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A version that gives the knobs another latency gives the module another name."""
+    add = Add(ZkfFormat(7, 18))
+    before, later = add.name, Timing(add.timing.latency + 1, 1)
+    monkeypatch.setattr(Add, "timing", property(lambda self: later))
+    assert add.name != before
 
 
 def test_the_top_of_the_text() -> None:
     """The ports of the signature, a signed one declared so, behind `clk` and `rst` where the model is clocked."""
-    pipe = "my_zkf_pipe_w1_n0_latency0"
-    assert Pipe(w=1).compile("my_").splitlines()[:8] == [
+    pipe = "my_" + Pipe(w=1).name
+    assert Pipe(w=1).compile("my_").splitlines()[:12] == [
         f"// Produced by ZKF {zkf.__version__}, author: Zubax Robotics",
+        "// pipe:",
+        "//   w: 1",
+        "//   n: 0",
+        "//   timing: Timing(latency=0, initiation_interval=1)",
         f"module {pipe}(in_valid, x, out_valid, y);",
         "  input wire in_valid;",
         "  input wire x;",
@@ -81,8 +100,9 @@ def test_the_top_of_the_text() -> None:
         f"  {pipe}_core core (.in_valid(in_valid), .x(x), .out_valid(out_valid), .y(y));",
         "endmodule",
     ]
-    assert MulIlog2(ZkfFormat(3, 4), stage_output=1).compile("my_").splitlines()[1:10] == [
-        "module my_zkf_mul_ilog2_e3m4_wk4_input0_core_none_output1_latency1(clk, rst, in_valid, a, k, out_valid, y);",
+    mul_ilog2 = "my_" + MulIlog2(ZkfFormat(3, 4), stage_output=1).name
+    assert MulIlog2(ZkfFormat(3, 4), stage_output=1).compile("my_").splitlines()[8:17] == [
+        f"module {mul_ilog2}(clk, rst, in_valid, a, k, out_valid, y);",
         "  input wire clk;",
         "  input wire rst;",
         "  input wire in_valid;",
@@ -90,7 +110,7 @@ def test_the_top_of_the_text() -> None:
         "  input wire signed [3:0] k;",
         "  output wire out_valid;",
         "  output wire [6:0] y;",
-        "  my_zkf_mul_ilog2_e3m4_wk4_input0_core_none_output1_latency1_core core "
+        f"  {mul_ilog2}_core core "
         "(.clk(clk), .rst(rst), .in_valid(in_valid), .a(a), .k(k), .out_valid(out_valid), .y(y));",
     ]
     assert "  output wire signed [3:0] y;" in Ilog2(ZkfFormat(3, 4), wint=4).compile().splitlines()
@@ -107,8 +127,6 @@ def test_names_are_distinct() -> None:
                     # Every value of the sweep is taken but a product's own refusals and a nested register alone.
                     assert cls in (Add, Mul, Fma, Cordic, Exp2, Log2), knobs
                     continue
-                if isinstance(model.timing, Timing):
-                    assert model.name.endswith(f"_latency{model.timing.latency}")
                 assert seen.setdefault(model.name, model) == model
 
 
@@ -150,15 +168,12 @@ def test_a_negative_count_of_stages_is_refused() -> None:
 
 def test_refusals() -> None:
     knobs: tuple[Callable[[], Block], ...] = (
-        lambda: Add(F18, stage_core=Add.CoreStages.NORMALIZE_WIDE),
-        lambda: Add(ZkfFormat(4, 6), stage_core=Add.CoreStages.NORMALIZE | Add.CoreStages.NORMALIZE_WIDE),
         lambda: Mul(F18, wmultiplier=18, stage_core_mul=4),
         lambda: Mul(F18, wmultiplier=18, stage_core_mul=-1),
         lambda: Mul(F36, wmultiplier=18, stage_core_mul=1),
         lambda: Mul(F36, wmultiplier=18, stage_core_mul=5),
         lambda: Mul(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=2),
         lambda: Fma(F36, wmultiplier=18, stage_core_mul=1),
-        lambda: Fma(F18, wmultiplier=18, stage_core_add=Add.CoreStages.NORMALIZE_WIDE),
         lambda: Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
         lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, unroll100=75),
         lambda: Exp2(F18, wmultiplier=18),

@@ -1,6 +1,7 @@
 """The configuration base classes, the float port layout, and the register-stage helpers."""
 
 import enum
+import hashlib
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
@@ -81,8 +82,6 @@ class Block(ABC):
     """
 
     operator: ClassVar[str]
-    modes: ClassVar[Mapping[int, str]] = {}
-    """The mode names of an operator whose timing depends on the mode; they label its latencies in `name`."""
 
     def __post_init__(self) -> None:
         """Refuses a set of registers of another type."""
@@ -105,26 +104,14 @@ class Block(ABC):
     @property
     def name(self) -> str:
         """
-        The Verilog module name. It states the whole configuration and the latency, so distinct configurations never
-        share a name; attributes are no part of it, so two texts of one name can differ by them (`compile(prefix)`
-        tells such modules apart). A set of registers is spelled by its members in their order, or `none`.
+        The Verilog module name: the operator and a digest of `config` and the latency, so distinct configurations never
+        share a name, nor does one whose latency changes, at a length that vendor tools take; attributes are no part of
+        it, so two texts of one name can differ by them (`compile(prefix)` tells such modules apart).
         """
-
-        def spelled(knob: str, value: object) -> str:
-            short = knob.removeprefix("stage_")
-            if isinstance(value, enum.Flag):
-                return f"_{short}_{'_'.join(str(member.name).lower() for member in value) or 'none'}"
-            if isinstance(value, int):
-                return f"_{short}{'_' if knob[-1].isdigit() else ''}{int(value)}"
-            return f"_{value}"
-
-        knobs = "".join(spelled(knob, value) for knob, value in self.config.items())
-        timing = self.timing
-        if isinstance(timing, Timing):
-            latency = f"_latency{timing.latency}"
-        else:
-            latency = "".join(f"_latency_{self.modes[mode]}{t.latency}" for mode, t in timing.items())
-        return f"zkf_{self.operator}{knobs}{latency}"
+        # `True` and 1 are one knob value.
+        knobs = [(knob, int(value) if isinstance(value, bool) else value) for knob, value in self.config.items()]
+        digest = hashlib.sha256(str((self.operator, knobs, self.timing)).encode()).hexdigest()
+        return f"zkf_{self.operator}_{digest[:12]}"
 
     @property
     @abstractmethod
@@ -166,9 +153,9 @@ class Block(ABC):
     def compile(self, prefix: str = "") -> str:
         """
         Verilog of this configuration and every module under it, each named `prefix + self.name` or prefixed by it,
-        headed by a line naming ZKF, its version and its author. The top module has the ports of `signature` in order,
-        after `clk` and `rst` if `clocked`, with signed ports declared signed, which Amaranth cannot do; it wraps the
-        Amaranth output as the instance `core`.
+        headed by a line naming ZKF, its version and its author, and a table of the knobs and the timing. The top
+        module has the ports of `signature` in order, after `clk` and `rst` if `clocked`, with signed ports declared
+        signed, which Amaranth cannot do; it wraps the Amaranth output as the instance `core`.
         """
         from . import __version__
 
@@ -180,6 +167,9 @@ class Block(ABC):
             ports.append((port, kind + f" [{shape.width - 1}:0]" * (shape.width > 1)))
         top = [
             f"// Produced by ZKF {__version__}, author: Zubax Robotics",
+            f"// {self.operator}:",
+            *(f"//   {knob}: {value}" for knob, value in self.config.items()),
+            f"//   timing: {self.timing}",
             f"module {name}({', '.join(port for port, _ in ports)});",
         ]
         top += [f"  {kind} {port};" for port, kind in ports]
@@ -190,7 +180,10 @@ class Block(ABC):
 
 @dataclass(frozen=True, eq=False)
 class Operator(Block):
-    """An operator on floats of the format `fmt`, which `Resize` converts to from another."""
+    """
+    An operator on floats of the format `fmt`, which `Resize` converts to from another. Its `stage_input` and
+    `stage_output` are register stages at its ports; where >0, no combinational path is exposed at that port.
+    """
 
     fmt: ZkfFormat
 

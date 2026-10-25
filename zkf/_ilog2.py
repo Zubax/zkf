@@ -21,9 +21,6 @@ class Ilog2(Operator):
     """
     `y = exp - bias`, the exponent field unbiased, as a signed `wint`-bit integer: `-bias` for a zero and `bias + 1` for
     an infinity, which `zero` and `infinity` flag. `negative` is the sign bit, also of a zero; the fraction is not read.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
     operator = "ilog2"

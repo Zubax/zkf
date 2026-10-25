@@ -19,9 +19,6 @@ class AbsNeg(Operator):
     """
     `absolute = |x|` and `negated = -x`, by clearing and flipping the sign bit; not canonicalized, so `-(+0)` is a zero
     with the sign bit set.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
     operator = "absneg"

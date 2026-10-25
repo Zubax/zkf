@@ -16,10 +16,6 @@ class MulIlog2(Operator):
     `y = a * 2**k` (ldexp) for a signed `wk`-bit `k`, exact within the normal range. Any `k` is legal: a result above
     the range gives `+-inf`, one below it +0 or `+-min_normal`. The default `wk`, WEXP + 1, spans every shift that keeps
     some input in range.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `MulIlog2.CoreStages` that are built.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
     class CoreStages(enum.Flag):
@@ -32,6 +28,7 @@ class MulIlog2(Operator):
     wk: int | None = None
     stage_input: int = 0
     stage_core: CoreStages = CoreStages(0)
+    """See `MulIlog2.CoreStages`."""
     stage_output: int = 0
 
     def __post_init__(self) -> None:

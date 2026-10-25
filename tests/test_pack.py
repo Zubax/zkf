@@ -132,6 +132,7 @@ def run(wexp: int, wman: int, wexp_unbiased: int, count: int = 0, **options: int
         saturate_round_carry=saturate_round_carry,
         stage_input=options.get("stage_input", 0),
         stage_output=options.get("stage_output", 0),
+        classify_ahead=bool(options.get("classify_ahead")),
     )
     run_pipeline(dut, options.get("stage_input", 0) + options.get("stage_output", 0), cases)
 
@@ -150,14 +151,19 @@ ROWS = [
 
 
 @pytest.mark.parametrize("row", ROWS, ids=str)
-def test_pack(row: tuple[int, int, int, int]) -> None:
-    run(*row)
+@pytest.mark.parametrize("ahead", [{}, {"classify_ahead": 1, "stage_input": 1}], ids=str)
+def test_pack(row: tuple[int, int, int, int], ahead: dict[str, int]) -> None:
+    run(*row, **ahead)
 
 
 @pytest.mark.parametrize("stage_input", [0, 1])
 @pytest.mark.parametrize("stage_output", [0, 1])
 @pytest.mark.parametrize(
-    "options", [{}, {"exp_is_biased": 1}, {"saturate_round_carry": 1}, {"assume_no_overflow": 1}], ids=str
+    "options",
+    [{}, {"exp_is_biased": 1}, {"saturate_round_carry": 1}, {"assume_no_overflow": 1}, {"classify_ahead": 1}]
+    + [{"classify_ahead": 1, "saturate_round_carry": 1}, {"classify_ahead": 1, "exp_is_biased": 1}]
+    + [{"classify_ahead": 1, "assume_no_overflow": 1}],
+    ids=str,
 )
 def test_pack_stages(stage_input: int, stage_output: int, options: dict[str, int]) -> None:
     run(3, 4, 5, stage_input=stage_input, stage_output=stage_output, **options)

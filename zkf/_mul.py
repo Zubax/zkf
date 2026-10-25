@@ -12,21 +12,18 @@ from ._value import Zkf
 
 @dataclass(frozen=True, kw_only=True, eq=False)
 class Mul(Operator):
-    """
-    `y = a * b`.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core_mul`: the product's registers, taken in this order: its output, its operands' capture, the grid of its
-    products (a lone multiplier's pipeline register), then the levels of the grid's sum.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
-    `wmultiplier`: the operand width of the target's multipliers.
-    """
+    """`y = a * b`."""
 
     operator = "mul"
     stage_input: int = 0
     stage_core_mul: int = 0
+    """
+    Taken in this order: the output, the operands' capture, the grid of products (a lone multiplier's pipeline
+    register), then the levels of the grid's sum.
+    """
     stage_output: int = 0
     wmultiplier: int
+    """The operand width of the target's multipliers."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
     """
     On the last input stage at `stage_core_mul=1`, which the multiplier takes the operands from; from 2 on, on the

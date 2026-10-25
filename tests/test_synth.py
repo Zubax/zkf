@@ -47,7 +47,7 @@ def test_synth(
     if absent:
         pytest.skip(f"not on the path: {', '.join(absent)}")
     design = Design(name, CATALOG[name], large=name in ECP5_LARGE, faster=name in ECP5_FASTER)
-    directory = BUILD / flow / design.key
+    directory = BUILD / flow / design.name
     placed = {"part": part(design)}
     try:
         row = synthesize(design, directory) | placed

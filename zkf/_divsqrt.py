@@ -33,10 +33,6 @@ class Divsqrt(Operator):
     subtractions, unless `FIRST_DIGIT` gives it a stage of its own; at odd WMAN the divider ends in one radix-8 step
     instead. No significand is a tie or rounds up to 2, so the last digit is decided by compares alone, and the
     rounding selects the digits so far or one more.
-
-    `stage_input`: input register stages; where >0, no combinational path is exposed at the input.
-    `stage_core`: the registers of `Divsqrt.CoreStages` that are built; the other digits have a stage each, fixed.
-    `stage_output`: output register stages; where >0, no combinational path is exposed at the output.
     """
 
     class CoreStages(enum.Flag):
@@ -48,6 +44,7 @@ class Divsqrt(Operator):
     operator = "divsqrt"
     stage_input: int = 0
     stage_core: CoreStages = CoreStages(0)
+    """See `Divsqrt.CoreStages`; the other digits have a stage each, fixed."""
     stage_output: int = 0
     mode: int = 2
 
