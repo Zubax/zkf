@@ -10,7 +10,6 @@ from _harness import FREQ_MHZ, Design, Row, Sources, run
 
 TOOLS = ("diamond",)
 DEVICE, LARGE_DEVICE = "LFE5U-12F-{grade}BG381C", "LFE5U-45F-{grade}BG381C"
-SPEED_GRADE, FASTER_GRADE = 6, 7
 ROUTE_PASSES = 3
 PAR_EFFORT = 3
 ROUTER = "NBR"
@@ -22,7 +21,7 @@ spec's directory already names it."""
 
 
 def part(design: Design) -> str:
-    return (LARGE_DEVICE if design.large else DEVICE).format(grade=FASTER_GRADE if design.faster else SPEED_GRADE)
+    return (LARGE_DEVICE if design.large else DEVICE).format(grade=design.ecp5_grade)
 
 
 def xml_attr(text: str) -> str:
@@ -56,7 +55,7 @@ def strategy() -> str:
         "PROP_LST_OptimizeGoal": "Timing",
         "PROP_LST_PropagatConst": "True",
         "PROP_LST_RAMStyle": "Auto",
-        "PROP_LST_ROMStyle": "EBR",
+        "PROP_LST_ROMStyle": "Auto",
         "PROP_LST_RemoveDupRegs": "True",
         "PROP_LST_ResourceShare": "True",
         "PROP_LST_UseIOReg": "Auto",

@@ -7,16 +7,19 @@ from pathlib import Path
 from _harness import Design, Row, run
 
 TOOLS = ("vivado",)
-PART = "xc7a100tcsg324-1"
-"""The slowest speed grade."""
+PART = "xc7a100tcsg324-{grade}"
 FREQ_MHZ = 150.0
 TIMEOUT_S = 3600
+
+
+def part(design: Design) -> str:
+    return PART.format(grade=design.artix7_grade)
 
 
 def tcl(design: Design, rtl: Path, harness: Path, xdc: Path) -> str:
     return f"""read_verilog {{{rtl}}} {{{harness}}}
 read_xdc {{{xdc}}}
-synth_design -top {design.top} -part {PART} -mode out_of_context
+synth_design -top {design.top} -part {part(design)} -mode out_of_context
 opt_design
 place_design
 route_design

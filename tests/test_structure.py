@@ -195,13 +195,9 @@ def test_lint(linter: str, tmp_path: Path) -> None:
     for cls, fmt, fixed in MODELS:
         swept = list(models(cls, fmt, fixed, every_pair=False))
         texts += [model.compile() for model in {swept[at].name: swept[at] for at in (0, len(swept) // 2, -1)}.values()]
-    # What the ends of its sweep do not have: half a rate, where a sign is replayed, and one iteration a cycle, where
-    # the angle's product starts ahead.
-    for mode, rate in product((0, 1, 2), (50, 100)):
-        every = ~_LACKED[mode]
-        staged = make(
-            Cordic, ZkfFormat(5, 17), wmultiplier=18, mode=mode, unroll100=rate, stage_core_mul=3, stage_core=every
-        )
+    # What the points above lack: every stage at once, in each mode.
+    for mode in (0, 1, 2):
+        staged = make(Cordic, ZkfFormat(5, 17), wmultiplier=18, mode=mode, stage_core_mul=3, stage_core=~_LACKED[mode])
         texts.append(staged.compile())
     for index, text in enumerate(texts):
         path = tmp_path / f"blob{index}.v"

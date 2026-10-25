@@ -273,19 +273,14 @@ def utilization(nextpnr_log: str, report: Report, util_resources: tuple[str, ...
 
 ECP5_DEVICE, ECP5_LARGE_DEVICE = "LFE5U-12F", "LFE5U-45F"
 ECP5_PACKAGE = "CABGA381"
-ECP5_SPEED_GRADE, ECP5_FASTER_GRADE = "6", "7"
 
 
 def ecp5_device(design: Design) -> str:
     return ECP5_LARGE_DEVICE if design.large else ECP5_DEVICE
 
 
-def ecp5_grade(design: Design) -> str:
-    return ECP5_FASTER_GRADE if design.faster else ECP5_SPEED_GRADE
-
-
 def ecp5_part(design: Design) -> str:
-    return f"{ecp5_device(design)}-{ecp5_grade(design)}"
+    return f"{ecp5_device(design)}-{design.ecp5_grade}"
 
 
 def ecp5_args(design: Design, netlist: Path, report: Path) -> list[str | Path]:
@@ -294,7 +289,7 @@ def ecp5_args(design: Design, netlist: Path, report: Path) -> list[str | Path]:
         "--package",
         ECP5_PACKAGE,
         "--speed",
-        ecp5_grade(design),
+        str(design.ecp5_grade),
         "--freq",
         f"{FREQ_MHZ:g}",
         "--timing-allow-fail",

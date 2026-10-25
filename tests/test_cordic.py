@@ -1,4 +1,5 @@
 import re
+from dataclasses import replace
 from functools import reduce
 from operator import or_
 from typing import Any
@@ -13,7 +14,7 @@ from _operands import SEED
 from amaranth.sim import Simulator
 from zkf import Timing, UnsupportedFormat, ZkfFormat
 
-from zkf._cordic import _GUARD_ZF, _LACKED, _ROTATION, _SEED, _VECTORING, Cordic, _constants, _Engine, _Seed
+from zkf._cordic import _GUARD_ZF, _LACKED, _ROTATION, _SEED, _VECTORING, Cordic, _ahead, _constants, _Engine, _Seed
 from zkf._value import bits_to_signed
 
 CoreStages = Cordic.CoreStages
@@ -26,25 +27,14 @@ ROTATIONS = [(3, 16, 512), (5, 16, 512), (8, 24, 1024), (8, 32, 768), (11, 53, 3
 # the difference of the exponents is short.
 VECTORINGS = [(6, 18, 1536), (8, 24, 1024), (8, 36, 768), (11, 53, 384), (5, 16, 512), (5, 53, 384)]
 # The knobs at 5/16 unless a row has a format, where they change no result; of both modes unless it has one; the
-# product's count the fewest unless a row has one. Half a rate with the recurrence of `z` ahead, several iterations a
-# cycle with a last group that is not whole, the product from none of its registers at a width where it is one
+# product's count the fewest unless a row has one. The product from none of its registers at a width where it is one
 # multiplier to the pairs of rows of a grid on narrower multipliers, the registers of the rest one by one and all, the
-# second packer, the seeds off and in part, and products as long as the iterations that the seed leaves and longer.
+# second packer, the seeds off and in part, and a product as long as the iterations that the seed leaves.
 KNOBS: list[dict[str, Any]] = [
-    {"un": 50},
-    {"un": 100},
-    {"un": 100, "mode": 1},
-    {"un": 200, "wexp": 6, "wman": 18},
-    {"un": 100, "wexp": 6, "wman": 18, "mode": 2},
+    {"wexp": 6, "wman": 18},
     {"rs": 0},
     {"rs": 1},
-    {"un": 100, "rs": 1, "mode": 0},
-    {"un": 50, "rs": 0, "mode": 0},
-    {"un": 50, "rs": 1, "vs": 0},
-    {"un": 50, "vs": 0, "mode": 1},
-    {"un": 100, "sm": 6, "wm": 9, "mode": 2},
-    {"un": 50, "sm": 5, "wm": 8, "mode": 0},
-    {"un": 50, "sm": 6, "wm": 8, "mode": 0},
+    {"sm": 6, "wm": 9, "mode": 2},
     {"si": 1},
     {"so": 1},
     {"si": 1, "so": 1},
@@ -52,21 +42,18 @@ KNOBS: list[dict[str, Any]] = [
     {"so": 3},
     {"sm": 0, "wm": 32},
     {"sm": 1, "wm": 32},
-    {"sm": 0, "un": 50, "wm": 32, "mode": 0},
     {"sm": 3},
     {"sm": 4, "mode": 2},
     {"sm": 4, "wm": 10},
     {"sm": 5, "wm": 10, "mode": 2},
     {"sm": 3, "wm": 16, "mode": 1},
     {"sm": 4, "wm": 16, "mode": 2},
-    {"un": 50, "sm": 3, "mode": 0},
-    {"un": 50, "sm": 4, "mode": 0},
-    {"un": 50, "sm": 4, "wm": 16, "mode": 2},
-    {"un": 50, "sm": 3, "wexp": 6, "wman": 18, "mode": 1},
+    {"sm": 4, "mode": 0},
+    {"sm": 5, "wm": 9, "mode": 0},
+    {"sm": 3, "wexp": 6, "wman": 18, "mode": 1},
     *({"sc": member, "mode": mode} for mode in (0, 1, 2) for member in ~_LACKED[mode]),
     *({"sc": ~_LACKED[mode], "sm": 0, "wm": 32, "mode": mode} for mode in (0, 1, 2)),
     {"sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE, "sm": 4, "wm": 10, "mode": 0},
-    {"sc": ~_LACKED[1], "un": 50, "mode": 1},
     {"si": 1, "sm": 3, "sc": SHARED | CoreStages.TAKEN | CoreStages.ORDERED, "so": 1, "mode": 1},
     {
         "si": 1,
@@ -80,25 +67,25 @@ KNOBS: list[dict[str, Any]] = [
         "so": 1,
         "mode": 2,
     },
-    {"si": 1, "un": 50, "sm": 4, "sc": ~CoreStages(0), "so": 2, "mode": 2},
+    {"si": 1, "sm": 4, "sc": ~CoreStages(0), "so": 2, "mode": 2},
     {"fa": True, "mode": 0},
-    {"fa": True, "un": 50, "sm": 4, "mode": 2},
+    {"fa": True, "sm": 4, "mode": 2},
     {"fa": True, "si": 1, "sm": 0, "wm": 32, "sc": ~_LACKED[0], "so": 2, "mode": 0},
-    {"fa": True, "un": 200, "sc": ~_LACKED[2], "mode": 2},
+    {"fa": True, "sc": ~_LACKED[2], "mode": 2},
     {"fa": True, "sc": ~_LACKED[2] & ~CoreStages.CORRECTIONS, "mode": 2},
 ]
 # In a rotation at 5/18 the sine reaches the packer's underflow, the bias being below the fraction; at 8/48 the
 # width of what the modes share crosses a power of two; 4 is an exponent that a rotation alone takes; and the second
 # packer at a catalog width.
-BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {"un": 50}), (11, 53, {}), (4, 16, {"mode": 0}), (8, 36, {"fa": True})]
+BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {}), (11, 53, {}), (4, 16, {"mode": 0}), (8, 36, {"fa": True})]
 
 
 # The deep tier: the formats of the default one and others at more operands, under the knobs one by one.
-DEEP_KNOBS: list[dict[str, Any]] = [{}, {"un": 50}, {"un": 100}, {"rs": 1}, {"sm": 3}, {"sm": 4}, {"sm": 4, "wm": 10}]
+DEEP_KNOBS: list[dict[str, Any]] = [{}, {"rs": 1}, {"sm": 3}, {"sm": 4}, {"sm": 4, "wm": 10}]
 DEEP_KNOBS += [
     {"si": 1, "so": 1, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK}
 ]
-DEEP_KNOBS += [{"un": 50, "sm": 4}, {"sc": ~_LACKED[0]}]
+DEEP_KNOBS += [{"sc": ~_LACKED[0]}]
 DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     *((3, 16, 512, {"mode": 0} | knobs) for knobs in DEEP_KNOBS),
     *((6, 16, 512, {"mode": 0} | knobs) for knobs in DEEP_KNOBS),
@@ -107,15 +94,12 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     *((14, 16, 128, {"mode": 0} | knobs) for knobs in DEEP_KNOBS),
     (3, 16, 4000, {"mode": 0}),
     (5, 16, 4000, {"mode": 0}),
-    (5, 16, 4000, {"mode": 0, "un": 100}),
     (5, 16, 4000, {"mode": 0, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE}),
-    (5, 16, 4000, {"mode": 0, "un": 50}),
     (5, 16, 2000, {"mode": 0, "sm": 0, "wm": 32}),
     (5, 16, 512, {"mode": 0, "sc": ~_LACKED[0]}),
     (5, 16, 1000, {"sm": 1, "wm": 32}),
     (8, 24, 768, {"mode": 0}),
     *((wexp, wman, count, {"mode": 2}) for wexp, wman, count in VECTORINGS[:4]),
-    *((5, 16, 512, {"mode": 1, "un": u}) for u in (50, 100)),
     (
         5,
         16,
@@ -125,11 +109,10 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (5, 16, 512, {"mode": 1, "sc": ~_LACKED[1]}),
     (5, 16, 4000, {"mode": 1}),
     (5, 16, "directed", {"mode": 1}),
-    (5, 16, 2000, {"mode": 1, "un": 200}),
-    (6, 18, 2000, {"mode": 1, "un": 100}),
+    (6, 18, 2000, {"mode": 1}),
     (5, 16, 2000, {"mode": 1, "sc": CoreStages.ORDERED | CoreStages.NORMALIZE}),
     (5, 16, 2000, {"mode": 1, "sm": 0, "wm": 32}),
-    (5, 16, 512, {"un": 50}),
+    (5, 16, 512, {}),
     (8, 36, 2048, {"mode": 1} | synthesized(36, 1)),
 ]
 
@@ -189,8 +172,8 @@ def test_catalog(model: Cordic) -> None:
 
 def subsets(seed: int = SEED) -> list[dict[str, Any]]:
     """
-    Random sets of the registers that a mode builds, the most of both modes, each at a rate of its own; and every third
-    with a rotation again with two packers.
+    Random sets of the registers that a mode builds, the most of both modes; and every third with a rotation again with
+    two packers.
     """
     rng = np.random.default_rng(seed)
     out: list[dict[str, Any]] = []
@@ -198,7 +181,7 @@ def subsets(seed: int = SEED) -> list[dict[str, Any]]:
         members = list(~_LACKED[mode])
         for _ in range(count):
             taken = [member for member, coin in zip(members, rng.integers(0, 2, len(members))) if coin]
-            out.append({"sc": reduce(or_, taken, CoreStages(0)), "un": int(rng.choice([50, 100, 200])), "mode": mode})
+            out.append({"sc": reduce(or_, taken, CoreStages(0)), "mode": mode})
     return out + [row | {"fa": True} for row in out[::3] if row["mode"] != 1]
 
 
@@ -238,9 +221,17 @@ def test_every_width_of_a_mode(wman: int, mode: int) -> None:
     run(8, wman, "directed", mode=mode, **synthesized(wman, mode))
 
 
-@pytest.mark.parametrize(
-    "stages", [{}, {"un": 50, "sm": 3, "sc": ~CoreStages(0), "so": 2}, {"un": 200, "si": 1}], ids=str
-)
+@pytest.mark.parametrize("mode", [0, 1, 2])
+def test_the_attributes_reach_the_tables(mode: int) -> None:
+    model = Cordic(ZkfFormat(5, 16), wmultiplier=18, mode=mode, stage_core_mul=3)
+    attribute = '(* syn_romstyle = "logic" *)'
+    lines = replace(model, rom_attrs={"syn_romstyle": "logic"}).compile().splitlines()
+    marked = {lines[at + 1].split()[-1].rstrip(";") for at, line in enumerate(lines) if line.strip() == attribute}
+    assert marked == {"angle"} | ({"taken"} if _ahead(model) else set())
+    assert [line for line in lines if line.strip() != attribute] == model.compile().splitlines()
+
+
+@pytest.mark.parametrize("stages", [{}, {"sm": 3, "sc": ~CoreStages(0), "so": 2}, {"si": 1}], ids=str)
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
     knobs = stages | {"sc": stages.get("sc", CoreStages(0)) & ~_LACKED[mode]}
@@ -267,15 +258,8 @@ def test_cut_each_register(mode: int) -> None:
 def test_timing() -> None:
     """A register is a cycle of the modes on whose path it is; a seed takes its iterations off the engine."""
     fmt = ZkfFormat(6, 18)
-    plain: dict[str, Any] = {
-        "unroll100": 100,
-        "rotation_seed": 0,
-        "vectoring_seed": 0,
-        "stage_core_mul": 3,
-        "wmultiplier": 18,
-    }
+    plain: dict[str, Any] = {"rotation_seed": 0, "stage_core_mul": 3, "wmultiplier": 18}
     assert timings(Cordic(fmt, **plain)) == [(15, 15), (25, 25)]
-    assert timings(Cordic(fmt, **plain | {"unroll100": 50})) == [(23, 23), (33, 33)]
     steps = {member: (1, 0) for member in _ROTATION} | {member: (0, 1) for member in _VECTORING}
     for member in CoreStages:
         rot, vec = steps.get(member, (1, 1))
@@ -284,14 +268,9 @@ def test_timing() -> None:
     assert timings(Cordic(fmt, **plain, fast=True)) == [(14, 14), (25, 25)]
     for seed in (1, 2):
         assert timings(Cordic(fmt, **plain | {"rotation_seed": seed})) == [(15 - seed,) * 2, (25, 25)]
-        assert timings(Cordic(fmt, **plain | {"rotation_seed": seed, "unroll100": 50}))[0] == (23 - 2 * seed,) * 2
-    assert timings(Cordic(fmt, **plain | {"unroll100": 50, "vectoring_seed": 1}))[1] == (31, 31)
-    # No effect at full rate, nor in the mode that does not take it.
-    assert timings(Cordic(fmt, **plain | {"vectoring_seed": 1})) == timings(Cordic(fmt, **plain))
-    one: dict[str, Any] = {"stage_core_mul": 2, "wmultiplier": 18, "unroll100": 50, "vectoring_seed": 0}
+    # No effect in the mode that does not take it.
+    one: dict[str, Any] = {"stage_core_mul": 2, "wmultiplier": 18}
     assert Cordic(fmt, **one, mode=1, rotation_seed=2).timing == Cordic(fmt, **one, mode=1, rotation_seed=0).timing
-    one = {"stage_core_mul": 3, "wmultiplier": 18, "unroll100": 50, "rotation_seed": 0}
-    assert Cordic(fmt, **one, mode=0, vectoring_seed=1).timing == Cordic(fmt, **one, mode=0, vectoring_seed=0).timing
 
 
 @pytest.mark.parametrize("wman", range(16, 54))
@@ -319,16 +298,15 @@ def test_seed_tables(wman: int) -> None:
 
 
 @pytest.mark.parametrize("wman", [16, 36])
-@pytest.mark.parametrize("unroll100", [50, 100, 200])
 @pytest.mark.parametrize("mode", [0, 1, 2])
-def test_engine_from_its_seeds(wman: int, unroll100: int, mode: int) -> None:
+def test_engine_from_its_seeds(wman: int, mode: int) -> None:
     """
     The engine started at the state of each mode's seed ends where the reference's own iterations from that state do:
-    what the outputs cannot show, early signs being corrected.
+    what the outputs cannot show.
     """
     c = _constants(wman)
-    rng = np.random.default_rng(wman * unroll100 + mode)
-    seeds = (_SEED + 2 * (mode != 1), _SEED + (unroll100 == 50) * (mode != 0))
+    rng = np.random.default_rng(wman * 100 + mode)
+    seed = _SEED + 2
 
     def iterate(x: int, y: int, z: int, start: int, vectoring: bool) -> tuple[int, int, int]:
         for i in range(start, c.n):
@@ -344,27 +322,27 @@ def test_engine_from_its_seeds(wman: int, unroll100: int, mode: int) -> None:
             if vectoring:
                 x = int(rng.integers(1 << (c.xf - 2), 1 << (c.xf - 1)))
                 x0, y0, z0 = x, int(rng.integers(-x, x + 1)), 0
-                for i in range(seeds[1]):
+                for i in range(_SEED):
                     up = y0 >= 0
                     x0, y0 = (x0 + (y0 >> i), y0 - (x0 >> i)) if up else (x0 - (y0 >> i), y0 + (x0 >> i))
                     z0 = z0 + c.lut[i] if up else z0 - c.lut[i]
-                start, neg0 = seeds[1], int(y0 >= 0)
+                start = _SEED
                 expected = iterate(x0, y0, z0, start, True)
             else:
                 tpw = int(rng.integers(1, 1 << (c.wt - 1)))
                 x0, y0, z0 = c.kinv, 0, tpw << _GUARD_ZF
-                for i in range(seeds[0]):
+                for i in range(seed):
                     up = z0 >= 0
                     x0, y0 = (x0 - (y0 >> i), y0 + (x0 >> i)) if up else (x0 + (y0 >> i), y0 - (x0 >> i))
                     z0 = z0 - c.lut[i] if up else z0 + c.lut[i]
-                start, neg0 = seeds[0], int(z0 < 0)
+                start = seed
                 expected = iterate(x0, y0, z0, start, False)
-            cases.append((vectoring, x0, y0, z0, neg0, expected))
-    dut = _Engine(c.lut, wx=c.wx, wz=c.wz, unroll100=unroll100, mode=mode, seeds=seeds)
+            cases.append((vectoring, x0, y0, z0, expected))
+    dut = _Engine(c.lut, wx=c.wx, wz=c.wz, mode=mode, seed=seed)
 
     async def bench(ctx: Any) -> None:
-        for vectoring, x0, y0, z0, neg0, expected in cases:
-            for port, value in ((dut.vectoring, vectoring), (dut.x0, x0), (dut.y0, y0), (dut.z0, z0), (dut.neg0, neg0)):
+        for vectoring, x0, y0, z0, expected in cases:
+            for port, value in ((dut.vectoring, vectoring), (dut.x0, x0), (dut.y0, y0), (dut.z0, z0)):
                 ctx.set(port, value)
             ctx.set(dut.start, 1)
             await ctx.tick()
@@ -429,13 +407,8 @@ def test_refusals() -> None:
     assert [len(~_LACKED[mode]) for mode in (0, 1, 2)] == [8, 8, 13]
     # Both modes' product is a grid of 3x2 multipliers, a rotation's of 2x2, and one multiplier at a width of 36.
     refused: list[dict[str, Any]] = [
-        {"unroll100": 0},
-        {"unroll100": 150},
-        {"unroll100": 300},
         {"rotation_seed": -1},
         {"rotation_seed": 3},
-        {"vectoring_seed": -1},
-        {"vectoring_seed": 2},
         {"stage_core_mul": 2},
         {"stage_core_mul": 6},
         {"stage_core_mul": 1, "mode": 0},

@@ -296,6 +296,10 @@ Roughly ordered by severity.
   knob: two thirds of the digits (`divsqrt` at e8m36: 17 cycles to about 12). Two radix-4 SRT digits a stage, built in
   `cordic` and bit-identical, run at 55 to 89 MHz on the ECP5.
 
+- `cordic` at WMAN 36 needs ECP5 speed grade 7 or 8, and Artix-7 -2 where it vectors: its engine's one-cycle shift and
+  add, which no register splits, makes about 90 MHz on grade 6. A carry-save engine would be faster, but changes the
+  results.
+
 - `divsqrt` at e8m27 needs ECP5 speed grade 7 because LSE puts the packer's fraction mask on the set and reset of the
   result's register. An attribute hook on the masked fraction would take `syn_keep`, which keeps the mask in LUTs
   (115 to 122 MHz on speed grade 6), but LSE takes the attribute value only unsized (e.g., `1`), and Yosys's
@@ -312,9 +316,6 @@ Roughly ordered by severity.
 - Pre-tuned stage sets per operator and format, measured per flow and chip and ordered by latency, so that a user takes
   the first that closes; or an API that takes the clock and the speed grade and picks one (preferred).
   Each set is judged by its worst placement; a timing model would not do, as the binding paths are often mostly routing.
-
-- The table of `cordic`'s angles becomes a memory on Yosys, which doubles the engine's LUTs at two iterations a
-  cycle, the default, and the equivalence test's proof does not finish there; no spec runs at that rate.
 
 ### Postponed as YAGNI
 

@@ -16,9 +16,7 @@ KNOBS: Mapping[str, tuple[int, ...]] = {
     "stage_core_mul": (0, 1, 2, 3, 4, 5),
     "stage_core_kernel": (0, 1, 2, 3, 4, 5),
     "mode": (0, 1, 2),
-    "unroll100": (50, 100, 200),
     "rotation_seed": (0, 1, 2),
-    "vectoring_seed": (0, 1),
     "n": (0, 1, 7),
     "fast": (False, True),
 }

@@ -12,7 +12,7 @@ import pytest
 import _diamond
 import _vivado
 import _yosys
-from _catalog import CATALOG, ECP5_FASTER, ECP5_LARGE
+from _catalog import CATALOG, ECP5_LARGE, GRADES
 from _harness import Design, Row
 from _synth_report import BUILD
 
@@ -20,7 +20,7 @@ FLOWS: dict[str, tuple[tuple[str, ...], Callable[[Design, Path], Row], Callable[
     "yosys_ecp5": (_yosys.ECP5.tools, partial(_yosys.synthesize, _yosys.ECP5), _yosys.ECP5.part),
     "diamond_ecp5": (_diamond.TOOLS, _diamond.synthesize, _diamond.part),
     "yosys_spartan": (_yosys.SPARTAN.tools, partial(_yosys.synthesize, _yosys.SPARTAN), _yosys.SPARTAN.part),
-    "vivado_artix7": (_vivado.TOOLS, _vivado.synthesize, lambda design: _vivado.PART),
+    "vivado_artix7": (_vivado.TOOLS, _vivado.synthesize, _vivado.part),
 }
 """The tools of a flow, all found on the path, what runs it on a spec in a directory, and the device it places it on."""
 
@@ -46,7 +46,7 @@ def test_synth(
         pytest.fail(f"not on the path: {', '.join(absent)}")
     if absent:
         pytest.skip(f"not on the path: {', '.join(absent)}")
-    design = Design(name, CATALOG[name], large=name in ECP5_LARGE, faster=name in ECP5_FASTER)
+    design = Design(name, CATALOG[name], large=name in ECP5_LARGE, **GRADES.get(name, {}))
     directory = BUILD / flow / design.name
     placed = {"part": part(design)}
     try:

@@ -11,7 +11,7 @@ import _diamond
 import _vivado
 import _yosys
 from _catalog import CATALOG
-from _harness import FREQ_MHZ, Row
+from _harness import FREQ_MHZ, Design, Row
 
 BUILD = Path(__file__).resolve().parents[1] / "build" / "synth"
 """Each flow's report and a directory per spec of what the flow was handed and what it left."""
@@ -50,7 +50,7 @@ TABLES = {
         "Kulibin Float Yosys Synthesis Report",
         f"""<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 (sequential -dff retiming disabled), nextpnr-ecp5 out of
 context (no I/O pads) for {_yosys.ECP5_DEVICE}, or {_yosys.ECP5_LARGE_DEVICE} where the row says so,
-{_yosys.ECP5_PACKAGE} speed grade {_yosys.ECP5_SPEED_GRADE}, or {_yosys.ECP5_FASTER_GRADE} where the row says so, at
+{_yosys.ECP5_PACKAGE} speed grade {Design.ecp5_grade}, or another where the row says so, at
 {FREQ_MHZ:g} MHz.</p>
 <p class="note"><strong>Note on LUT4 counts:</strong> nextpnr-ecp5 <code>--12k</code> targets the LFE5U-25F fabric
 &mdash; the LFE5U-12F is the same silicon die, marketed with a reduced capacity. The utilization figures of its rows
@@ -76,7 +76,7 @@ the 45F (<code>--45k</code>) show its own array, <code>/43848</code>.</p>""",
     ),
     "diamond_ecp5": Table(
         "Kulibin Float Diamond Synthesis Report",
-        f"""<p>Flow: Lattice Diamond LSE ({_diamond.DEVICE.format(grade=_diamond.SPEED_GRADE)}, or another size or speed
+        f"""<p>Flow: Lattice Diamond LSE ({_diamond.DEVICE.format(grade=Design.ecp5_grade)}, or another size or speed
 grade where the row says so) at {FREQ_MHZ:g} MHz. Synthesis optimization goal is Timing, MAP register retiming is
 disabled, PAR placement effort is {_diamond.PAR_EFFORT} with one placement, router is {_diamond.ROUTER}, and routing
 passes are {_diamond.ROUTE_PASSES}.</p>""",
@@ -128,9 +128,11 @@ reported f max is the post-route, register-to-register limit.</p>""",
     ),
     "vivado_artix7": Table(
         "Kulibin Float Vivado Synthesis Report",
-        f"""<p>Flow: Vivado synthesis, placement and routing out of context for {_vivado.PART} at
+        f"""<p>Flow: Vivado synthesis, placement and routing out of context for
+{_vivado.PART.format(grade=Design.artix7_grade)}, or another speed grade where the row says so, at
 {_vivado.FREQ_MHZ:g} MHz, once.</p>""",
         (
+            ("Part", "part", None),
             ("Slack", "slack", None),
             ("LUT", "lut", None),
             ("FF", "ff", None),

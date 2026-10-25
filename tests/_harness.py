@@ -132,8 +132,10 @@ class Design:
     model: Block | CoreSpec
     large: bool = False
     """Placed on the larger part, by the flows that offer one."""
-    faster: bool = False
-    """Placed on the faster speed grade, by the flows that offer one."""
+    ecp5_grade: int = 6
+    """The speed grade, by the ECP5 flows."""
+    artix7_grade: int = 1
+    """The speed grade, by the Artix-7 flow."""
 
     @property
     def top(self) -> str:

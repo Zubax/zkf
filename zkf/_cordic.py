@@ -1,7 +1,7 @@
 import enum
 import functools
 import operator
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass, field, fields
 from fractions import Fraction
 from types import MappingProxyType
@@ -117,8 +117,6 @@ class Cordic(Operator):
         """The packers' output."""
 
     operator = "cordic"
-    unroll100: int = 200
-    """Iterations per cycle in hundredths: 50 (two cycles each), 100 or 200."""
     stage_input: int = 0
     stage_core_mul: int = 0
     """As `Mul`'s; a rotation passes the product twice in series."""
@@ -135,8 +133,11 @@ class Cordic(Operator):
     Up to 2 of a rotation's iterations, resolved ahead of the engine by compares of its coordinate with constants; no
     effect at `mode=1`.
     """
-    vectoring_seed: int = 1
-    """1 takes a vectoring's first iteration into its load; no effect but at `unroll100=50` in a mode that vectors."""
+    rom_attrs: Attrs | None = field(default=None, compare=False)
+    """
+    Synthesis attributes of the reads of the engine's angles and of what the angle's product issued ahead takes back,
+    such as `{"syn_romstyle": "logic"}`.
+    """
     mul_attrs: Attrs | None = field(default=None, compare=False)
     """
     On the product's capture, where a register follows the multipliers: from `stage_core_mul=2` on for one multiplier,
@@ -156,14 +157,10 @@ class Cordic(Operator):
         if self.mode and self.fmt.wexp < 5:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is below 5, which a vectoring takes")
         g = _geometry(self.fmt.wman)
-        if self.unroll100 not in (50, 100, 200):
-            raise ValueError(f"unroll100={self.unroll100} is not 50, 100 or 200")
         wa, wb = g.operands(self.mode)
         check("stage_core_mul", self.stage_core_mul, wa, wb, signed=self.mode != 1, wmultiplier=self.wmultiplier)
         if not 0 <= self.rotation_seed <= 2:
             raise ValueError(f"rotation_seed={self.rotation_seed} is outside 0..2")
-        if not 0 <= self.vectoring_seed <= 1:
-            raise ValueError(f"vectoring_seed={self.vectoring_seed} is outside 0..1")
         lacked = self.stage_core & _LACKED[self.mode]
         if lacked:
             raise ValueError(f"stage_core={self.stage_core}: leave out {lacked.name}, which mode={self.mode} lacks")
@@ -219,24 +216,15 @@ class Cordic(Operator):
         g = _geometry(self.fmt.wman)
         product = self.stage_core_mul
         registers = len(self.stage_core & ~(_VECTORING, _ROTATION)[mode])
-        iterations = g.n - _SEED - _seeded(self)[mode]
-        preloaded = int(self.unroll100 < 100)  # the load shifts for the first iteration
-        cycles = (iterations * 100 + self.unroll100 - 1) // self.unroll100 - preloaded
+        iterations = g.n - _SEED - (self.rotation_seed if mode == 0 else 0)
         if mode == 0:
             held = not product  # the angle's product waits in `tprod`, which is then the multiplier's register
-            saved = 0
-            if self.unroll100 < 100:
-                # The angle's product overlaps the engine, which runs `z` that many cycles ahead, and is held by its
-                # end, when the sine is issued; one that is not back before the end delays the sine, a cycle more where
-                # it is back in the end's own cycle, which the idle state does not see.
-                lead = cycles - iterations
-                saved = product + held if product + held < lead else lead - (product + held == lead)
             # The engine's load; the cosine a cycle behind the sine into the multiplier, and into the packer unless
             # `fast`.
-            latency = 2 + (not self.fast) + held + cycles + 2 * product - saved - max(_ahead(self) - 1, 0)
+            latency = 2 + (not self.fast) + held + iterations + 2 * product - max(_ahead(self) - 1, 0)
         else:
             # The engine's load, the division's, and the last digit into the angle.
-            latency = 3 + cycles + g.steps
+            latency = 3 + iterations + g.steps
         latency += registers + self.stage_input + self.stage_output
         return Timing(latency, latency if self.stage_core_mul else latency + 1)
 
@@ -405,28 +393,19 @@ def _constants(wman: int) -> _Constants:
 
 def _ahead(model: Cordic) -> int:
     """
-    How many iterations ahead of the engine's end a rotation issues the angle's product at one iteration a cycle,
-    `stage_core_mul + 1`, so that the angle, less a constant of the signs taken since, is held by the end; 0 where the
-    multiplier has no register, the wider angle would take another slice, or the product would start ahead of the
-    rotation's first iteration.
+    How many iterations ahead of the engine's end a rotation issues the angle's product, `stage_core_mul + 1`, so that
+    the angle, less a constant of the signs taken since, is held by the end; 0 where the multiplier has no register, the
+    wider angle would take another slice, or the product would start ahead of the rotation's first iteration.
     """
     k = model.stage_core_mul + 1
-    if model.unroll100 != 100 or not model.stage_core_mul or model.mode == 1:
+    if not model.stage_core_mul or model.mode == 1:
         return 0
     c = _constants(model.fmt.wman)
-    if c.n - k < _SEED + _seeded(model)[0]:
+    if c.n - k < _SEED + model.rotation_seed:
         return 0
     wa, wb = c.operands(model.mode)
     grid = functools.partial(slices, wa, signed=True, wmultiplier=model.wmultiplier)
     return k if grid(max(wb, _angle_bits(c, k))) == grid(wb) else 0
-
-
-def _seeded(model: Cordic) -> tuple[int, int]:
-    """The iterations that each mode resolves ahead of the engine, of `rotation_seed` and `vectoring_seed`."""
-    return (
-        model.rotation_seed if model.mode != 1 else 0,
-        model.vectoring_seed if model.mode != 0 and model.unroll100 == 50 else 0,
-    )
 
 
 def _seed(c: _Constants, signs: int) -> tuple[list[tuple[int, int, int, int]], tuple[int, int, int]]:
@@ -753,7 +732,6 @@ class _Share:
     x0: Value
     y0: Value
     z0: Value
-    neg0: Value
     xa: Value
     ya: Value
     pm_iv: Value
@@ -774,7 +752,7 @@ class _Share:
 
 _RAISED = ("start", "pm_iv", "pk_iv", "res")
 """The members of `_Share` that either mode raises; the rest are of the mode that the transaction is in."""
-_TAKING = ("x0", "y0", "z0", "neg0", "xa", "ya", "pm_sb", "pm_a", "pm_b")
+_TAKING = ("x0", "y0", "z0", "xa", "ya", "pm_sb", "pm_a", "pm_b")
 """The members of `_Share` that a transaction drives in the cycle it is taken in, where the engine can start then."""
 
 
@@ -803,7 +781,6 @@ class _Cordic(wiring.Component):
         wfactor = c.wfactor
         const2pi_s, invtau_s, kinv_s = c.const2pi_s, c.invtau_s, c.kinv_s
         rotates, vectors, both = mode != 1, mode != 0, mode == 2
-        seeded = _seeded(model)
         f = FloatLayout(fmt)
 
         # A rotation's products keep the top bits of the residual angle and of what the engine leaves.
@@ -876,10 +853,10 @@ class _Cordic(wiring.Component):
             c.lut,
             wx=wx,
             wz=wz,
-            unroll100=model.unroll100,
             mode=mode,
             ahead=ahead,
-            seeds=(_SEED + seeded[0], _SEED + seeded[1]),
+            rom_attrs=model.rom_attrs,
+            seed=_SEED + model.rotation_seed,
         )
         m.submodules.pmul = pmul = Pmul(
             wa_pm,
@@ -964,7 +941,7 @@ class _Cordic(wiring.Component):
             # At `mode` 2 `halfway` is one more interval, which takes the mux behind the start's add out of the shared
             # load; alone the mode keeps it apart.
             merged = both
-            m.submodules.seed = seed = _Seed(c, seeded[0], merged)
+            m.submodules.seed = seed = _Seed(c, model.rotation_seed, merged)
             m.d.comb += seed.t.eq(rd.t)
             entries, (x_half, y_half, z_half) = seed.entries, seed.halfway_state
             layout = {"flip": 1, "tpw": wt, "halfway": 1, "tzero": 1, "quad": 2, "e": signed(we)}
@@ -1017,10 +994,6 @@ class _Cordic(wiring.Component):
                 m.d.sync += sa_o.eq(fd.tiny | ~fd.tpw[tsa_bits:].any())
             done = Signal(name="rot_done")
             m.d.comb += done.eq(engine.done & ~held_vec if both else engine.done)
-            z_done = done
-            if engine.early:
-                z_done = Signal(name="rot_zdone")
-                m.d.comb += z_done.eq(engine.z_done & ~held_vec if both else engine.z_done)
 
             # The linear product is issued at the start, while the multiplier idles; that of the residual angle when the
             # engine has the angle; the two corrections when it has the vector, the sine's first.
@@ -1035,7 +1008,7 @@ class _Cordic(wiring.Component):
             xc = (e_xn >> xk_trunc)[:wxc].as_signed()
             yc = (e_yn >> xk_trunc)[:wxc].as_signed()
             starting = Signal(name="rot_first")
-            z_issue = z_done
+            z_issue = done
             if ahead:
                 z_issue = Signal(name="rot_zahead")
                 m.d.comb += z_issue.eq(engine.z_ahead & ~held_vec if both else engine.z_ahead)
@@ -1102,23 +1075,21 @@ class _Cordic(wiring.Component):
             with m.If(done):
                 m.d.sync += e_xn.eq(engine.xn)
                 m.d.sync += e_yn.eq(engine.yn)
+            if ahead:
+                # `const2pi` times the angles of the last iterations, by their signs, is taken back.
+                taken = [
+                    c.const2pi * sum(-lut if (pattern >> j) & 1 else lut for j, lut in enumerate(c.lut[n - ahead :]))
+                    for pattern in range(1 << ahead)
+                ]
+                table = Array(Const(value, signed(wp + 1)) for value in taken)
+                back = Signal(signed(wp + 1), name="taken", attrs=dict(model.rom_attrs or {}))
+                m.d.comb += back.eq(table[Cat(engine.z_signs, engine.zn[-1])])
             with m.If(mul_valid):
                 with m.Switch(pm_sb):
                     with m.Case(_Product.LINEAR):
                         m.d.sync += bypass_mag.eq(_zext(product[:wmag_rot], wmag_rot))  # it is not negative
                     with m.Case(_Product.ANGLE):
-                        if ahead:
-                            # `const2pi` times the angles of the last iterations, by their signs, is taken back.
-                            taken = [
-                                c.const2pi
-                                * sum(-lut if (pattern >> j) & 1 else lut for j, lut in enumerate(c.lut[n - ahead :]))
-                                for pattern in range(1 << ahead)
-                            ]
-                            signs = Cat(engine.z_signs, engine.zn[-1])
-                            table = Array(Const(value, signed(wp + 1)) for value in taken)
-                            m.d.sync += tprod.eq((product - table[signs])[:wp].as_signed())
-                        else:
-                            m.d.sync += tprod.eq(product)
+                        m.d.sync += tprod.eq((product - back)[:wp].as_signed() if ahead else product)
                     with m.Case(_Product.SINE):
                         m.d.sync += corr_s.eq(product)
             sin_now = (e_yn + (corr_s >> corr_shift))[:wx].as_signed()
@@ -1191,7 +1162,6 @@ class _Cordic(wiring.Component):
                 x0=x_seed,
                 y0=y_seed,
                 z0=z2,
-                neg0=z2[-1],
                 xa=Const(0, wx),
                 ya=Const(0, wx),
                 pm_iv=pm_iv,
@@ -1226,7 +1196,6 @@ class _Cordic(wiring.Component):
             m.d.comb += mine_now.eq(si_valid & si.vec)
             above, high = key_y[wkl:] > key_x[wkl:], key_y[wkl:] == key_x[wkl:]
             level = high & (key_y[:wkl] > key_x[:wkl])
-            at50 = model.unroll100 < 100
             # Both orders of the difference of the exponents are formed beside the compares, so that the order only
             # selects. A shift past `wx - 4` leaves nothing of a significand scaled as below; there the numerator is
             # zeroed.
@@ -1269,8 +1238,6 @@ class _Cordic(wiring.Component):
             shift_xy, shift_yx = tk.dxy, tk.dyx
             shamt = Signal(wsh, name="f1_shamt")
             m.d.comb += shamt.eq(Mux(tk.swap, shift_yx, shift_xy)[:wsh])
-            beyond = Signal(name="f1_beyond")
-            m.d.comb += beyond.eq(Mux(tk.swap, tk.byx, tk.bxy))
             # The significands, scaled by a quarter, top out two bits below the engine's sign; the numerator is aligned
             # to the denominator's binade.
             up = xf - wfrac - 2
@@ -1344,21 +1311,14 @@ class _Cordic(wiring.Component):
                         m.d.sync += held_sp_mag.eq(ordered)
                 m.d.sync += held_byp_irem.eq(Mux(byp_ibit, byp_diff[:wman], num_sig))
                 m.d.sync += held_byp_ibit.eq(byp_ibit)
-            # With it the terms of `x0` that the load takes: `3 den`, and `-den` or, where `y0 == x0`, `-5 den`; at 50
-            # what gives the sign of `y2`.
-            sign2 = {"three": wman + 2, "shamt": wsh, "beyond": 1} if at50 else {}
-            numerator = data.StructLayout(
-                {"y0": signed(wx), "den3": wman + 2, "dneg": signed(wman + 4), "equal": 1} | sign2
-            )
+            # With it the terms of `x0` that the load takes: `3 den`, and `-den` or, where `y0 == x0`, `-5 den`.
+            numerator = data.StructLayout({"y0": signed(wx), "den3": wman + 2, "dneg": signed(wman + 4), "equal": 1})
             given = bundle(
                 numerator,
                 y0=aligned,
                 den3=den_sig + (den_sig << 1),
                 dneg=Mux(tk.equal, -((den_sig << 2) + den_sig), -den_sig)[: wman + 4],
                 equal=tk.equal,
-                three=num_sig + (num_sig << 1),
-                shamt=shamt,
-                beyond=beyond,
             )
             ordered_valid, od = pipe(m, "ordered", taken_valid, numerator, given, int(CoreStages.ORDERED in core))
 
@@ -1366,53 +1326,19 @@ class _Cordic(wiring.Component):
             # `y2 = -x0`, which the same sum gives with `-5/2 x0`.
             y0, term = od.y0, Cat(Const(0, up - 1), od.dneg).as_signed()
             x2 = Cat(y0[0], Const(0, up - 2), od.den3)  # less `floor(y0 / 2)`
-            if at50:
-                # The sums ahead of the register, and the sign of `y2` from the significands: `3 y0 >= x0`, always
-                # where `y0` is not shifted, never where by three or more.
-                den = held_den_sig if CoreStages.ORDERED in core else den_sig
-                rises = Array([Const(1, 1), od.three >= den << 1, od.three >= den << 2, Const(0, 1)])
-                seed = data.StructLayout({"x2": signed(wx), "y2": signed(wx), "equal": 1, "rising": 1})
-                given = bundle(
-                    seed,
-                    x2=(x2 + (y0 >> 1))[:wx],
-                    y2=(y0 + (y0 >> 1) + term)[:wx],
-                    equal=od.equal,
-                    rising=~od.equal & ~od.beyond & ~od.shamt[2:].any() & rises[od.shamt[:2]],
-                )
-            else:
-                # The first lane's adders sum the addends, `y2`'s as sums and carries.
-                seed = data.StructLayout({"xl": signed(wx), "xa": wx, "yl": signed(wx), "ya": wx, "equal": 1})
-                given = bundle(
-                    seed,
-                    xl=y0 >> 1,
-                    xa=_zext(x2, wx),
-                    yl=y0 ^ (y0 >> 1) ^ term,
-                    ya=((y0 & (y0 >> 1) | (y0 ^ (y0 >> 1)) & term) << 1)[:wx],
-                    equal=od.equal,
-                )
+            # The engine's adders sum the addends at its load, `y2`'s as sums and carries.
+            seed = data.StructLayout({"xl": signed(wx), "xa": wx, "yl": signed(wx), "ya": wx, "equal": 1})
+            given = bundle(
+                seed,
+                xl=y0 >> 1,
+                xa=_zext(x2, wx),
+                yl=y0 ^ (y0 >> 1) ^ term,
+                ya=((y0 & (y0 >> 1) | (y0 ^ (y0 >> 1)) & term) << 1)[:wx],
+                equal=od.equal,
+            )
             shifted_valid, sd = pipe(m, "shifted", ordered_valid, seed, given, int(CoreStages.SHIFTED in core))
-            if at50:
-                x_load, y_load, xa, ya = sd.x2, sd.y2, Const(0, wx), Const(0, wx)
-            else:
-                x_load, y_load, xa, ya = sd.xl, sd.yl, sd.xa, sd.ya
+            x_load, y_load, xa, ya = sd.xl, sd.yl, sd.xa, sd.ya
             z_load = Mux(sd.equal, Const(c.lut[0] + c.lut[1], signed(wz)), Const(c.lut[0] - c.lut[1], signed(wz)))
-            rising: Value = sd.rising if at50 else Const(0, 1)
-            if seeded[1]:
-                # The engine's first iteration, ahead of where the modes meet; `z` of it is one of four constants. Each
-                # input is a signal: both sums read it, which the simulator would expand otherwise.
-                x2, y2, up = Signal(signed(wx), name="vec_x2"), Signal(signed(wx), name="vec_y2"), Signal(name="vec_up")
-                m.d.comb += [x2.eq(x_load), y2.eq(y_load), up.eq(rising)]
-                x3, y3 = Signal(signed(wx), name="vec_x3"), Signal(signed(wx), name="vec_y3")
-                m.d.comb += x3.eq(_step(x2, (y2 >> _SEED).as_unsigned(), ~up))
-                m.d.comb += y3.eq(_step(y2, (x2 >> _SEED).as_unsigned(), up))
-                turns = [
-                    Mux(
-                        sd.equal,
-                        *(Const(c.lut[0] + d + sign * c.lut[_SEED], signed(wz)) for d in (c.lut[1], -c.lut[1])),
-                    )
-                    for sign in (-1, 1)
-                ]
-                x_load, y_load, z_load, rising = x3, y3, Mux(up, turns[1], turns[0]), ~y3[-1]
             done = Signal(name="vec_done")
             m.d.comb += done.eq(engine.done & held_vec if both else engine.done)
 
@@ -1546,7 +1472,6 @@ class _Cordic(wiring.Component):
                 x0=x_load,
                 y0=y_load,
                 z0=z_load,
-                neg0=rising,
                 xa=xa,
                 ya=ya,
                 pm_iv=mag_issue,
@@ -1579,7 +1504,6 @@ class _Cordic(wiring.Component):
         m.d.comb += engine.x0.eq(now.x0)
         m.d.comb += engine.y0.eq(now.y0)
         m.d.comb += engine.z0.eq(now.z0)
-        m.d.comb += engine.neg0.eq(now.neg0)
         m.d.comb += engine.xa.eq(now.xa)
         m.d.comb += engine.ya.eq(now.ya)
         m.d.comb += pmul.in_valid.eq(now.pm_iv)
@@ -1669,83 +1593,21 @@ def _step(a: Value, b: Value, subtract: Value) -> Value:
     return (a.as_unsigned() + (b ^ subtract.replicate(len(b))) + subtract)[: len(a)].as_signed()
 
 
-class _Lane(wiring.Component):
-    """
-    One of the iterations chained in a cycle: the `index`-th after iteration `i`. One past the last leaves `z` as it is,
-    the first lane being never past it while the engine runs, and one past the last or while the engine is idle adds
-    nothing to `x` and `y`, which then load through the same adders. `xs` and `ys` are what is shifted: `x` and `y`, or
-    the registers themselves in the first lane. `vec` is read at `mode` 2 alone. `seeding`, while the engine is idle,
-    adds `xa` to `x` and `ya` to `y` instead.
-    """
-
-    run: Signal
-    vec: Signal
-    i: Signal
-    x: Signal
-    y: Signal
-    z: Signal
-    xs: Signal
-    ys: Signal
-    seeding: Signal
-    xa: Signal
-    ya: Signal
-    x_next: Signal
-    y_next: Signal
-    z_next: Signal
-
-    def __init__(self, index: int, lut: Array, n: int, mode: int, *, wi: int, wx: int, wz: int) -> None:
-        self._index, self._lut, self._n, self._mode = index, lut, n, mode
-        taken = {"run": In(1), "vec": In(1), "i": In(wi), "x": In(signed(wx)), "y": In(signed(wx))}
-        taken |= {"z": In(signed(wz)), "xs": In(signed(wx)), "ys": In(signed(wx))}
-        taken |= {"seeding": In(1), "xa": In(wx), "ya": In(wx)}
-        super().__init__(taken | {"x_next": Out(signed(wx)), "y_next": Out(signed(wx)), "z_next": Out(signed(wz))})
-
-    def elaborate(self, platform: object) -> Module:
-        m = Module()
-        x, y, z, xs, ys, wx = self.x, self.y, self.z, self.xs, self.ys, len(self.x)
-        idx = Signal(len(self.i), name="idx")
-        m.d.comb += idx.eq((self.i + self._index)[: len(self.i)])
-        en_z = Signal(name="en_z")
-        m.d.comb += en_z.eq(idx < self._n if self._index else 1)
-        en = Signal(name="en")
-        m.d.comb += en.eq(self.run & en_z)
-        by_mode = (z[-1], ~ys[-1], Mux(self.vec, ~ys[-1], z[-1]))
-        neg = Signal(name="neg")
-        m.d.comb += neg.eq(by_mode[self._mode])
-        sub_z = Signal(name="sub_z")
-        m.d.comb += sub_z.eq(~neg)
-        sub_x = Signal(name="sub_x")
-        m.d.comb += sub_x.eq(en & sub_z)
-        sub_y = Signal(name="sub_y")
-        m.d.comb += sub_y.eq(en & neg)
-        x_by = Mux(self.seeding, self.xa, (ys >> idx).as_unsigned() & en.replicate(wx))
-        y_by = Mux(self.seeding, self.ya, (xs >> idx).as_unsigned() & en.replicate(wx))
-        m.d.comb += self.x_next.eq(_step(x, x_by, sub_x))
-        m.d.comb += self.y_next.eq(_step(y, y_by, sub_y))
-        m.d.comb += self.z_next.eq(Mux(en_z, _step(z, self._lut[idx], sub_z), z))
-        return m
-
-
 class _Engine(wiring.Component):
     """
-    One `(x, y, z)` datapath used over several cycles in place of a pipeline, so the area is that of a few iterations
-    and the latency does not depend on the data.
+    One `(x, y, z)` datapath at an iteration a cycle in place of a pipeline, so the area is that of one iteration and
+    the latency does not depend on the data.
 
     An iteration is `x' = x -/+ (y >> i)`, `y' = y +/- (x >> i)`, `z' = z -/+ lut[i]`, with arithmetic shifts. In
     rotation the sign follows `z`, which goes to zero while `(x, y)` turns by `z0`; in vectoring it follows `y`, which
     goes to zero while `z` gathers the angle of `(x0, y0)`. `mode` is 0 for rotation, 1 for vectoring and 2 for either,
     vectoring where `vectoring` is high at `start`. `lut` is the angle of each iteration, unsigned.
 
-    `unroll100` is `Cordic`'s. At 50 and not for vectoring alone, the recurrence of `z`, one narrow addition, runs at an
-    iteration a cycle ahead of `x` and `y` and replays its signs to them: `z_done` then comes before `done`, and a
-    rotation starts on its residual angle early. At 100, `ahead`, where nonzero, raises `z_ahead` that many iterations
-    before the end and gives in `z_signs` the signs of `z` from there on but the last's.
-
-    `seeds` are the iterations that each mode, rotation first, starts at. `start` for a cycle takes `x0`, `y0` and `z0`,
-    those of its mode's seed, and is ignored while the engine runs; at 100 and up a vectoring's load adds `xa` to `x0`
-    and `ya` to `y0` on the first lane's adders. At 50 the load also shifts for its mode's first iteration, whose sign
-    is `neg0`: that `z0` is negative in rotation, that `y0` is not in vectoring. `done` is high for one cycle with `xn`,
-    `yn` and `zn`; `z_done` for one with `zn`.
+    `seed` is the iteration that a rotation starts at, a vectoring starting at `_SEED`. `start` for a cycle takes `x0`,
+    `y0` and `z0`, those of its mode's seed, and is ignored while the engine runs; a vectoring's load adds `xa` to `x0`
+    and `ya` to `y0` on the iteration's adders. `ahead`, where nonzero, raises `z_ahead` that many iterations before
+    the end and gives in `z_signs` the signs of `z` from there on but the last's. `done` is high for a cycle with `xn`,
+    `yn`, `zn`. `rom_attrs` goes on the read of the angles.
     """
 
     start: Signal
@@ -1753,11 +1615,9 @@ class _Engine(wiring.Component):
     x0: Signal
     y0: Signal
     z0: Signal
-    neg0: Signal
     xa: Signal
     ya: Signal
     done: Signal
-    z_done: Signal
     xn: Signal
     yn: Signal
     zn: Signal
@@ -1768,13 +1628,13 @@ class _Engine(wiring.Component):
         *,
         wx: int,
         wz: int,
-        unroll100: int,
         mode: int,
         ahead: int = 0,
-        seeds: tuple[int, int] = (_SEED, _SEED),
+        seed: int = _SEED,
+        rom_attrs: Attrs | None = None,
     ) -> None:
-        self._lut, self._wx, self._wz, self._unroll100, self._mode = list(lut), wx, wz, unroll100, mode
-        self._ahead, self._seeds = ahead, seeds
+        self._lut, self._wx, self._wz, self._mode = list(lut), wx, wz, mode
+        self._ahead, self._seed, self._rom_attrs = ahead, seed, dict(rom_attrs or {})
         super().__init__(
             {
                 "start": In(1),
@@ -1782,11 +1642,9 @@ class _Engine(wiring.Component):
                 "x0": In(signed(wx)),
                 "y0": In(signed(wx)),
                 "z0": In(signed(wz)),
-                "neg0": In(1),
                 "xa": In(wx),
                 "ya": In(wx),
                 "done": Out(1),
-                "z_done": Out(1),
                 "xn": Out(signed(wx)),
                 "yn": Out(signed(wx)),
                 "zn": Out(signed(wz)),
@@ -1794,22 +1652,11 @@ class _Engine(wiring.Component):
             | ({"z_ahead": Out(1), "z_signs": Out(ahead - 1)} if ahead else {})
         )
 
-    @property
-    def early(self) -> bool:
-        """Whether `z_done` comes before `done`; it is `done` otherwise."""
-        return self._mode != 1 and self._unroll100 < 100
-
     def elaborate(self, platform: object) -> Module:
         m = Module()
         n, wx, wz, mode = len(self._lut), self._wx, self._wz, self._mode
-        half = self._unroll100 < 100
-        u = 1 if half else self._unroll100 // 100
-        wi = ceil_log2(n + u + 1)
-        # What is read past the last angle, by an idle lane or by the fetch ahead, is not used.
-        lut = Array(Const(angle, wz) for angle in self._lut)
-
+        wi = ceil_log2(n + 1)
         run, done = Signal(name="run"), Signal(name="done")
-        phase = Signal(name="phase") if half else None  # 0 shifts and samples, 1 adds and advances
         i = Signal(wi, name="i", reset_less=True)
         vec = Signal(1, name="vec", reset_less=True) if mode == 2 else None
         x, y, z = (
@@ -1818,147 +1665,67 @@ class _Engine(wiring.Component):
             Signal(signed(wz), name="z", reset_less=True),
         )
         i_next = Signal(wi, name="i_next")
-        m.d.comb += i_next.eq((i + u)[:wi])
+        m.d.comb += i_next.eq((i + 1)[:wi])
         last = Signal(name="last")
         m.d.comb += last.eq(i_next >= n)
-        ending = last
-        if phase is not None:
-            ending = Signal(name="ending")
-            m.d.comb += ending.eq(phase & last)
-        z_done: Value = done
+        seed = Const(_SEED if mode == 1 else self._seed, wi)
+        if mode == 2 and self._seed != _SEED:
+            seed = Mux(self.vectoring, Const(_SEED, wi), Const(self._seed, wi))
 
-        def by_mode(of: Callable[[int], Value]) -> Value:
-            rot, vec_seed = self._seeds
-            if mode != 2 or rot == vec_seed:
-                return of(vec_seed if mode == 1 else rot)
-            return Mux(self.vectoring, of(vec_seed), of(rot))
-
-        m.d.sync += done.eq(run & ending)
-        with m.If(run if phase is None else run & phase):
+        m.d.sync += done.eq(run & last)
+        with m.If(run):
             m.d.sync += i.eq(i_next)
             with m.If(last):
                 m.d.sync += run.eq(0)
-        with m.Elif(~run & self.start):
+        with m.Elif(self.start):
             m.d.sync += run.eq(1)
-            m.d.sync += i.eq(by_mode(lambda seed: Const(seed, wi)))
+            m.d.sync += i.eq(seed)
             if vec is not None:
                 m.d.sync += vec.eq(self.vectoring)
 
-        if phase is None:
-            # `z` keeps a load of its own: with a bare sum ahead of it, a tool may retime the register into the adder,
-            # onto the path of the sign.
-            x_in = Signal(signed(wx), name="x_in")
-            m.d.comb += x_in.eq(Mux(run, x, self.x0))
-            y_in = Signal(signed(wx), name="y_in")
-            m.d.comb += y_in.eq(Mux(run, y, self.y0))
-            feed = (x_in, y_in, z, x, y)
-            for index in range(u):
-                m.submodules[f"lane{index}"] = lane = _Lane(index, lut, n, mode, wi=wi, wx=wx, wz=wz)
-                m.d.comb += [lane.run.eq(run), lane.i.eq(i), lane.x.eq(feed[0]), lane.y.eq(feed[1])]
-                m.d.comb += [lane.z.eq(feed[2]), lane.xs.eq(feed[3]), lane.ys.eq(feed[4])]
-                if vec is not None:
-                    m.d.comb += lane.vec.eq(vec)
-                if index == 0 and mode:
-                    seeding = ~run & (1 if mode == 1 else self.vectoring)
-                    m.d.comb += [lane.seeding.eq(seeding), lane.xa.eq(self.xa), lane.ya.eq(self.ya)]
-                feed = (lane.x_next, lane.y_next, lane.z_next, lane.x_next, lane.y_next)
-            with m.If(run | self.start):
-                m.d.sync += x.eq(lane.x_next)
-                m.d.sync += y.eq(lane.y_next)
+        x_in = Signal(signed(wx), name="x_in")
+        m.d.comb += x_in.eq(Mux(run, x, self.x0))
+        y_in = Signal(signed(wx), name="y_in")
+        m.d.comb += y_in.eq(Mux(run, y, self.y0))
+        neg = Signal(name="neg")
+        m.d.comb += neg.eq(Mux(vec, ~y[-1], z[-1]) if vec is not None else (z[-1], ~y[-1])[mode])
+        sub_z = Signal(name="sub_z")
+        m.d.comb += sub_z.eq(~neg)
+        sub_x = Signal(name="sub_x")
+        m.d.comb += sub_x.eq(run & sub_z)
+        sub_y = Signal(name="sub_y")
+        m.d.comb += sub_y.eq(run & neg)
+        x_by: Value = (y >> i).as_unsigned() & run.replicate(wx)
+        y_by: Value = (x >> i).as_unsigned() & run.replicate(wx)
+        if mode:
+            # Idle, a vectoring's load adds the addends of its seed.
+            seeding = Signal(name="seeding")
+            m.d.comb += seeding.eq(~run & (1 if mode == 1 else self.vectoring))
+            x_by, y_by = Mux(seeding, self.xa, x_by), Mux(seeding, self.ya, y_by)
+        x_next, y_next = Signal(signed(wx), name="x_next"), Signal(signed(wx), name="y_next")
+        m.d.comb += [x_next.eq(_step(x_in, x_by, sub_x)), y_next.eq(_step(y_in, y_by, sub_y))]
+        with m.If(run | self.start):
+            m.d.sync += x.eq(x_next)
+            m.d.sync += y.eq(y_next)
+        # What is read past the last angle by the idle engine is not used.
+        lut = Array(Const(angle, wz) for angle in self._lut)
+        angle = Signal(wz, name="angle", attrs=self._rom_attrs)
+        m.d.comb += angle.eq(lut[i])
+        # `z` keeps a load of its own: with a bare sum ahead of it, a tool may retime the register into the adder, onto
+        # the path of the sign.
+        with m.If(run):
+            m.d.sync += z.eq(_step(z, angle, sub_z))
+        with m.Elif(self.start):
+            m.d.sync += z.eq(self.z0)
+        if self._ahead:
+            k = self._ahead
+            m.d.comb += self.z_ahead.eq(run & (i == n - k))
+            signs = Signal(k - 1, name="z_signs", reset_less=True)
             with m.If(run):
-                m.d.sync += z.eq(lane.z_next)
-            with m.Elif(self.start):
-                m.d.sync += z.eq(self.z0)
-            if self._ahead:
-                k = self._ahead
-                m.d.comb += self.z_ahead.eq(run & (i == n - k))
-                signs = Signal(k - 1, name="z_signs", reset_less=True)
-                with m.If(run):
-                    m.d.sync += signs.eq(Cat(signs[1:], z[-1]))
-                m.d.comb += self.z_signs.eq(signs)
-        else:
-            x_shifted = Signal(signed(wx), name="x_shifted", reset_less=True)
-            y_shifted = Signal(signed(wx), name="y_shifted", reset_less=True)
-            neg, angle = Signal(1, name="neg", reset_less=True), Signal(wz, name="angle", reset_less=True)
-            # The sign in copies, so that each steers fewer adders: `neg` that of `y`, `sub` those of `x` and of
-            # `z` but at `mode` 2, where `vsub` steers a vectoring's `z`.
-            sub = Signal(name="sub", reset_less=True)
-            vsub = Signal(name="vsub", reset_less=True) if mode == 2 else None
-            # The sign of `z` ahead of each iteration, recorded from the sum that makes it.
-            replayed = Signal(n + 1, name="signs", reset_less=True) if self.early else None
-            ahead = z[-1] if replayed is None else replayed.bit_select(i, 1)
-            fetched = None
-            if replayed is None:
-                fetched = Signal(wz, name="fetched")
-                m.d.comb += fetched.eq(lut[i])
-            sampled = Signal(name="sampled")
-            m.d.comb += sampled.eq((ahead, ~y[-1], None if vec is None else Mux(vec, ~y[-1], ahead))[mode])
-            with m.If(run):
-                m.d.sync += phase.eq(~phase)
-            with m.If(~run):
-                with m.If(self.start):
-                    m.d.sync += x.eq(self.x0)
-                    m.d.sync += y.eq(self.y0)
-                    m.d.sync += x_shifted.eq(by_mode(lambda seed: self.x0 >> seed))
-                    m.d.sync += y_shifted.eq(by_mode(lambda seed: self.y0 >> seed))
-                    m.d.sync += neg.eq(self.neg0)
-                    m.d.sync += sub.eq(~self.neg0)
-                    if vsub is not None:
-                        m.d.sync += vsub.eq(~self.neg0 & self.vectoring)
-                    m.d.sync += phase.eq(1)
-                    if replayed is None:
-                        m.d.sync += z.eq(self.z0)
-                        m.d.sync += angle.eq(by_mode(lambda seed: lut[seed]))
-            with m.Elif(~phase):
-                m.d.sync += x_shifted.eq(x >> i)
-                m.d.sync += y_shifted.eq(y >> i)
-                m.d.sync += neg.eq(sampled)
-                m.d.sync += sub.eq(~sampled)
-                if vec is not None and vsub is not None:
-                    m.d.sync += vsub.eq(y[-1] & vec)
-                if fetched is not None:
-                    m.d.sync += angle.eq(fetched)
-            with m.Else():
-                m.d.sync += x.eq(_step(x, y_shifted.as_unsigned(), sub))
-                m.d.sync += y.eq(_step(y, x_shifted.as_unsigned(), neg))
-                if replayed is None:
-                    m.d.sync += z.eq(_step(z, angle, sub))
-
-            if replayed is not None:
-                # A vectoring's `z` steps with `x` and `y`, on the sign they sampled. The angle is fetched a cycle
-                # early, which keeps the table's selection out of the addition.
-                zi = Signal(wi, name="zi", reset_less=True)
-                z_run, z_finished = Signal(name="z_run"), Signal(name="z_finished")
-                zi_next = Signal(wi, name="zi_next")
-                m.d.comb += zi_next.eq((zi + 1)[:wi])
-                z_last = Signal(name="z_last")
-                m.d.comb += z_last.eq(zi_next >= n)
-                z_loading = Signal(name="z_load")
-                m.d.comb += z_loading.eq(self.start & ~run)
-                z_sub = Signal(name="z_sub")
-                m.d.comb += z_sub.eq(~z[-1] if vec is None or vsub is None else vsub | ~vec & ~z[-1])
-                ahead_angle = Signal(wz, name="fetched")
-                m.d.comb += ahead_angle.eq(lut[zi_next])
-                m.d.sync += z_finished.eq(z_run & z_last)
-                with m.If(~z_run):
-                    m.d.sync += z_run.eq(z_loading if vec is None else z_loading & ~self.vectoring)
-                with m.Elif(z_last):
-                    m.d.sync += z_run.eq(0)
-                z_next = Signal(signed(wz), name="z_next")
-                m.d.comb += z_next.eq(_step(z, angle, z_sub))
-                with m.If(z_run if vec is None else z_run | (vec & run & phase)):
-                    m.d.sync += z.eq(z_next)
-                    m.d.sync += zi.eq(zi_next)
-                    m.d.sync += replayed.bit_select(zi_next, 1).eq(z_next[-1])
-                    m.d.sync += angle.eq(ahead_angle)
-                with m.Elif(z_loading):
-                    m.d.sync += z.eq(self.z0)
-                    m.d.sync += zi.eq(by_mode(lambda seed: Const(seed, wi)))
-                    m.d.sync += angle.eq(by_mode(lambda seed: lut[seed]))
-                z_done = z_finished if vec is None else z_finished | (vec & done)
+                m.d.sync += signs.eq(Cat(signs[1:], z[-1]))
+            m.d.comb += self.z_signs.eq(signs)
 
         m.d.comb += self.done.eq(done)
-        m.d.comb += self.z_done.eq(z_done)
         m.d.comb += self.xn.eq(x)
         m.d.comb += self.yn.eq(y)
         m.d.comb += self.zn.eq(z)

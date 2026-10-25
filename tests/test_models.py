@@ -70,9 +70,9 @@ def test_names() -> None:
     ]
     both = Cordic(F36, stage_core_mul=3, wmultiplier=18).compile().splitlines()
     timing = (
-        "//   timing: {0: Timing(latency=17, initiation_interval=17), 1: Timing(latency=34, initiation_interval=34)}"
+        "//   timing: {0: Timing(latency=22, initiation_interval=22), 1: Timing(latency=43, initiation_interval=43)}"
     )
-    assert "//   unroll100: 200" in both and timing in both
+    assert timing in both
 
 
 def test_a_latency_renames(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -175,7 +175,6 @@ def test_refusals() -> None:
         lambda: Mul(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=2),
         lambda: Fma(F36, wmultiplier=18, stage_core_mul=1),
         lambda: Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
-        lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, unroll100=75),
         lambda: Exp2(F18, wmultiplier=18),
         lambda: Exp2(F36, wmultiplier=18, stage_core_kernel=2),
         lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, mode=0, stage_core=Cordic.CoreStages.MEET),

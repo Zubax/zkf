@@ -8,6 +8,7 @@ which every chip of the figures has.
 from collections.abc import Callable
 from dataclasses import dataclass
 from functools import partial
+from types import MappingProxyType
 from typing import Any
 
 from amaranth.back import verilog
@@ -48,7 +49,7 @@ _CORDIC_SHARED = Cordic.CoreStages.NORMALIZE | Cordic.CoreStages.PACK
 _CORDIC_ROTATION = _CORDIC_SHARED | Cordic.CoreStages.REDUCED | Cordic.CoreStages.CORRECTIONS
 _CORDIC_VECTORING = _CORDIC_SHARED | Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.ANGLE
 _LARGE: list[str] = []
-_FASTER: list[str] = []
+_GRADES: dict[str, dict[str, int]] = {}
 
 
 def _large(spec: Block) -> Block:
@@ -56,8 +57,8 @@ def _large(spec: Block) -> Block:
     return spec
 
 
-def _faster(spec: Block) -> Block:
-    _FASTER.append(spec.name)
+def _grade(spec: Block, **grades: int) -> Block:
+    _GRADES[spec.name] = grades
     return spec
 
 
@@ -115,7 +116,7 @@ CATALOG: dict[str, Block | CoreSpec] = {
         Divsqrt(F18, mode=1),
         # On speed grade 6 one of Diamond's placement cost tables makes 97.1 MHz, nextpnr 117.7, with or without an
         # output stage.
-        _faster(Divsqrt(ZkfFormat(8, 27))),
+        _grade(Divsqrt(ZkfFormat(8, 27)), ecp5_grade=7),
         # Folded into stage 0 beside the root, the divider's first digit makes 96.4 to 100.8 MHz on nextpnr's seeds.
         _large(Divsqrt(F36, stage_core=Divsqrt.CoreStages.FIRST_DIGIT)),
         _large(Divsqrt(F36, mode=0)),
@@ -167,48 +168,70 @@ CATALOG: dict[str, Block | CoreSpec] = {
             stage_core=Log2.CoreStages.ALIGN | Log2.CoreStages.SELECT,
             wmultiplier=18,
         ),
-        # Without PACK nextpnr makes 88.4 to 93.6 MHz, from the normalizer's count into the result; at rotation_seed=1
-        # nextpnr's seeds make 95.9 to 100.8, from the reduced coordinate into the engine.
+        # Without PACK nextpnr makes 88.4 to 93.6 MHz, from the normalizer's count into the result; without FOLDED
+        # nextpnr's seeds make 98.9 to 111.1, from the reduced coordinate into the engine's load.
         Cordic(
-            F18, mode=0, unroll100=100, stage_core_mul=3, stage_core=_CORDIC_ROTATION, rotation_seed=0, wmultiplier=18
+            F18,
+            mode=0,
+            stage_core_mul=3,
+            stage_core=_CORDIC_ROTATION | Cordic.CoreStages.FOLDED,
+            rotation_seed=0,
+            wmultiplier=18,
         ),
         # At stage_core_mul=2 Yosys makes 90.7 MHz in the length's product.
-        Cordic(F18, mode=1, unroll100=100, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-        # Without FOLDED nextpnr's seeds make 74.1 to 77.6 MHz, from the reduced coordinate into the engine.
+        Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
+        # On speed grade 7 nextpnr's seeds make 97.1 to 105.6 MHz, from the engine's one-cycle loop, no register
+        # helping; without the attribute Diamond puts the tables in block RAM and makes 96.2 to 103.8, from a table's
+        # read.
         _large(
-            Cordic(
-                F36,
-                mode=0,
-                unroll100=50,
-                stage_core_mul=4,
-                stage_core=_CORDIC_ROTATION | Cordic.CoreStages.SHIFT | Cordic.CoreStages.FOLDED,
-                wmultiplier=18,
+            _grade(
+                Cordic(
+                    F36,
+                    mode=0,
+                    stage_core_mul=4,
+                    stage_core=_CORDIC_ROTATION | Cordic.CoreStages.FOLDED,
+                    wmultiplier=18,
+                    rom_attrs={"syn_romstyle": "logic"},
+                ),
+                ecp5_grade=8,
             )
         ),
-        # Without ANGLE nextpnr's seeds make 72.7 to 76.5 MHz, from the division into the normalizer; without SHIFTED
-        # 62.1 to 68.6, from the ordered operands into the engine's load.
+        # On speed grade 6 nextpnr's seeds make 89.8 to 94.1 MHz, from the engine's one-cycle loop, no register helping;
+        # Vivado misses by 0.135 ns on its slowest grade, from the same loop.
         _large(
-            Cordic(
-                F36,
-                mode=1,
-                unroll100=50,
-                stage_core_mul=4,
-                stage_core=_CORDIC_VECTORING | Cordic.CoreStages.SHIFTED,
-                wmultiplier=18,
+            _grade(
+                Cordic(
+                    F36,
+                    mode=1,
+                    stage_core_mul=4,
+                    stage_core=_CORDIC_VECTORING | Cordic.CoreStages.SHIFTED,
+                    wmultiplier=18,
+                ),
+                ecp5_grade=7,
+                artix7_grade=2,
             )
         ),
-        # Without ANGLE nextpnr's seeds make 89.7 to 93.0 MHz, from the division into the angle; at vectoring_seed=1
-        # nextpnr makes 93.5 to 109.9, from the seed's iteration into the engine.
+        # On speed grade 7 nextpnr's seeds make 85.3 to 99.0 MHz, from the engine's one-cycle loop, no register helping;
+        # Vivado misses by 0.140 ns on its slowest grade, from the same loop. Without the attribute Diamond puts the
+        # tables in block RAM and makes 96.3 to 103.5, from a table's read.
         _large(
-            Cordic(
-                F36,
-                unroll100=50,
-                stage_core_mul=5,
-                stage_core=~(Cordic.CoreStages.CORRECTIONS | Cordic.CoreStages.NORMALIZE_INPUT),
-                wmultiplier=18,
-                fast=True,
-                rotation_seed=1,
-                vectoring_seed=0,
+            _grade(
+                Cordic(
+                    F36,
+                    stage_core_mul=4,
+                    stage_core=~(
+                        Cordic.CoreStages.SHIFT
+                        | Cordic.CoreStages.SHIFTED
+                        | Cordic.CoreStages.MEET
+                        | Cordic.CoreStages.NORMALIZE_INPUT
+                        | Cordic.CoreStages.ROUNDED
+                    ),
+                    wmultiplier=18,
+                    fast=True,
+                    rom_attrs={"syn_romstyle": "logic"},
+                ),
+                ecp5_grade=8,
+                artix7_grade=2,
             )
         ),
     )
@@ -218,6 +241,6 @@ CATALOG: dict[str, Block | CoreSpec] = {
 ECP5_LARGE = frozenset(_LARGE)
 """The specs that the ECP5 flows place on their larger part: each fills a third or more of the LFE5U-12F's slices."""
 
-ECP5_FASTER = frozenset(_FASTER)
-"""The specs that the ECP5 flows place on their faster speed grade: each misses on the other in one of them, no register
-helping."""
+GRADES = MappingProxyType(_GRADES)
+"""The specs that flows place on a faster speed grade, with those grades as `Design` takes them: each misses on a slower
+one in one of them, no register helping."""
