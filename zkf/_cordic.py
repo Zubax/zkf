@@ -588,7 +588,7 @@ def _cordic_rotate(spec: _Constants, z0: int) -> tuple[int, int, int]:
 def _cordic_vector(spec: _Constants, x0: int, y0: int) -> tuple[int, int, int]:
     """
     The engine's vectoring, which drives y to 0: (x_K, y_K, z_K), x_K being the length times the gain
-    at the scale 2**-xf and z_K the angle in turns at 2**-zf, each wrapped to the engine's width.
+    at the scale 2**-xf and z_K the angle in turns at 2**-zf, each wrapped to its width.
     """
     lut, xw, zw = spec.lut, spec.wx, spec.wz
     x = bits_to_signed(x0 & ((1 << xw) - 1), xw)
@@ -602,6 +602,7 @@ def _cordic_vector(spec: _Constants, x0: int, y0: int) -> tuple[int, int, int]:
         x = bits_to_signed(nx & ((1 << xw) - 1), xw)
         y = bits_to_signed(ny & ((1 << xw) - 1), xw)
         z = bits_to_signed(nz & ((1 << zw) - 1), zw)
+        assert abs(y) << (i + 1) < 1 << xw, "the engine's `u`"
     return x, y, z
 
 
@@ -1372,7 +1373,7 @@ class _Cordic(wiring.Component):
                 m.d.sync += dv_den.eq(den_arm)
                 m.d.sync += dv_den3.eq((Cat(Const(0, 1), den_arm) + den_arm)[: wd + 2])
                 m.d.sync += dv_quo.eq(_zext(held_bypass & held_byp_ibit, wquo))
-                # The engine holds these too; the copies keep what follows off its recurrence.
+                # Copies of what the engine leaves keep what follows off its recurrence.
                 m.d.sync += dv_xn.eq(engine.xn)
                 m.d.sync += dv_zn.eq(engine.zn)
                 m.d.sync += dv_yneg.eq(engine.yn[-1])
@@ -1603,11 +1604,14 @@ class _Engine(wiring.Component):
     goes to zero while `z` gathers the angle of `(x0, y0)`. `mode` is 0 for rotation, 1 for vectoring and 2 for either,
     vectoring where `vectoring` is high at `start`. `lut` is the angle of each iteration, unsigned.
 
+    `y` is held as `u = y * 2**i`, so its step takes `x` with the low `i` bits cleared, not shifted; `x`'s takes
+    `u >> 2i`, which a register holds a cycle ahead of `x`'s add. No cycle holds both a shift and an add.
+
     `seed` is the iteration that a rotation starts at, a vectoring starting at `_SEED`. `start` for a cycle takes `x0`,
     `y0` and `z0`, those of its mode's seed, and is ignored while the engine runs; a vectoring's load adds `xa` to `x0`
-    and `ya` to `y0` on the iteration's adders. `ahead`, where nonzero, raises `z_ahead` that many iterations before
-    the end and gives in `z_signs` the signs of `z` from there on but the last's. `done` is high for a cycle with `xn`,
-    `yn`, `zn`. `rom_attrs` goes on the read of the angles.
+    and `ya`, unsigned, to `y0` on the iteration's adders, sums that fit `wx` bits as integers. `ahead`, where nonzero,
+    raises `z_ahead` that many iterations before the end and gives in `z_signs` the signs of `z` from there on but the
+    last's. `done` is high for a cycle with `xn`, `yn`, `zn`. `rom_attrs` goes on the read of the angles.
     """
 
     start: Signal
@@ -1659,18 +1663,20 @@ class _Engine(wiring.Component):
         run, done = Signal(name="run"), Signal(name="done")
         i = Signal(wi, name="i", reset_less=True)
         vec = Signal(1, name="vec", reset_less=True) if mode == 2 else None
-        x, y, z = (
-            Signal(signed(wx), name="x", reset_less=True),
-            Signal(signed(wx), name="y", reset_less=True),
-            Signal(signed(wz), name="z", reset_less=True),
-        )
+        # A rotation's `y` does not shrink, so its `u` takes every iteration's bit.
+        wu = wx + 1 if mode == 1 else wx + n
+        u = Signal(signed(wu), name="u", reset_less=True)
+        xr = Signal(signed(wx), name="xr", reset_less=True)
+        d = Signal(wx, name="d", reset_less=True)
+        d_carry = Signal(name="d_carry", reset_less=True)
+        z = Signal(signed(wz), name="z", reset_less=True)
         i_next = Signal(wi, name="i_next")
         m.d.comb += i_next.eq((i + 1)[:wi])
         last = Signal(name="last")
         m.d.comb += last.eq(i_next >= n)
-        seed = Const(_SEED if mode == 1 else self._seed, wi)
-        if mode == 2 and self._seed != _SEED:
-            seed = Mux(self.vectoring, Const(_SEED, wi), Const(self._seed, wi))
+        # What the load is: a vectoring's, with its addends, or a rotation's.
+        vectors = (Const(0), Const(1), self.vectoring)[mode]
+        seed = Mux(vectors, Const(_SEED, wi), Const(self._seed, wi))
 
         m.d.sync += done.eq(run & last)
         with m.If(run):
@@ -1683,38 +1689,49 @@ class _Engine(wiring.Component):
             if vec is not None:
                 m.d.sync += vec.eq(self.vectoring)
 
-        x_in = Signal(signed(wx), name="x_in")
-        m.d.comb += x_in.eq(Mux(run, x, self.x0))
-        y_in = Signal(signed(wx), name="y_in")
-        m.d.comb += y_in.eq(Mux(run, y, self.y0))
         neg = Signal(name="neg")
-        m.d.comb += neg.eq(Mux(vec, ~y[-1], z[-1]) if vec is not None else (z[-1], ~y[-1])[mode])
+        m.d.comb += neg.eq(Mux(vec, ~u[-1], z[-1]) if vec is not None else (z[-1], ~u[-1])[mode])
         sub_z = Signal(name="sub_z")
         m.d.comb += sub_z.eq(~neg)
-        sub_x = Signal(name="sub_x")
-        m.d.comb += sub_x.eq(run & sub_z)
-        sub_y = Signal(name="sub_y")
-        m.d.comb += sub_y.eq(run & neg)
-        x_by: Value = (y >> i).as_unsigned() & run.replicate(wx)
-        y_by: Value = (x >> i).as_unsigned() & run.replicate(wx)
-        if mode:
-            # Idle, a vectoring's load adds the addends of its seed.
-            seeding = Signal(name="seeding")
-            m.d.comb += seeding.eq(~run & (1 if mode == 1 else self.vectoring))
-            x_by, y_by = Mux(seeding, self.xa, x_by), Mux(seeding, self.ya, y_by)
-        x_next, y_next = Signal(signed(wx), name="x_next"), Signal(signed(wx), name="y_next")
-        m.d.comb += [x_next.eq(_step(x_in, x_by, sub_x)), y_next.eq(_step(y_in, y_by, sub_y))]
+        x_now = Signal(signed(wx), name="x_now")
+        m.d.comb += x_now.eq((xr + d + d_carry)[:wx])
+        index = Signal(wi, name="index")
+        m.d.comb += index.eq(Mux(run, i_next, seed))
+        kept = Signal(wx, name="kept", reset_less=True)
+        m.d.sync += kept.eq(Cat(index <= k for k in range(wx)))
+        cleared = Signal(wx, name="cleared")
+        m.d.comb += cleared.eq(x_now.as_unsigned() & kept)
+        # The loads, at their seed's scale, halved for the doubling that every step of `u` takes.
+        y_load, y_add = Signal(signed(wu), name="y_load"), Signal(signed(wu), name="y_add")
+        m.d.comb += y_load.eq(Mux(vectors, self.y0 << (_SEED - 1), self.y0 << (self._seed - 1)))
+        m.d.comb += y_add.eq(Mux(vectors, self.ya << (_SEED - 1), 0))
+        u_in = Signal(signed(wu), name="u_in")
+        m.d.comb += u_in.eq(Mux(run, u, y_load))
+        u_by = Signal(signed(wu), name="u_by")
+        m.d.comb += u_by.eq(Mux(run, cleared.as_signed() ^ neg.replicate(wx).as_signed(), y_add))
+        u_next = Signal(signed(wu), name="u_next")
+        m.d.comb += u_next.eq(((u_in + u_by + (run & neg)) << 1)[:wu])
         with m.If(run | self.start):
-            m.d.sync += x.eq(x_next)
-            m.d.sync += y.eq(y_next)
-        # What is read past the last angle by the idle engine is not used.
-        lut = Array(Const(angle, wz) for angle in self._lut)
+            m.d.sync += u.eq(u_next)
+        with m.If(run):
+            m.d.sync += xr.eq(x_now)
+            m.d.sync += d.eq((u >> (2 * i))[:wx] ^ sub_z.replicate(wx))
+            m.d.sync += d_carry.eq(sub_z)
+        with m.Elif(self.start):
+            m.d.sync += xr.eq(self.x0)
+            m.d.sync += d.eq(Mux(vectors, self.xa, 0))
+            m.d.sync += d_carry.eq(0)
+        # What is read past the last angle by the idle engine is not used. The angle of the iteration under way is read
+        # a cycle ahead.
+        lut = Array(Const(a, wz) for a in self._lut)
         angle = Signal(wz, name="angle", attrs=self._rom_attrs)
-        m.d.comb += angle.eq(lut[i])
+        m.d.comb += angle.eq(lut[index])
+        angle_r = Signal(wz, name="angle_r", reset_less=True)
+        m.d.sync += angle_r.eq(angle)
         # `z` keeps a load of its own: with a bare sum ahead of it, a tool may retime the register into the adder, onto
         # the path of the sign.
         with m.If(run):
-            m.d.sync += z.eq(_step(z, angle, sub_z))
+            m.d.sync += z.eq(_step(z, angle_r, sub_z))
         with m.Elif(self.start):
             m.d.sync += z.eq(self.z0)
         if self._ahead:
@@ -1726,7 +1743,7 @@ class _Engine(wiring.Component):
             m.d.comb += self.z_signs.eq(signs)
 
         m.d.comb += self.done.eq(done)
-        m.d.comb += self.xn.eq(x)
-        m.d.comb += self.yn.eq(y)
+        m.d.comb += self.xn.eq(x_now)
+        m.d.comb += self.yn.eq((u >> n)[:wx])
         m.d.comb += self.zn.eq(z)
         return m

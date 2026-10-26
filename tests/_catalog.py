@@ -169,7 +169,7 @@ CATALOG: dict[str, Block | CoreSpec] = {
             wmultiplier=18,
         ),
         # Without PACK nextpnr makes 88.4 to 93.6 MHz, from the normalizer's count into the result; without FOLDED
-        # nextpnr's seeds make 98.9 to 111.1, from the reduced coordinate into the engine's load.
+        # Vivado misses by 0.064 ns, from the reduced coordinate into the engine.
         Cordic(
             F18,
             mode=0,
@@ -180,9 +180,9 @@ CATALOG: dict[str, Block | CoreSpec] = {
         ),
         # At stage_core_mul=2 Yosys makes 90.7 MHz in the length's product.
         Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-        # On speed grade 7 nextpnr's seeds make 97.1 to 105.6 MHz, from the engine's one-cycle loop, no register
-        # helping; without the attribute Diamond puts the tables in block RAM and makes 96.2 to 103.8, from a table's
-        # read.
+        # On speed grade 6 nextpnr's seeds make 90.4 to 101.6 MHz and Diamond 87.1 to 94.2, from the engine's adds of
+        # an iteration, no register helping; without FOLDED nextpnr's seeds make 76.1 to 79.5; without the attribute
+        # Diamond puts the tables in block RAM and makes 88.9 to 94.0, from their reads.
         _large(
             _grade(
                 Cordic(
@@ -193,27 +193,20 @@ CATALOG: dict[str, Block | CoreSpec] = {
                     wmultiplier=18,
                     rom_attrs={"syn_romstyle": "logic"},
                 ),
-                ecp5_grade=8,
+                ecp5_grade=7,
             )
         ),
-        # On speed grade 6 nextpnr's seeds make 89.8 to 94.1 MHz, from the engine's one-cycle loop, no register helping;
-        # Vivado misses by 0.135 ns on its slowest grade, from the same loop.
+        # On speed grade 6 Diamond makes 93.5 to 95.7 MHz, from the angle table's read in block RAM; with the table kept
+        # in logic one of its placement cost tables makes 99.3, in the length's product, whose count is at its most.
         _large(
             _grade(
-                Cordic(
-                    F36,
-                    mode=1,
-                    stage_core_mul=4,
-                    stage_core=_CORDIC_VECTORING | Cordic.CoreStages.SHIFTED,
-                    wmultiplier=18,
-                ),
+                Cordic(F36, mode=1, stage_core_mul=4, stage_core=_CORDIC_VECTORING, wmultiplier=18),
                 ecp5_grade=7,
-                artix7_grade=2,
             )
         ),
-        # On speed grade 7 nextpnr's seeds make 85.3 to 99.0 MHz, from the engine's one-cycle loop, no register helping;
-        # Vivado misses by 0.140 ns on its slowest grade, from the same loop. Without the attribute Diamond puts the
-        # tables in block RAM and makes 96.3 to 103.5, from a table's read.
+        # On speed grade 7 nextpnr's seeds make 98.7 to 106.2 MHz, from the engine's adds of an iteration, and Diamond
+        # 97.0 to 100.4, from the seed's compares and the same adds; without the attribute Diamond puts the tables in
+        # block RAM and makes 89.2 to 104.2, from their reads.
         _large(
             _grade(
                 Cordic(
@@ -231,7 +224,6 @@ CATALOG: dict[str, Block | CoreSpec] = {
                     rom_attrs={"syn_romstyle": "logic"},
                 ),
                 ecp5_grade=8,
-                artix7_grade=2,
             )
         ),
     )

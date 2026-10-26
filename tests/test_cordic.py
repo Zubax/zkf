@@ -337,12 +337,15 @@ def test_engine_from_its_seeds(wman: int, mode: int) -> None:
                     z0 = z0 - c.lut[i] if up else z0 + c.lut[i]
                 start = seed
                 expected = iterate(x0, y0, z0, start, False)
-            cases.append((vectoring, x0, y0, z0, expected))
+            # A vectoring's load in two parts, as its seed gives them: a word and an addend below half the range.
+            xa, ya = (int(rng.integers(0, 1 << (c.wx - 2))) if vectoring else 0 for _ in range(2))
+            cases.append((vectoring, x0 - xa, xa, y0 - ya, ya, z0, expected))
     dut = _Engine(c.lut, wx=c.wx, wz=c.wz, mode=mode, seed=seed)
 
     async def bench(ctx: Any) -> None:
-        for vectoring, x0, y0, z0, expected in cases:
-            for port, value in ((dut.vectoring, vectoring), (dut.x0, x0), (dut.y0, y0), (dut.z0, z0)):
+        for vectoring, x0, xa, y0, ya, z0, expected in cases:
+            ports = ((dut.vectoring, vectoring), (dut.x0, x0), (dut.xa, xa), (dut.y0, y0), (dut.ya, ya), (dut.z0, z0))
+            for port, value in ports:
                 ctx.set(port, value)
             ctx.set(dut.start, 1)
             await ctx.tick()
@@ -351,7 +354,7 @@ def test_engine_from_its_seeds(wman: int, mode: int) -> None:
                 if ctx.get(dut.done):
                     break
                 await ctx.tick()
-            assert (ctx.get(dut.xn), ctx.get(dut.yn), ctx.get(dut.zn)) == expected, (vectoring, x0, y0, z0)
+            assert (ctx.get(dut.xn), ctx.get(dut.yn), ctx.get(dut.zn)) == expected, (vectoring, x0, xa, y0, ya, z0)
             await ctx.tick()
 
     sim = Simulator(dut)
