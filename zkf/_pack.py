@@ -195,7 +195,6 @@ def pack_reference(
     round_increment = bool(guard and (round_bit or sticky or (significand_value & 1)))
     rounded_ext = (significand_value & ((1 << fmt.wman) - 1)) + (1 if round_increment else 0)
     round_carry = (rounded_ext >> fmt.wman) & 1
-    rounded_significand = (rounded_ext >> 1) if round_carry else (rounded_ext & ((1 << fmt.wman) - 1))
     exp_round_overflow = (exp_biased == fmt.exp_max_finite) and bool(round_carry)
     saturated = saturate_round_carry and exp_round_overflow
     infinity = bool(force_inf or exp_overflow or (exp_round_overflow and not saturate_round_carry))
@@ -214,4 +213,4 @@ def pack_reference(
         return fmt.pack(sign, fmt.exp_max_finite, fmt.frac_mask).bits
 
     exp_rounded = (exp_biased + round_carry) & ((1 << fmt.wexp) - 1)
-    return fmt.pack(sign, exp_rounded, rounded_significand & fmt.frac_mask).bits
+    return fmt.pack(sign, exp_rounded, rounded_ext & fmt.frac_mask).bits

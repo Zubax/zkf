@@ -108,14 +108,14 @@ def run_pipeline(dut: wiring.Component, latency: int, cases: Sequence[Case], see
             bench.check(values, expected.outputs, where)
 
 
-def run_handshake(dut: wiring.Component, cases: Sequence[Case], seed: int = 0, overlap: bool = False) -> None:
+def run_handshake(dut: wiring.Component, cases: Sequence[Case], seed: int = 0) -> None:
     """
     One transaction per case. It is taken in a cycle with `in_valid` and `in_ready`, and its outputs show
     `case.latency` cycles later under `out_valid`, which holds them until a cycle with `out_ready`; `in_ready` is low
-    from the cycle after it is taken until it is handed over, and high in that cycle under `overlap`, else in the next.
-    Some transactions are held back by the consumer, some follow the previous one with no idle cycle (in the cycle it
-    is handed over under `overlap`), and some are cut by reset, while in progress or while held: nothing of them may
-    come out afterwards, and one cut while in progress is given again.
+    from the cycle after it is taken until it is handed over, and high in that cycle. Some transactions are held back
+    by the consumer, some follow the previous one with no idle cycle (in the cycle it is handed over), and some are cut
+    by reset, while in progress or while held: nothing of them may come out afterwards, and one cut while in progress
+    is given again.
     The kinds come in equal numbers, in an order that the seed shuffles.
     """
     bench = _Handshake(dut, cases, seed)
@@ -154,12 +154,12 @@ def run_handshake(dut: wiring.Component, cases: Sequence[Case], seed: int = 0, o
                     await bench.reset(ctx, where, bench.quiet)
                     continue
                 ctx.set(dut.out_ready, 1)
-            if overlap and queue and queue[0][2] == "back to back":
+            if queue and queue[0][2] == "back to back":
                 await bench.offer(ctx, f"{where}, result, {queue[0][0]} offered", queue[0][1], expected=case)
                 taken = True
             else:
                 ctx.set(dut.in_valid, 0)
-                await bench.idle(ctx, f"{where}, result", ready=overlap, expected=case)
+                await bench.idle(ctx, f"{where}, result", ready=True, expected=case)
         ctx.set(dut.in_valid, 0)
         for _ in range(3):
             await bench.idle(ctx, "end", ready=True, expected=None)
@@ -168,7 +168,7 @@ def run_handshake(dut: wiring.Component, cases: Sequence[Case], seed: int = 0, o
     bench.sim.run()
 
 
-def run_cuts(dut: wiring.Component, pairs: Sequence[tuple[Case, Case]], seed: int = 0, overlap: bool = False) -> None:
+def run_cuts(dut: wiring.Component, pairs: Sequence[tuple[Case, Case]], seed: int = 0) -> None:
     """
     The first transaction of a pair, cut by reset in each cycle of its own, that of its result included, and the
     second given after each cut, once in the next cycle and once past where the first was due: the second comes out
@@ -191,7 +191,7 @@ def run_cuts(dut: wiring.Component, pairs: Sequence[tuple[Case, Case]], seed: in
             for cycle in range(1, then.latency):
                 await bench.idle(ctx, f"{where}, the next, cycle {cycle}", ready=False, expected=None)
             ctx.set(dut.in_valid, 0)
-            await bench.idle(ctx, f"{where}, the next, result", ready=overlap, expected=then)
+            await bench.idle(ctx, f"{where}, the next, result", ready=True, expected=then)
             # What is left of the first would show by the cycle it was due in.
             for _ in range(max(first.latency - cut - then.latency, 0) * at_once + 2):
                 await bench.idle(ctx, f"{where}, afterwards", ready=True, expected=None)

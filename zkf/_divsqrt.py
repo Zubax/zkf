@@ -207,6 +207,44 @@ class DivsqrtStep(wiring.Component):
         return m
 
 
+class DivideStep8(wiring.Component):
+    """
+    One radix-8 digit of a division, `w' = 8w - digit * d`: `digit` is the largest of 0 to 7 with `digit * d <= 8w`,
+    for `w < d`. The caller holds `d3`, `d5` and `d7`, `d`'s multiples. `ww` is the width of `w` and `d`.
+    """
+
+    w: Signal
+    d: Signal
+    d3: Signal
+    d5: Signal
+    d7: Signal
+    digit: Signal
+    w_next: Signal
+
+    def __init__(self, ww: int) -> None:
+        super().__init__(
+            {"w": In(ww), "d": In(ww), "d3": In(ww + 2), "d5": In(ww + 3), "d7": In(ww + 3)}
+            | {"digit": Out(3), "w_next": Out(ww)}
+        )
+
+    def elaborate(self, platform: object) -> Module:
+        m = Module()
+        ww, d, d3 = len(self.w), self.d, self.d3
+        scaled = Cat(Const(0, 3), self.w)
+        subtrahends = [d, d << 1, d3, d << 2, self.d5, d3 << 1, self.d7]
+        differences = [Signal(signed(ww + 4), name=f"t{k}") for k in range(1, 8)]
+        m.d.comb += [t.eq(scaled - f) for t, f in zip(differences, subtrahends)]
+        g1, g2, g3, g4, g5, g6, g7 = (~t[-1] for t in differences)
+        r = [scaled[:ww]] + [t[:ww] for t in differences]
+        # A tree by the monotonic compares measures faster than a priority select.
+        w_next = Mux(
+            g4, Mux(g6, Mux(g7, r[7], r[6]), Mux(g5, r[5], r[4])), Mux(g2, Mux(g3, r[3], r[2]), Mux(g1, r[1], r[0]))
+        )
+        m.d.comb += self.w_next.eq(w_next)
+        m.d.comb += self.digit.eq(Cat(Mux(g4, Mux(g6, g7, g5), Mux(g2, g3, g1)), Mux(g4, g6, g2), g4))
+        return m
+
+
 class _First(NamedTuple):
     """What the first stage of a root or of a division gives the registers of stage 0."""
 

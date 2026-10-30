@@ -292,15 +292,18 @@ not all states are mappable between the formats.
 
 Roughly ordered by severity.
 
-- `divsqrt` and `cordic`'s division could take a radix-8 SRT digit a stage on a carry-save remainder, behind a `fast`
-  knob: two thirds of the digits (`divsqrt` at e8m36: 17 cycles to about 12). Two radix-4 SRT digits a stage, built in
-  `cordic` and bit-identical, run at 55 to 89 MHz on the ECP5.
+- `divsqrt` could take a radix-8 digit a stage beside its radix-4 one, behind a knob: two thirds of the digits (e8m36:
+  17 cycles to about 12), each about 2.3 times the LUTs of a radix-4 digit at 0.84 times its speed, as measured in
+  `cordic`'s division. SRT digits on a carry-save remainder, one of radix 8 or two of radix 4 a stage, run slower on the
+  ECP5.
 
 - `divsqrt` at e8m27 needs ECP5 speed grade 7 because LSE puts the packer's fraction mask on the set and reset of the
   result's register. An attribute hook on the masked fraction would take `syn_keep`, which keeps the mask in LUTs
   (115 to 122 MHz on speed grade 6), but LSE takes the attribute value only unsized (e.g., `1`), and Yosys's
   `write_verilog`, which prints Amaranth's Verilog, sizes every integer attribute (`32'd1`).
   The [PR fixing this](https://github.com/YosysHQ/yosys/pull/6387) has been submitted to Yosys already, blocked on that.
+
+- Add Altera Quartus Lite to the vendor synthesis tool set to ensure we don't overfit for AMD & Lattice.
 
 - Transcendental operator refinements (`exp2`, `log2`):
   - The kernels of WMAN 44 to 53 can start their chain a cycle earlier (measured bit-identical at the catalog's widths);

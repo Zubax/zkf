@@ -168,8 +168,9 @@ CATALOG: dict[str, Block | CoreSpec] = {
             stage_core=Log2.CoreStages.ALIGN | Log2.CoreStages.SELECT,
             wmultiplier=18,
         ),
-        # Without PACK nextpnr makes 88.4 to 93.6 MHz, from the normalizer's count into the result; without FOLDED
-        # Vivado misses by 0.064 ns, from the reduced coordinate into the engine.
+        # Without PACK nextpnr's seeds make 86.5 to 90.1 MHz, from the normalizer's count into the result; without
+        # FOLDED nextpnr's seeds make 99.4 to 103.2 and Vivado misses by 0.031 ns, from the reduced coordinate into the
+        # engine.
         Cordic(
             F18,
             mode=0,
@@ -178,35 +179,36 @@ CATALOG: dict[str, Block | CoreSpec] = {
             rotation_seed=0,
             wmultiplier=18,
         ),
-        # At stage_core_mul=2 Yosys makes 90.7 MHz in the length's product.
+        # At stage_core_mul=2 nextpnr's seeds make 88.5 to 92.4 MHz, in the length's product.
         Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-        # On speed grade 6 nextpnr's seeds make 90.4 to 101.6 MHz and Diamond 87.1 to 94.2, from the engine's adds of
-        # an iteration, no register helping; without FOLDED nextpnr's seeds make 76.1 to 79.5; without the attribute
-        # Diamond puts the tables in block RAM and makes 88.9 to 94.0, from their reads.
+        # On speed grade 7 it closes thinly: Diamond makes 102.0 to 108.7 MHz, from the engine's adds of an iteration,
+        # and nextpnr's seeds 102.8 to 110.1, from the sine's sum into the normalizer; without the attribute Diamond
+        # puts the tables in block RAM and makes 94.0 to 104.0, from their reads.
         _large(
             _grade(
                 Cordic(
                     F36,
                     mode=0,
                     stage_core_mul=4,
-                    stage_core=_CORDIC_ROTATION | Cordic.CoreStages.FOLDED,
+                    stage_core=(_CORDIC_ROTATION | Cordic.CoreStages.FOLDED) & ~Cordic.CoreStages.CORRECTIONS,
                     wmultiplier=18,
                     rom_attrs={"syn_romstyle": "logic"},
                 ),
-                ecp5_grade=7,
+                ecp5_grade=8,
             )
         ),
-        # On speed grade 6 Diamond makes 93.5 to 95.7 MHz, from the angle table's read in block RAM; with the table kept
-        # in logic one of its placement cost tables makes 99.3, in the length's product, whose count is at its most.
+        # On speed grade 6 Diamond makes 87.0 to 95.3 MHz, from the division's loop and the engine's angle into `z`, and
+        # nextpnr's seeds 95.1 to 103.7, from the engine's `x` into the divisor's multiples at the load.
         _large(
             _grade(
                 Cordic(F36, mode=1, stage_core_mul=4, stage_core=_CORDIC_VECTORING, wmultiplier=18),
                 ecp5_grade=7,
             )
         ),
-        # On speed grade 7 nextpnr's seeds make 98.7 to 106.2 MHz, from the engine's adds of an iteration, and Diamond
-        # 97.0 to 100.4, from the seed's compares and the same adds; without the attribute Diamond puts the tables in
-        # block RAM and makes 89.2 to 104.2, from their reads.
+        # On speed grade 7 Diamond makes 93.6 to 98.1 MHz, from the engine's adds of an iteration, and nextpnr's seeds
+        # 92.1 to 96.5, from the sine's sum into the normalizer; on Artix-7 -1 Vivado misses by 0.178 ns, in the
+        # division's loop, no register helping; on grade 8 without the attribute Diamond puts the tables in block RAM
+        # and makes 91.1 to 100.0, from their reads.
         _large(
             _grade(
                 Cordic(
@@ -214,16 +216,17 @@ CATALOG: dict[str, Block | CoreSpec] = {
                     stage_core_mul=4,
                     stage_core=~(
                         Cordic.CoreStages.SHIFT
+                        | Cordic.CoreStages.CORRECTIONS
                         | Cordic.CoreStages.SHIFTED
                         | Cordic.CoreStages.MEET
                         | Cordic.CoreStages.NORMALIZE_INPUT
                         | Cordic.CoreStages.ROUNDED
                     ),
                     wmultiplier=18,
-                    fast=True,
                     rom_attrs={"syn_romstyle": "logic"},
                 ),
                 ecp5_grade=8,
+                artix7_grade=2,
             )
         ),
     )

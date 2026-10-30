@@ -167,8 +167,8 @@ def normshift_reference(width: int, value: int) -> tuple[int, int, int]:
     value &= (1 << width) - 1
     if value == 0:
         return 1, 0, 0
-    count = (width - 1) - (value.bit_length() - 1)
-    return 0, count, (value << count) & ((1 << width) - 1)
+    count = width - value.bit_length()
+    return 0, count, value << count
 
 
 class _RightLevel(wiring.Component):

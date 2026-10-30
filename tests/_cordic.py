@@ -24,13 +24,11 @@ from _operands import (
 )
 from zkf import Timing, Zkf, ZkfFormat
 from zkf._cordic import (
-    _GUARD_DIV,
     _LACKED,
     Cordic,
-    _atan2_bypass_shift,
     _constants,
-    _cordic_vector,
     _geometry,
+    _iterate,
     _vector_residual,
 )
 from zkf._pmul import counts
@@ -48,14 +46,15 @@ SHORT = {
 
 def synthesized(wman: int, mode: int = 2) -> dict[str, Any]:
     """
-    The knobs of the catalog's specs at 6/18, or at 8/36 above WMAN 24: the product's count and the packers of the
-    mode's spec, or of them all, which agree, where it has none, the count brought within what the width takes; the
-    rotation's seed of the specs that rotate; the registers of them all that the mode builds.
+    The knobs of the catalog's specs at 6/18, or at 8/36 above WMAN 24: the product's count of the mode's spec, or of
+    them all, which agree, where it has none, the count brought within what the width takes, and `fast` where one of
+    those has it; the rotation's seed of the specs that rotate; the registers of them all that the mode builds.
     """
     width = 18 if wman <= 24 else 36
     found = [model for model in CATALOG.values() if isinstance(model, Cordic) and model.fmt.wman == width]
     own = [model for model in found if model.mode == mode] or found
-    ((sm, fa),) = {(model.stage_core_mul, model.fast) for model in own}
+    (sm,) = {model.stage_core_mul for model in own}
+    fa = any(model.fast for model in own)
     taken = counts(*_geometry(wman).operands(mode), signed=mode != 1, wmultiplier=18)
     sm = min(max(sm, taken.start), taken.stop - 1)
     (rs,) = {model.rotation_seed for model in own if model.mode != 1} or {0}
@@ -65,14 +64,31 @@ def synthesized(wman: int, mode: int = 2) -> dict[str, Any]:
 
 # Operands that were once more than an ULP off, by wexp and wman: a rotation's, and `(y, x)` on either result. Of
 # the latter at 6/18, three are just below where the length overflows, and the last, with that at 5/16, has its
-# angle on either side of half the least normal.
+# angle on either side of half the least normal; at 8/50 the angle, before `_GUARD_XY_MORE`.
 ROTATED = {(8, 24): [0x3EFFFBD1], (6, 18): [0x3E0044]}
 VECTORED = {
     (6, 16): [(0x38967F, 0x1DEA13)],
     (6, 18): [(0x7BEC6A, 0x7D7C61), (0x6BFFFF, 0x7DFFFF), (0x786922, 0x7DF44F), (0x6BF359, 0x7DFFFF)]
     + [(0x05F9A3, 0x3E87D9)],
     (5, 16): [(0x016E79, 0x0797D1)],
+    (8, 50): [(0xCC007D6BD02BAD, 0xFE90DBE5607E0D)],
 }
+# Rotations whose residual angle reaches a bit above its cut, by wexp and wman: the operator once wrapped it there.
+REACHED = {(8, 39): [0x1D3E2E507200, 0x1F3F81D1AF8E, 0x1F403F172839, 0x1F7FC0E8D7C7]}
+# Significands of `x` and `y` and the difference of their exponents, by wman, where the engine leaves `8 y = 4 x`: the
+# first digit of the radix-8 division is 4, its remainder zero.
+FIRST_DIGIT = {24: [(10719414, 9663183, 11)], 36: [(36285638035, 43317925495, 17)]}
+
+
+def first_digits(fmt: ZkfFormat) -> list[tuple[int, int]]:
+    """`(y, x)` of `FIRST_DIGIT` at the format's WMAN, `y` of either sign, where it is normal."""
+    hidden = 1 << fmt.wfrac
+    return [
+        (fmt.pack(sy, fmt.bias - shift, sig_y - hidden).bits, fmt.pack(0, fmt.bias, sig_x - hidden).bits)
+        for sig_x, sig_y, shift in FIRST_DIGIT.get(fmt.wman, [])
+        if fmt.bias - shift >= 1
+        for sy in (0, 1)
+    ]
 
 
 def rotations(fmt: ZkfFormat) -> list[int]:
@@ -80,7 +96,8 @@ def rotations(fmt: ZkfFormat) -> list[int]:
     Zeros and infinities with and without a fraction; the directed numbers; every quarter of a turn up to two and the
     odd eighths below one, the floats next to a quarter, whole turns; both sides of where the linear path takes over,
     at either end of every quadrant; what is too small for the reduction to resolve, and the exponents at which it
-    starts and stops shifting; and angles inside the octants, which the iterations and their correction serve.
+    starts and stops shifting; angles inside the octants, which the iterations and their correction serve; and
+    `REACHED`.
     """
     sign_bit = 1 << fmt.sign_shift
     out = [0, sign_bit, fmt.exp_inf << fmt.wfrac, sign_bit | (fmt.exp_inf << fmt.wfrac), (1 << fmt.wfull) - 1]
@@ -88,7 +105,7 @@ def rotations(fmt: ZkfFormat) -> list[int]:
         return out
     out += directed_numbers(fmt).values()
     spec = _constants(fmt.wman)
-    edge = Fraction(spec.tsa, 1 << (spec.wt + 2))
+    edge = Fraction(1, 1 << (spec.wff - spec.wlin))
     for sign in (0, 1):
         for k in range(1, 8):
             top = k.bit_length() - 1
@@ -110,22 +127,23 @@ def rotations(fmt: ZkfFormat) -> list[int]:
                     out += [(bits + step) | (sign << fmt.sign_shift) for step in (-2, -1, 0, 1, 2)]
         for exp in (1, 2, 3):
             out += [fmt.pack(sign, exp, frac).bits for frac in (1, fmt.frac_mask) if exp <= fmt.exp_max_finite]
-        wff = spec.wt + 2
+        wff = spec.wff
         least = fmt.bias - (wff - fmt.wman) - 1  # of the exponents whose significand reaches the reduced fraction
-        clamps = [exp for exp in range(least - 1, least + 2)] + [exp for exp in range(least + wff - 1, least + wff + 2)]
+        clamps = [*range(least - 1, least + 2), *range(least + wff - 1, least + wff + 2)]
         out += [fmt.pack(sign, e, f).bits for e in clamps if 1 <= e <= fmt.exp_max_finite for f in (0, fmt.frac_mask)]
         inside = [fmt.frac_mask // 3, fmt.frac_mask // 5 * 3, fmt.frac_mask // 7 * 6]
         exponents = range(max(1, fmt.bias - 6), min(fmt.bias + 3, fmt.exp_max_finite + 1))
         out += [fmt.pack(sign, exp, frac).bits for exp in exponents for frac in inside]
-    return out
+    return out + REACHED.get((fmt.wexp, fmt.wman), [])
 
 
 def pairs(fmt: ZkfFormat) -> list[tuple[int, int]]:
     """
     `(y, x)`: every pair of the zeros and infinities; the quadrants and the diagonals of the octants; the axes; one
     far smaller than the other, where the angle rounds to an end of its range; a ratio across the bypass at every
-    exponent, and bypassed ones whose magnitude has the bit of a half turn set; lengths up to the largest finite one
-    and past it; and angles either side of where they round onto a half turn, and one at a half turn or past it.
+    exponent, and bypassed ones whose magnitude has the bit of a half turn set or whose significands are furthest apart;
+    where the radix-8 division's first digit is 4; lengths up to the largest finite one and past it; and angles either
+    side of where they round onto a half turn, and one at a half turn or past it.
     """
     sign_bit, inf = 1 << fmt.sign_shift, fmt.exp_inf << fmt.wfrac
     raw = [0, sign_bit, inf, sign_bit | inf, (1 << fmt.wfull) - 1]
@@ -147,12 +165,18 @@ def pairs(fmt: ZkfFormat) -> list[tuple[int, int]]:
     sig_x = Zkf(fmt, one).significand()
 
     def half_bit(frac: int) -> bool:
-        r, rest = divmod((frac | 1 << fmt.wfrac) << 2 * c.steps, sig_x)
+        r, rest = divmod((frac | 1 << fmt.wfrac) << c.fb, sig_x)
         return bool((r * c.inv_tau | bool(rest)) >> (c.zf - 1) & 1)
 
     frac = next(frac for frac in range(fmt.frac_mask, -1, -1) if half_bit(frac))
-    below = fmt.bias - _atan2_bypass_shift(fmt)
+    below = fmt.bias - c.bypass
     out += [(fmt.pack(1, exp, frac).bits, one) for exp in range(max(1, below - 3), max(1, below))]
+    if below > 1:
+        extremes = ((fmt.frac_mask, 0), (0, fmt.frac_mask))
+        out += [
+            (fmt.pack(sy, below - 1, fy).bits, fmt.pack(0, fmt.bias, fx).bits) for fy, fx in extremes for sy in (0, 1)
+        ]
+    out += first_digits(fmt)
     top = fmt.pack(0, fmt.exp_max_finite, fmt.frac_mask).bits
     for exp in range(max(1, fmt.exp_max_finite - fmt.wman // 2 - 3), fmt.exp_max_finite + 1):
         out += [(fmt.pack(0, exp, frac).bits, top) for frac in (0, fmt.frac_mask)]
@@ -246,7 +270,7 @@ def case(model: Cordic, vectoring: bool, a: int, b: int, noise: int = 0) -> Case
 def build(fmt: ZkfFormat, mode: int = 2, **short: Any) -> Cordic:
     """The model, its knobs in short; `wm` is a multiplier width other than 18, and `sm` the fewest unless given."""
     width = short.pop("wm", 18)
-    fewest = counts(*_geometry(fmt.wman).operands(mode), signed=mode != 1, wmultiplier=width).start
+    fewest = max(counts(*_geometry(fmt.wman).operands(mode), signed=mode != 1, wmultiplier=width).start, 1)
     knobs = {SHORT[name]: value for name, value in ({"sm": fewest} | short).items()}
     return Cordic(fmt, mode=mode, wmultiplier=width, **knobs)
 
@@ -277,7 +301,7 @@ def run(wexp: int, wman: int, kind: str | int, mode: int = 2, shard: int = 0, sh
 def simulate(model: Cordic, kind: str | int, shard: int = 0, shards: int = 1, alternate: bool = False) -> None:
     """The bench's seed follows the configuration."""
     found = cases(model, kind, shard, shards, alternate=alternate)
-    run_handshake(model.component(), found, zlib.crc32(model.name.encode()) % 3, overlap=overlaps(model))
+    run_handshake(model.component(), found, zlib.crc32(model.name.encode()) % 3)
 
 
 def cut(model: Cordic) -> None:
@@ -297,15 +321,7 @@ def cut(model: Cordic) -> None:
         if model.mode != 0
     ]
     first, then = (turned[0], angled[0]) if model.mode == 2 else (turned or angled)
-    run_cuts(model.component(), [(first, then), (then, first)], overlap=overlaps(model))
-
-
-def overlaps(model: Cordic) -> bool:
-    """Whether the next transaction is taken in the cycle the previous one is handed over."""
-    timing = model.timing
-    return all(
-        t.initiation_interval == t.latency for t in ([timing] if isinstance(timing, Timing) else timing.values())
-    )
+    run_cuts(model.component(), [(first, then), (then, first)])
 
 
 def rotation_strata(fmt: ZkfFormat, seed: int = SEED) -> list[int]:
@@ -331,7 +347,7 @@ def rotation_strata(fmt: ZkfFormat, seed: int = SEED) -> list[int]:
                 fractions = [f for f in range(at - band, at + band + 1) if 0 <= f < count]
                 out += [fmt.pack(sign, e + fmt.bias, f).bits for f in fractions for sign in (0, 1)]
     spec = _constants(fmt.wman)
-    handoff = spec.wt + 2 - (spec.tsa.bit_length() - 1)  # the exponent, in turns, of where the paths meet
+    handoff = spec.wff - spec.wlin  # the exponent, in turns, of where the paths meet
     for quarter in range(5):  # the fourth is not the first again: it alone nears a whole turn from below
         for j in range(max(1, handoff - 4), min(handoff + 10, fmt.wman + 2)):
             offsets = [Fraction(1, 1 << j)]
@@ -366,7 +382,7 @@ def vectoring_strata(fmt: ZkfFormat, seed: int = SEED) -> list[tuple[int, int]]:
         for xe in range(ey + fmt.bias - 6, ey + fmt.bias + 3):
             if 1 <= xe < fmt.exp_inf:
                 out |= {(normal(sy, ey, yf), normal(0, xe, xf)) for sy in (0, 1) for yf in small for xf in wide}
-    bypass = _constants(fmt.wman).zf - fmt.wman - _GUARD_DIV
+    bypass = _constants(fmt.wman).bypass
     for ey in (1, max(1, fmt.bias // 2), max(1, fmt.bias - 3)):
         for xe in range(ey + bypass - 1, ey + bypass + 3):
             if 1 <= xe < fmt.exp_inf:
@@ -387,7 +403,7 @@ def vectoring_strata(fmt: ZkfFormat, seed: int = SEED) -> list[tuple[int, int]]:
             for xe in {e for e in (fmt.bias, fmt.bias + 2, fmt.exp_inf - 2) if 1 <= e < fmt.exp_inf}:
                 x = fmt.pack(0, xe, 0)
                 slope = mp.tan(2 * mp.pi * mp.mpf(k.numerator) / k.denominator * mp.ldexp(1, 1 - fmt.bias))
-                y = fmt.encode(x.to_fraction() * Fraction(mp.nstr(slope, 40)))
+                y = fmt.encode(x.to_fraction() * Fraction(slope))
                 if not (y.is_zero or y.is_inf):
                     out |= {(normal(sy, y.exp, y.bits & fmt.frac_mask), x.bits) for sy in (0, 1)}
     return sorted(out | set(VECTORED.get((fmt.wexp, fmt.wman), [])))
@@ -432,5 +448,5 @@ def _engine_angle(fmt: ZkfFormat, y: int, x: int) -> int:
     """The angle in turns of `(|x|, |y|)` that the reference sums before it unfolds, for `|y| < |x|` off the bypass."""
     spec, a, b = _constants(fmt.wman), Zkf(fmt, x), Zkf(fmt, y)
     up = spec.xf - fmt.wfrac - 2
-    vector = _cordic_vector(spec, a.significand() << up, (b.significand() << up) >> (a.exp - b.exp))
+    vector = _iterate(spec, a.significand() << up, (b.significand() << up) >> (a.exp - b.exp), 0, True)
     return _vector_residual(spec, *vector)

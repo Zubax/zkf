@@ -83,8 +83,8 @@ class Exp2(Operator):
     def evaluate(self, x: Zkf, *, oracle: Literal[True]) -> mpmath.mpf: ...
     def evaluate(self, x: Zkf, *, oracle: bool = False) -> Zkf | mpmath.mpf:
         """
-        `oracle=True` gives `2**x` itself in place of the hardware's result: an mpf of 4 * WMAN + 80 bits, which
-        `fmt.encode` rounds correctly.
+        `oracle=True` gives `2**x` itself in place of the hardware's result, for a simulation of the ideal operator:
+        an mpf of 4 * WMAN + 80 bits, which `fmt.encode` rounds correctly.
         """
         if x.fmt != self.fmt:
             raise ValueError(f"an operand of {x.fmt} where {self.fmt} is due")

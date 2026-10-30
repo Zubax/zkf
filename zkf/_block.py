@@ -210,5 +210,6 @@ def pipe[T: ValueLike](
 
 
 def bundle(layout: data.StructLayout, **fields: ValueLike) -> data.View:
-    """A view of `layout` built from its fields by name."""
+    """A view of `layout` built from its fields by name, each as wide as its member."""
+    assert all(len(Value.cast(fields[name])) == Shape.cast(shape).width for name, shape in layout.members.items())
     return layout(Cat(*(fields[name] for name in layout.members)))

@@ -70,7 +70,7 @@ def test_names() -> None:
     ]
     both = Cordic(F36, stage_core_mul=3, wmultiplier=18).compile().splitlines()
     timing = (
-        "//   timing: {0: Timing(latency=22, initiation_interval=22), 1: Timing(latency=43, initiation_interval=43)}"
+        "//   timing: {0: Timing(latency=21, initiation_interval=21), 1: Timing(latency=35, initiation_interval=35)}"
     )
     assert timing in both
 
@@ -188,7 +188,7 @@ def test_refusals() -> None:
     formats: tuple[Callable[[], Operator], ...] = (
         lambda: Exp2(ZkfFormat(6, 15), wmultiplier=18),
         lambda: Log2(ZkfFormat(20, 18), wmultiplier=18),
-        lambda: Cordic(ZkfFormat(4, 18), wmultiplier=18, mode=1),
+        lambda: Cordic(ZkfFormat(4, 18), wmultiplier=18, stage_core_mul=3, mode=1),
         lambda: MulIlog2(F18, wk=0),
         lambda: FromInt(F18, wint=1),
     )

@@ -129,11 +129,12 @@ def fixed_to_float_reference(
     saturate_round_carry: bool = False,
 ) -> int:
     """The bits that `FixedToFloat` gives for an unbiased `exp_offset` and no `force_inf`."""
+    low = wmag - fmt.wman
     zero_flag, count, aligned = normshift_reference(wmag, mag)
-    significand_value = (aligned >> (wmag - fmt.wman)) & ((1 << fmt.wman) - 1)
-    guard = (aligned >> (wmag - fmt.wman - 1)) & 1
-    round_bit = (aligned >> (wmag - fmt.wman - 2)) & 1
-    sticky = 1 if (aligned & ((1 << wmag - fmt.wman - 2) - 1)) else 0
+    significand_value = aligned >> low
+    guard = (aligned >> (low - 1)) & 1
+    round_bit = (aligned >> (low - 2)) & 1
+    sticky = 1 if (aligned & ((1 << low - 2) - 1)) else 0
     exp_unbiased = exp_offset - count
     return pack_reference(
         fmt,

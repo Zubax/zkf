@@ -12,7 +12,6 @@ import numpy as np
 import pytest
 from mpmath import mp
 
-import zkf._cordic
 import zkf._exp2
 import zkf._log2
 from _cordic import ROTATED, VECTORED, rotation_strata, vectoring_strata
