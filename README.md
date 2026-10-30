@@ -13,119 +13,95 @@ See how ZKF beats other floating-point libraries in <https://zubax.github.io/fpg
 
 ## Usage
 
-`zkf` ships on PyPI and by direct RTL copy-paste; both are first-class.
+Install: `pip install zkf`.
+ZKF is written in Amaranth and can be integrated into Amaranth designs as well as emit ordinary portable Verilog.
 
-- As Python dependency: `pip install zkf`, then `zkf.get_rtl_bundle()` returns every module as one Verilog source;
-  `zkf.get_rtl()` returns them as `{path: source}`, keyed relative to `zkf/rtl/`.
-- Copy-paste/submodule: add the Verilog modules under `zkf/rtl/` to your project.
+```python
+import zkf
 
-Everything else is verification scaffolding, not a shippable artifact.
+mul = zkf.Mul(zkf.ZkfFormat(8, 24), wmultiplier=18, stage_core_mul=2)  # 8b exponent, 24b mantissa, 18b multipliers
+mul.timing.latency           # cycles from in_valid to out_valid
+verilog = mul.compile()      # generate Verilog source
+component = mul.component()  # or the Amaranth component, for an Amaranth design or its simulator
+a, b = mul.fmt.encode(1.5), mul.fmt.encode(-2)
+mul.evaluate(a, b)           # what the hardware gives for these operands exactly
+```
 
-Most modules are zero-bubble throughput-1 pipelines; only those that implement computationally heavy functions
-are FSM-based and offer limited throughput.
-The zero-bubble ones offer the conventional `in_valid`/`out_valid` interface;
-those with limited throughput extend it with `in_ready`/`out_ready` handshake.
+Most operators are zero-bubble throughput-1 pipelines with the conventional `in_valid`/`out_valid` interface;
+`zkf.Cordic` is FSM-based and adds the `in_ready`/`out_ready` handshake.
+Every operator has a fixed data-independent latency, known from its configuration for each mode (see `.timing`).
 
-All modules have fixed data-independent latency known at elaboration time for each operating mode.
-
-The two main parameters are WEXP and WMAN setting the bit width of the biased exponent and the significand;
+The two main parameters are wexp and wman setting the bit width of the biased exponent and the significand;
 the most significant bit of the significand is not stored, but there is a sign bit,
-so the total bit width is simply WFULL=WEXP+WMAN.
+so the total bit width is simply `wfull=wexp+wman`.
 
-The modules are entirely self-contained -- no external dependencies; simply drag-and-drop the directory into your project.
-There are private helper modules named `_zkf_*`;
-they are not supposed to be instantiated by the user but the public modules depend on them.
-They do not offer any of the guarantees that are valid for the public modules.
+### Caveats
 
-Some of the simple combinational modules may produce non-canonical outputs; this does not affect compatibility with
-other modules since they always canonicalize inputs, but it is worth noting.
+Some of the simple combinational operators may produce non-canonical outputs (namely, a negative zero);
+this however does not affect compatibility with other operators since they always canonicalize inputs.
+
+A Yosys script that runs `opt` after `proc` with no `opt_clean` between them stops at "Conflicting init values" on
+some configurations; `attrmap -remove init` before `proc` avoids it, and the registers keep their initial values.
+This is mostly a Yosys quirk rather than a library issue.
+
+Read as SystemVerilog (Icarus `-g2012`, which cocotb uses), the printed text needs a reset edge after time zero, or
+its valid flags stay unknown; even then the angle of `zkf.Cordic`'s first vectoring is unknown. Read as Verilog-2005,
+it shows neither.
 
 ### Tuning knobs
 
-Most modules provide pipelining knobs, like output register selection, internal registers, etc,
-to enable tuning for the target chip. Common options seen in most modules are:
-`STAGE_INPUT` -- latch inputs (no combinational paths at the input) plus optional dummy stages
-(helps in routing-congested designs);
-`STAGE_OUTPUT` -- registered outputs (no combinational paths at the output);
-others control various computation stages.
+Operators can be tuned for the target chip with register-stage knobs, all off by default:
 
-Some modules offer to split long multiplication into several stages via `STAGE_PRODUCT`;
-usually this only helps if the operands exceed the width of the chip's DSP tile inputs.
-The value, as with any other STAGE knob, is the number of extra cycles in the multiplier and also a manual split knob:
-0 - no extra stages and no manual splitting, let the synthesizer arrange the circuit automatically in a single cycle.
-1 - same as above but adds an operand capture register stage before the multiplier, which allows the synthesizer
-to place a latch immediately before the DSP tile (or several if auto-split is happening) and in some cases (e.g. Vivado)
-retime multiplication across two stages.
-2/3 - manually split the product into a 2x2/3x3 grid of sub-products (all use the operand-capture stage), summing
-the partial products in as many registered reduction stages.
-4 - same 3x3 grid as 3, but the final partial-product reduction is itself pipelined into two registered stages.
+- `stage_input` and `stage_output` -- input and output register stages shielding the operator's internal combinational
+paths from external circuits.
+When zero, internal combinational paths are exposed directly;
+when greater than one, dummy stages are added which helps with retiming or when routing delays dominate.
 
-Some modules that use multiplication offer the optional `WMULTIPLIER` parameter that defaults to zero,
-but it can be set by the user to the argument width of the DSP tile multipliers available on-chip.
-This enables the library to optimally split wide multiplication (when it doesn't fit into a single DSP tile)
-across several tiles; this is significant when wide operands over 2x the native argument width are involved.
-If not specified, the library will split wide multiplication into equal-width operands, which is not always optimal.
-Common multiplier operand widths frequently found in FPGAs are 16, 18, and 24 bits.
+- `stage_core` -- a set of the operator's own registers, e.g. `zkf.Add.CoreStages.SUM | zkf.Add.CoreStages.PACK`;
+operators made of parts take one knob per part, such as the product's `stage_core_mul`.
+The docstrings describe the knobs of each operator.
 
-Every sequential module exposes a `LATENCY` parameter. It is not a tuning knob; changing it does not change the hardware.
-Its purpose is to let a latency-sensitive consumer pin down the latency it relies on: compute the value locally and pass it in.
-The module fails synthesis if the supplied value disagrees with its real stage count, so an internal change that shifts
-the latency cannot slip through unnoticed -- the build breaks and points you at the stale constant.
-Pair `LATENCY` with `zkf_pipe` to delay your own control or sideband signals so they land with the operator's output.
-A zero `LATENCY` is a special value indicating that the latency should not be checked (the default).
-Some modules may have a separate latency parameter per operating mode, like `zkf_cordic`; see the model's `timing`.
+The `timing` property gives the latency and the initiation interval (II) of the chosen staging configuration.
 
-Each operator's header gives its `LATENCY` as a function of the module's parameters: as a rule, a constant baseline
-number of stages, plus optionally some WMAN-dependent stage count, plus `STAGE_*`, the sum of all STAGE knobs (all zero
-by default).
-Compute it like `zkf.MulModel(zkf.ZkfFormat(WEXP, WMAN), stage_product=1).timing.latency`.
+Operators that multiply take `wmultiplier`, the operand width of the target's multipliers (16, 18 and 24 bits are
+common in modern FPGAs; in the absence of hard DSP blocks any value will work).
 
-Generated lookup table ROMs are plain initialized Verilog arrays. If the macro `ZKF_ATTRIBUTE_ROM` is defined, it is
-placed before each ROM declaration to carry tool-specific attributes,
-e.g., `` `define ZKF_ATTRIBUTE_ROM (* rom_style = "block" *) ``.
-Likewise, `ZKF_ATTRIBUTE_KEEP` is placed before nets that synthesis must not restructure;
-Lattice LSE may need `` `define ZKF_ATTRIBUTE_KEEP (* syn_keep = 1 *) `` for best results.
+`rom_attrs` and `mul_attrs` pass synthesis attributes to the lookup tables and to the products' operand registers,
+e.g. `rom_attrs={"rom_style": "block"}`.
+
+Use `zkf.Pipe` to delay your own control or sideband signals by an operator's latency so they land with its output.
 
 ### Catalogue
 
-II - initiation interval (cycles between accepting new inputs, reciprocal of cycle throughput;
-1 for zero-bubble pipelined modules).
+II - initiation interval (cycles between accepting new inputs; 1 for zero-bubble pipelines).
 
-| Module                | II      | Function                                                       | Remarks                     |
-|-----------------------|---------|----------------------------------------------------------------|-----------------------------|
-| `zkf_absneg`          | 1       | Absolute value and negation.                                   | Does not canonicalize       |
-| `zkf_finite`          | 1       | Finiteness flag, and ±∞ replaced by the nearest finite value.  | Does not canonicalize       |
-| `zkf_cmp`             | 1       | Compare two values; also outputs their min and max.            | Does not canonicalize       |
-| `zkf_add`             | 1       | `a + b`, also `a - b` when the sign bit of `b` is flipped.     |                             |
-| `zkf_mul`             | 1       | `a⋅b`.                                                         |                             |
-| `zkf_mul_ilog2`       | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                   |                             |
-| `zkf_ilog2`           | 1       | Raw exponent minus bias; sign-invariant signed integer.        | Flags zero, infinity, negative |
-| `zkf_fma`             | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.  | Larger than separate mul->add; non-finite handling follows mul->add.|
-| `zkf_from_int`        | 1       | Cast signed two's-complement integer to float.                 |                             |
-| `zkf_resize`          | 1       | Cast between different float formats.                          |                             |
-| `zkf_rint`            | 1       | Round to integer, outputs both a float and a saturated integer.| RNTE/floor/ceil/trunc       |
-| `zkf_divsqrt`         | 1       | `a ÷ b` or `√a`; `error` iff /0 or domain error.               | Correct rounding, 0.5 ULP   |
-| `zkf_exp2`            | 1       | `2^x`                                                          | Faithful rounding, see below|
-| `zkf_log2`            | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.           | Faithful rounding, see below|
-| `zkf_cordic`          |latency+1| `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (-0.5,0.5], `hypot(y,x)`.   | Faithful rounding, see below|
-| `zkf_pipe`            | 1       | Delay line of N register stages, W bits each.                  | No-op                       |
-
-#### Notably absent functions
-
-The transcendental/trigonometric functions offer high accuracy (faithful rounding). This is desirable for many
-applications, but often one would accept a lower accuracy (common in control systems) to save fabric and/or cycle
-latency. There is interest in extending the module set with approximate trans/trig functions built on a simple piecewise
-function approximation kernel that offer II=1, low cycle latency, and low fabric usage: `zkf_exp2_approx`,
-`zkf_sincos_approx`, etc.
+| Class           | II      | Function                                                                                      | Remarks                     |
+|-----------------|---------|-----------------------------------------------------------------------------------------------|-----------------------------|
+| `zkf.AbsNeg`    | 1       | Absolute value and negation.                                                                  | Does not canonicalize       |
+| `zkf.Finite`    | 1       | Finiteness flag, and ±∞ replaced by the nearest finite value.                                 | Does not canonicalize       |
+| `zkf.Cmp`       | 1       | Compare two values; also outputs their min and max.                                           | Does not canonicalize       |
+| `zkf.Add`       | 1       | `a + b`, also `a - b` when the sign bit of `b` is flipped.                                    |                             |
+| `zkf.Mul`       | 1       | `a⋅b`.                                                                                        |                             |
+| `zkf.MulIlog2`  | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                                                  |                             |
+| `zkf.Ilog2`     | 1       | Raw exponent minus bias; sign-invariant signed integer.                                       | Flags zero, infinity, negative |
+| `zkf.Fma`       | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.                                 | Larger than separate mul->add; non-finite handling follows mul->add.|
+| `zkf.FromInt`   | 1       | Cast signed two's-complement integer to float.                                                |                             |
+| `zkf.Resize`    | 1       | Cast between different float formats.                                                         |                             |
+| `zkf.Rint`      | 1       | Round to integer, outputs both a float and a saturated integer.                               | RNTE/floor/ceil/trunc       |
+| `zkf.Divsqrt`   | 1       | `a ÷ b` or `√a`; `error` iff /0 or domain error.                                              | Correct rounding, 0.5 ULP   |
+| `zkf.Exp2`      | 1       | `2^x`                                                                                         | Faithful rounding, see below|
+| `zkf.Log2`      | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.                                          | Faithful rounding, see below|
+| `zkf.Cordic`    | latency | `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (-0.5,0.5], `hypot(y,x)`.    | Faithful rounding, see below|
+| `zkf.Pipe`      | 1       | Delay line of N register stages, W bits each.                                                 | No-op                       |
 
 ### Derived functions
 
-The basic modules available enable simple computation of a huge variety of derived functions; examples follow.
+The basic modules available enable efficient computation of a large set of derived functions; examples follow.
 Bare angle functions follow the usual radian convention; helpers suffixed `_turns` expose ZKF's native turn
 representation.
 
-    sin_turns(x), cos_turns(x)  = zkf_cordic(x)                     ; rotation; x in turns
-    atan2_turns(y,x)            = zkf_cordic(y, x)                  ; vectoring; angle in turns ∈ (-0.5,0.5]
+    sin_turns(x), cos_turns(x)  = zkf.Cordic(x)                     ; rotation; x in turns
+    atan2_turns(y,x)            = zkf.Cordic(y, x)                  ; vectoring; angle in turns ∈ (-0.5,0.5]
     atan_turns(x)               = atan2_turns(x, 1)
 
     normalize_angle(x)          = x - 2π⋅floor((x + π) / (2π))      ; [-π,+π)
@@ -137,7 +113,7 @@ representation.
     sin(x), cos(x)      = sin_turns(radians_to_turns(x)), cos_turns(radians_to_turns(x))
     atan2(y,x)          = 2π⋅atan2_turns(y, x)
 
-    sqrt(x)             = zkf_divsqrt(x)        ; correctly rounded 0.5 ULP
+    sqrt(x)             = zkf.Divsqrt(x)        ; correctly rounded 0.5 ULP
     exp(x)              = exp2(x⋅log2(e))
     ln(x)               = log2(x) / log2(e)
     log10(x)            = log2(x) / log2(10)
@@ -145,7 +121,7 @@ representation.
     pow(a,b)            = exp2(b⋅log2(a))       ; real-valued identity for a>0
     recip(x)            = 1 / x
     rsqrt(x)            = exp2(log2(x)⋅-2^-1)   ; x>0; avoids division
-    rsqrt(x)            = sqrt(1 / x)           ; x>0, 1/x normal; faithful, 0.85 ULP max at WMAN=18
+    rsqrt(x)            = sqrt(1 / x)           ; x>0, 1/x normal; faithful, 0.85 ULP max at wman=18
     cbrt(x)             = sign(x)⋅exp2(log2(abs(x)) / 3)
 
     tan(x)              = sin(x) / cos(x)
@@ -153,15 +129,15 @@ representation.
     asin(x)             = atan2(x, sqrt(1 - x⋅x))                       ; x ∈ [-1,+1]
     acos(x)             = atan2(sqrt(1 - x⋅x), x)                       ; x ∈ [-1,+1]
     h                   = max(abs(x), abs(y))
-    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf_cordic
+    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf.Cordic
 
-    min(a,b), max(a,b)  = zkf_cmp(a,b)
+    min(a,b), max(a,b)  = zkf.Cmp(a,b)
     clamp(x, lo, hi)    = min(max(x, lo), hi)
     lerp(a,b,t)         = fma(t, b - a, a)
     deadzone(x,d)       = sign(x)⋅max(abs(x) - d, 0)
     smoothstep(t)       = t⋅t⋅(3 - 2⋅t); where t is clamped to [0,1]
 
-    dot(a,b)            = sum_i a[i]⋅b[i]                               ; use zkf_fma chains
+    dot(a,b)            = sum_i a[i]⋅b[i]                               ; use zkf.Fma chains
     norm2(x)            = dot(x, x)
     norm(x)             = sqrt(norm2(x))
     normalize(x)        = x⋅rsqrt(norm2(x) + ε)
@@ -204,17 +180,13 @@ And so on.
 
 Generic floating-point remainder/modulo computation is not included because the general solution requires iterative
 range reduction which maps poorly onto fixed-latency FPGA cores; instead, one can build the iterative solver using
-the existing basic operators: zkf_fma, zkf_divsqrt, etc.
+the existing basic operators: zkf.Fma, zkf.Divsqrt, etc.
 
 ## Semantics
 
 Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; finite magnitudes in `(0, min_normal/2)`
 round to +0; magnitudes in `[min_normal/2, min_normal)` round to signed min_normal), no -0, no exceptions,
 overflow produces ±∞.
-
-`zkf_cordic`'s vectoring magnitude errs toward finite within one ULP of the overflow threshold rather than inventing an
-infinity. Any faithfully-rounded operator may return either +0 or ±min_normal for a result landing very near the
-`min_normal/2` midpoint, since which side is correct is decided by bits a faithful operator does not carry.
 
 Infinity cases that would be NaN in IEEE 754:
 
@@ -251,26 +223,20 @@ of certain basic operators.
 The exp2 and log2 transcendentals deliver faithful rounding: every finite result is one of the two representable
 values bracketing the exact result.
 
-A result differs from round-to-nearest only when the exact value lies within `2^-ERR_GUARD` ULP of a midpoint between
-adjacent representable values: at most about `2^-7` of results spread evenly over a rounding interval; the measured
-rate is near `10^-4`.
-Rounding every result correctly would take far more precision at the hard cases (the Table-Maker's Dilemma), so the
-0.5 ULP target is best-effort while faithful rounding is the hard contract.
-
-`zkf_cordic` carries the same faithful-rounding contract.
+A result differs from round-to-nearest only near a midpoint between adjacent representable values; the measured rate
+is near `10^-4`. `zkf.Cordic` carries the same faithful-rounding contract.
 
 <img src="docs/zkf_transcendental_accuracy.svg">
 
-**ATTENTION:** To achieve good results, it is essential to ensure that the look-up tables used by `zkf_exp2` and
-`zkf_log2` are correctly mapped to ROM. If you see unreasonable fabric usage and bad
-timings, check your synthesis settings first, and if necessary define `ZKF_ATTRIBUTE_ROM`.
+**ATTENTION:** the lookup tables of `zkf.Exp2` and `zkf.Log2` must be mapped to ROM; if fabric usage or timing looks
+unreasonable, check the synthesis settings first, and if necessary give `rom_attrs`.
 
-## Sizing the exponent and the significand (WEXP/WMAN)
+## Sizing the exponent and the significand (wexp/wman)
 
-WEXP can be chosen freely within the operator's limits, while WMAN is sensitive to the chip's
-DSP capabilities and thus requires careful selection to achieve best resource utilization.
+wexp can be chosen freely within an operator's limits, while wman is sensitive to the chip's DSP capabilities and thus
+requires careful selection to achieve best resource utilization.
 
-|WMAN |≈ε (interval)| Description                                                                                 |
+|wman |≈ε (interval)| Description                                                                                 |
 |-----|-------------|---------------------------------------------------------------------------------------------|
 |  16 | 3.052e-05   | DSP tiles in Lattice iCE40 and similar                                                      |
 |  18 | 7.629e-06   | Classic FPGA DSP width, very common: ECP5, PolarFire, Trion, many Intel modes, etc.         |
@@ -281,34 +247,34 @@ DSP capabilities and thus requires careful selection to achieve best resource ut
 |  48 | 7.105e-15   | 2x24 or 3x16; with an 8-bit exponent amounts to 7 bytes exactly                             |
 |  53 | 2.220e-16   | IEEE 754 binary64                                                                           |
 
-Narrower WMAN is rarely practical for computation due to low precision and fast error accumulation,
+Narrower wman is rarely practical for computation due to low precision and fast error accumulation,
 although they can still be useful for storage/exchange. One notable exception is neural networks though.
 
-### WMAN=18
+### wman=18
 
 An FPGA-friendly format because modern DSP-enabled FPGAs often implement 18x18 bit multipliers, which means that a
 narrower mantissa is unlikely to save much resources or nontrivially improve timings as long as hardware multipliers
 are used.
 
-One can stay within 24 bits total by choosing WEXP=6:
+One can stay within 24 bits total by choosing wexp=6:
 
-    WEXP=6 WMAN=18 WFRAC=17 WFULL=24 BIAS=31
+    wexp=6 wman=18 wfrac=17 wfull=24 bias=31
     lowest     = 1/1073741824 ≈ 9.313e-10
     max        = 0xFFFF_C000  ≈ 4.295e+09
     ε          = 1/131072     ≈ 7.629e-06
 
-### WMAN=36
+### wman=36
 
-Similar to the above, WMAN=36 is efficient on common FPGAs because it maps multiplication to four 18x18 DSP slices.
+Similar to the above, wman=36 is efficient on common FPGAs because it maps multiplication to four 18x18 DSP slices.
 This is often a better fit for intermediate result representation to avoid error accumulation --
 the precision lands halfway between IEEE 754 binary64 and binary32.
 
 Usually, on an 18x18 DSP chip, going even a single bit higher causes f_max to tank dramatically while area explodes.
 Thus this is likely to be the optimal choice for a large number of applications.
 
-Using binary32-compatible exponent WEXP=8, 44 bits total (5.5 bytes):
+Using binary32-compatible exponent wexp=8, 44 bits total (5.5 bytes):
 
-    WEXP=8 WMAN=36 WFRAC=35 WFULL=44 BIAS=127
+    wexp=8 wman=36 wfrac=35 wfull=44 bias=127
     lowest     = 1/85070591730234615865843651857942052864 ≈ 1.175e-38
     max        = 0xFFFFFFFF_F0000000_00000000_00000000    ≈ 3.403e+38
     ε          = 1/34359738368                            ≈ 2.910e-11
@@ -318,6 +284,42 @@ Using binary32-compatible exponent WEXP=8, 44 bits total (5.5 bytes):
 ZKF offers limited compatibility with IEEE 754 so while it can match the bit layout,
 not all states are mappable between the formats.
 
-- WEXP=5  WMAN=11: IEEE 754 binary16-like
-- WEXP=8  WMAN=24: IEEE 754 binary32-like
-- WEXP=11 WMAN=53: IEEE 754 binary64-like
+- wexp=5  wman=11: IEEE 754 binary16-like
+- wexp=8  wman=24: IEEE 754 binary32-like
+- wexp=11 wman=53: IEEE 754 binary64-like
+
+## TODO
+
+Roughly ordered by severity.
+
+- `divsqrt` could take a radix-8 digit a stage beside its radix-4 one, behind a knob: two thirds of the digits (e8m36:
+  17 cycles to about 12), each about 2.3 times the LUTs of a radix-4 digit at 0.84 times its speed, as measured in
+  `cordic`'s division. SRT digits on a carry-save remainder, one of radix 8 or two of radix 4 a stage, run slower on the
+  ECP5.
+
+- `divsqrt` at e8m27 needs ECP5 speed grade 7 because LSE puts the packer's fraction mask on the set and reset of the
+  result's register. An attribute hook on the masked fraction would take `syn_keep`, which keeps the mask in LUTs
+  (115 to 122 MHz on speed grade 6), but LSE takes the attribute value only unsized (e.g., `1`), and Yosys's
+  `write_verilog`, which prints Amaranth's Verilog, sizes every integer attribute (`32'd1`).
+  The [PR fixing this](https://github.com/YosysHQ/yosys/pull/6387) has been submitted to Yosys already, blocked on that.
+
+- Add Altera Quartus Lite to the vendor synthesis tool set to ensure we don't overfit for AMD & Lattice.
+
+- Transcendental operator refinements (`exp2`, `log2`):
+  - The kernels of WMAN 44 to 53 can start their chain a cycle earlier (measured bit-identical at the catalog's widths);
+    no spec that wide is timed yet.
+  - Table generation uses the multiplier width up to degree 3 only (WMAN up to 36); we assume that no operand is wider
+    than four multipliers. Shortening an operand to a multiple of the width where it passes one by up to three bits
+    saves 4 to 8% of LUTs and 3 to 5 DSP48E1 on Spartan-7 at WMAN 44 and 53, and changes some tables of degree 3.
+
+- Pre-tuned stage sets per operator and format, measured per flow and chip and ordered by latency, so that a user takes
+  the first that closes; or an API that takes the clock and the speed grade and picks one (preferred).
+  Each set is judged by its worst placement; a timing model would not do, as the binding paths are often mostly routing.
+
+### Postponed as YAGNI
+
+- `wmultiplier` is one number, the narrower side of a rectangular multiplier: two of its slices can be one tile on the
+  chip (25x18, 27x18), so a grid register may cut nothing there.
+
+- The default test tier takes 10 minutes on 8 workers. Simulating the C++ that `amaranth.back.cxxrtl`
+  prints is 16 to 103 times faster, with a bench of its own.

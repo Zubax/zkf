@@ -13,9 +13,11 @@ Never alter the git staging index unless asked; it is often used for manual part
 
 Generated reports must be written in rich and colorful HTML format, not Markdown.
 
-Synthesis attributes, the `ZKF_ATTRIBUTE_*` hook sites included, are added only where a measurement shows a
-significant and consistent gain; a minor or mixed gain does not justify one, and a site whose gain turns minor is
-removed. Each attribute adds maintenance and portability risk.
+Synthesis attributes are added only where a measurement shows a significant and consistent gain;
+a minor or mixed gain does not justify one, and a site whose gain turns minor is removed.
+Each attribute adds maintenance and portability risk.
+
+Less code does not always imply simpler code. Apply common sense and keep the code straightforward.
 
 ### Reset strategy
 
@@ -44,16 +46,15 @@ shielding the operator stage from the interconnect delays.
 
 ### Language
 
-Verilog style: 4-space indentation, concise module names, snake_case files and directories, and uppercase
-parameter/localparam names where practical. Keep line length at or below 120 columns.
-Comment block lines should utilize the 120 column limit well, avoiding overly short lines.
+The hardware is written in Amaranth, in the most straightforward way: only its canonical, idiomatic, public API.
+No private names, no part of the toolchain invoked directly, nothing that depends on a version of Amaranth or of Yosys
+or on how they print, and no pinned dependency.
 
-In synthesizable code, prefer `case` statements over nested ternary operators unless there are contraindications.
+Everything of the package is private unless `zkf/__init__.py` explicitly exports it;
+only the tests may reach private names.
 
-In complex modules, it is best to avoid a large number of named nets that are only used once;
-this does not help readability but rather the opposite.
-
-Elaboration-time parameters specifying bit width have a leading `W`, e.g., `WEXP`, `WCOEF`.
+Generally, public entities go above private ones in modules and classes,
+except for private constants which may appear at the top where it makes sense.
 
 A module that forwards an elaboration-time parameter down the hierarchy without actually using it should not attempt
 to validate it, unless it somehow nontrivially depends on its value. This is done to reduce unnecessary coupling.
@@ -75,8 +76,9 @@ Special things to look out for:
 
 - DSP tiles should begin and end with a register stage. If retiming has moved a register away from a DSP tile,
   it means that the adjacent hop is starving and needs a new register there, even if it's not on the critical path.
-- Splitting multiplication into parallel halves (e.g., `STAGE_PRODUCT=1`) is almost never a good idea unless the
-  multiplicand bitwidth exceeds the DSP slice input width.
+- A product is cut into a grid of multipliers only where an operand is wider than `wmultiplier`, so `wmultiplier` must
+  be the DSP slice input width: a narrower one splits products that a slice takes whole. A product's count only places
+  registers in it.
 - Retiming is sneaky: a moved stage may cause a different path to become critical, so with retiming enabled one needs
   to evaluate the adjacent stages as well.
 
@@ -86,8 +88,8 @@ so a congestion-bound design gets slower as stages are added even though no logi
 
 A robust closure procedure that accounts for this starts lean and adds back one stage at a time:
 
-- Disable every optional stage. Mind the load-bearing exceptions above: the DSP product keeps `STAGE_PRODUCT` once the
-  multiplicand exceeds the slice input width, and DSP tiles keep their bracketing registers.
+- Disable every optional stage. Mind the load-bearing exceptions above: a product's count starts at its minimum, below
+  which it is refused, and DSP tiles keep their bracketing registers.
 - Read the critical path and judge, from the logic and the physics, whether it is the true bottleneck or merely a
   retiming casualty -- a path that only looks critical because a register was retimed away from the real cone. A true
   bottleneck is a recognizable deep operation (a wide barrel shift, a long carry chain, a DSP cascade); a casualty is an

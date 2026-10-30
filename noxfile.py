@@ -10,10 +10,9 @@ import nox
 
 nox.options.reuse_existing_virtualenvs = True
 
-BLACK_TARGETS = ("zkf", "tb", "synth", "proof", "noxfile.py", "tools")
+BLACK_TARGETS = ("zkf", "tests", "noxfile.py")
 
-# Half the cores, not all: the sims are memory-bandwidth-bound, so the full core count inflates every case ~+50% and
-# loses wall-clock. worksteal + the sharded long cases (zkf_matrix) fill the idle headroom.
+# Half the cores, not all: the simulations are memory-bound.
 PYTEST_DIST = ("-n", str(max(1, (os.cpu_count() or 2) // 2)), "--dist", "worksteal")
 
 
@@ -43,100 +42,48 @@ def clean(session):
 
 
 @nox.session
-def checks(session: nox.Session) -> None:
-    """The generated artifacts against a fresh run, the model's layout, and the standalone benches."""
-    session.install("-e", ".[test]")
-    session.run("python", "tools/zkf_trig.py", "--check-emit")
-    session.run("python", "tools/zkf_transcendental.py", "--check-emit")
-    session.run("python", "tb/test_zkf_model_layout.py")
-    session.run("python", "tb/zkf_pmul_check.py")
-    session.run("python", "tb/zkf_trans_core_check.py", "--selftest")
-
-
-@nox.session
 def tests(session: nox.Session) -> None:
-    """The per-PR matrix and its line-coverage gate, which needs every Verilator row: filter with `focused` instead."""
+    """The per-PR tier, with the gate on the branch coverage of the hardware's structural variants."""
     session.install("-e", ".[test]")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", *PYTEST_DIST, *session.posargs)
-    session.run(
-        "python",
-        "tb/zkf_coverage.py",
-        "--build-dir",
-        "build/float/verilator",
-        "--output-dir",
-        "build/float/coverage",
-        "--gate",
-    )
+    coverage = ("--cov", "--cov-report=term-missing:skip-covered", "--cov-report=html:build/coverage")
+    session.run("python", "-m", "pytest", *PYTEST_DIST, *(session.posargs or coverage))
 
 
 @nox.session(default=False)
-def focused(session: nox.Session) -> None:
-    """Filtered matrix runs for single-operator iteration (e.g. `nox -s focused -- -k divsqrt`); no coverage gate."""
-    session.install("-e", ".[test]")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", *PYTEST_DIST, *session.posargs)
-
-
-@nox.session
-def fast(session: nox.Session) -> None:
-    session.install("-e", ".[test]")
-    session.run("python", "tb/test_zkf_model_layout.py")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "fast", *PYTEST_DIST, *session.posargs)
-
-
-@nox.session
-def properties(session: nox.Session) -> None:
-    session.install("-e", ".[test]")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "properties", *PYTEST_DIST, *session.posargs)
-
-
-@nox.session
 def deep(session: nox.Session) -> None:
     session.install("-e", ".[test]")
-    session.run("python", "tb/zkf_trans_core_check.py", "--deep")
-    session.run("python", "-m", "pytest", "tb/test_float_matrix.py", "-m", "deep", *PYTEST_DIST, *session.posargs)
-    session.run(
-        "python",
-        "tb/zkf_coverage.py",
-        "--build-dir",
-        "build/float/verilator-toggle",
-        "--output-dir",
-        "build/float/coverage-full",
-        "--full",
-    )
+    session.run("python", "-m", "pytest", "-m", "deep", *PYTEST_DIST, *session.posargs)
 
 
 @nox.session
 def accuracy(session: nox.Session) -> None:
+    """`exp2`, `log2` and `cordic` against mpmath."""
     session.install("-e", ".[test]")
-    session.run("python", "tools/zkf_trans_certify.py", "--selftest")
-    session.run("python", "tools/zkf_transcendental.py", "--check")
-    session.run("python", "tools/zkf_trig.py", "--check")
-
-
-# Runs in the ambient toolchain environment, not a fresh virtualenv: run_proofs.py/report.py are stdlib-only,
-# and sby (a Python program) must keep resolving its own interpreter -- a venv on PATH would shadow the system
-# Python that carries sby's dependencies (click, etc.), breaking every proof with "No module named 'click'".
-@nox.session(python=False)
-def formal(session: nox.Session) -> None:
-    """SymbiYosys equivalence proofs for the modules under proof/sby/."""
-    session.run(
-        "python3",
-        "proof/run_proofs.py",
-        "--sby-dir",
-        "proof/sby",
-        "--build-dir",
-        "build/float/formal",
-        "--report",
-        "build/float/formal/report.html",
-        "--jobs",
-        "0",
-    )
+    session.run("python", "-m", "pytest", "-m", "accuracy", *PYTEST_DIST, *session.posargs)
 
 
 @nox.session
 def synth(session: nox.Session) -> None:
+    """The specs of the catalog through the Yosys flow on the ECP5, each once; the reports go to `build/synth/`."""
     session.install("-e", ".[test]")
-    session.run("python", "synth/yosys_ecp5.py", *session.posargs)
+    workers = ("-n", str(os.cpu_count() or 1), "--dist", "worksteal")
+    session.run("python", "-m", "pytest", "-m", "synth", "--synth-flows", "yosys_ecp5", *workers, *session.posargs)
+
+
+@nox.session
+def synth_vendor(session: nox.Session) -> None:
+    """The specs of the catalog through the Diamond and Vivado flows, each once; the reports go to `build/synth/`."""
+    session.install("-e", ".[test]")
+    flows = ("--synth-flows", "diamond_ecp5", "--synth-flows", "vivado_artix7")
+    # The catalog closes on the texts that Amaranth's own Yosys prints; another Yosys prints others, placed otherwise.
+    env = {"AMARANTH_USE_YOSYS": "builtin"}
+    session.run("python", "-m", "pytest", "-m", "synth", *flows, *PYTEST_DIST, *session.posargs, env=env)
+
+
+@nox.session
+def mypy(session: nox.Session) -> None:
+    session.install("-e", ".[test]")
+    session.run("python", "-m", "mypy")
 
 
 @nox.session
