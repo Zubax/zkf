@@ -144,7 +144,9 @@ def pairs(fmt: ZkfFormat) -> list[tuple[int, int]]:
     """
     `(y, x)`: every pair of the zeros and infinities; the quadrants and the diagonals of the octants; the axes; one
     far smaller than the other, where the angle rounds to an end of its range; a ratio across the bypass at every
-    exponent, and bypassed ones whose magnitude has the bit of a half turn set or whose significands are furthest apart;
+    exponent within a few more than the engine's fraction bits of one and at the ends of the range, which the bypass or
+    the axis takes alike in between, and bypassed ones whose magnitude has the bit of a half turn set or whose
+    significands are furthest apart;
     where the radix-8 division's first digit is 4; lengths up to the largest finite one and past it; and angles either
     side of where they round onto a half turn, and one at a half turn or past it.
     """
@@ -160,11 +162,12 @@ def pairs(fmt: ZkfFormat) -> list[tuple[int, int]]:
         out += [(0, one), (0, minus_one), (one | sy, 0), (tiny | sy, big), (big | sy, tiny)]
         out += [(tiny | sy, big | sign_bit), (tiny | sy, minus_one), (big | sy, one), (one | sy, big | sy)]
     out += [(one, sign_bit | inf), (minus_one, sign_bit | inf)]
+    c = _constants(fmt.wman)
     for exp in range(1, fmt.exp_inf):
-        out += [(fmt.pack(0, exp, fmt.frac_mask).bits, one), (one, fmt.pack(0, exp, 1).bits)]
+        if abs(exp - fmt.bias) <= c.xf + 4 or exp <= 8 or exp >= fmt.exp_max_finite - 7:
+            out += [(fmt.pack(0, exp, fmt.frac_mask).bits, one), (one, fmt.pack(0, exp, 1).bits)]
     # Bypassed next to its threshold, `y` negative, its significand the largest whose magnitude has the bit of a half
     # turn set, which a half turn's test must not read on the bypass.
-    c = _constants(fmt.wman)
     sig_x = Zkf(fmt, one).significand()
 
     def half_bit(frac: int) -> bool:

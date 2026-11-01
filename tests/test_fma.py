@@ -105,20 +105,22 @@ def drawn(model: Fma, rng: np.random.Generator) -> tuple[int, int, int]:
     return random_operand(fmt, rng), random_operand(fmt, rng), random_operand(fmt, rng)
 
 
-def run(wexp: int, wman: int, count: int, wmultiplier: int = 18, **knobs: Any) -> None:
+def run(wexp: int, wman: int, count: int, wmultiplier: int = 18, shard: int = 0, shards: int = 1, **knobs: Any) -> None:
     """The product takes the lowest count that it takes by default."""
     knobs = {"stage_core_mul": counts(wman, wman, signed=False, wmultiplier=wmultiplier).start} | knobs
-    simulate(Fma(ZkfFormat(wexp, wman), wmultiplier=wmultiplier, **knobs), count)
+    simulate(Fma(ZkfFormat(wexp, wman), wmultiplier=wmultiplier, **knobs), count, shard, shards)
 
 
-def simulate(model: Fma, count: int) -> None:
-    """`count` 0 is every triple; otherwise the directed ones made up to `count` with random ones."""
+def simulate(model: Fma, count: int, shard: int = 0, shards: int = 1) -> None:
+    """
+    `count` 0 is every triple, of one shard of so many; otherwise the directed ones made up to `count` with random ones.
+    """
     fmt = model.fmt
     every = range(1 << fmt.wfull)
     triples = (
         (directed(model) if fmt.wexp >= 3 else [])
         if count
-        else [(a, b, c) for a in every for b in every for c in every]
+        else [(a, b, c) for a in every[shard::shards] for b in every for c in every]
     )
     triples = list(dict.fromkeys(triples))
     rng = np.random.default_rng(SEED)
@@ -209,8 +211,9 @@ def test_catalog(model: Fma) -> None:
     simulate(model, 384)
 
 
-def test_every_triple() -> None:
-    run(2, 4, 0)
+@pytest.mark.parametrize("shard", range(4))
+def test_every_triple(shard: int) -> None:
+    run(2, 4, 0, shard=shard, shards=4)
 
 
 def test_refusals() -> None:

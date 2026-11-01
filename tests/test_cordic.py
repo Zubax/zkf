@@ -40,27 +40,26 @@ from zkf._cordic import (
 CoreStages = Cordic.CoreStages
 SHARED = CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK
 
-# wexp, wman and a count. A rotation is walked whole at 2/16 in the deep tier and in a thirteenth here, which takes
-# as long as the other formats together.
+# wexp, wman and a count.
 ROTATIONS = [(3, 16, 512), (5, 16, 512), (8, 24, 1024), (8, 32, 768), (11, 53, 384)]
 # Every format has the directed pairs: two operands are too many to walk at any. 5 is the narrowest exponent, where
 # the difference of the exponents is short.
 VECTORINGS = [(6, 18, 1536), (8, 24, 1024), (8, 36, 768), (11, 53, 384), (5, 16, 512), (5, 53, 384)]
-# The knobs at 5/16 unless a row has a format, where they change no result; of both modes unless it has one; the
-# product's count the fewest unless a row has one. The product from its one register at a width where it is one
-# multiplier to the pairs of rows of a grid on narrower multipliers, the registers of the rest one by one and all,
-# without `fast` (one packer, the division at radix 4), the seeds off and in part, and a product as long as the
-# iterations that the seed leaves.
+# The knobs at 5/16 unless a row has a format, where they change no result; of every mode unless it has one; the
+# product's count the fewest unless a row has one. The input and output stages, which no mode changes, in both modes;
+# the seeds off and in part, of the modes that rotate. The product from its one register at a width where it is one
+# multiplier to the pairs of rows of a grid on narrower multipliers, all the registers of the rest (one by one in the
+# deep tier), without `fast` (one packer, the division at radix 4), and a product as long as the iterations that the
+# seed leaves.
 KNOBS: list[dict[str, Any]] = [
     {"wexp": 6, "wman": 18},
-    {"rs": 0},
-    {"rs": 1},
+    *({"rs": rs, "mode": mode} for rs in (0, 1) for mode in (0, 2)),
     {"sm": 6, "wm": 9, "mode": 2},
-    {"si": 1},
-    {"so": 1},
-    {"si": 1, "so": 1},
-    {"si": 2},
-    {"so": 3},
+    {"si": 1, "mode": 2},
+    {"so": 1, "mode": 2},
+    {"si": 1, "so": 1, "mode": 2},
+    {"si": 2, "mode": 2},
+    {"so": 3, "mode": 2},
     {"sm": 1, "wm": 32},
     {"sm": 3},
     {"sm": 4, "mode": 2},
@@ -73,7 +72,6 @@ KNOBS: list[dict[str, Any]] = [
     {"sm": 3, "wexp": 6, "wman": 18, "mode": 1},
     {"fa": False, "mode": 1},
     {"fa": False, "sm": 3, "wm": 16, "mode": 1},
-    *({"sc": member, "mode": mode} for mode in (0, 1, 2) for member in ~LACKED[mode]),
     *({"sc": ~LACKED[mode], "sm": 1, "wm": 32, "mode": mode} for mode in (0, 1, 2)),
     {"sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE, "sm": 4, "wm": 10, "mode": 0},
     {"si": 1, "sm": 3, "sc": SHARED | CoreStages.TAKEN | CoreStages.ORDERED, "so": 1, "mode": 1},
@@ -98,8 +96,8 @@ KNOBS: list[dict[str, Any]] = [
 ]
 # In a rotation at 5/18 the sine reaches the packer's underflow, the bias being below the fraction; at 8/48 the
 # width of what the modes share crosses a power of two; 4 is an exponent that a rotation alone takes; and without
-# `fast` at a catalog width.
-BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {}), (11, 53, {}), (4, 16, {"mode": 0}), (8, 36, {"fa": False})]
+# `fast` at a catalog width. Binary64's are in the deep tier.
+BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {}), (4, 16, {"mode": 0}), (8, 36, {"fa": False})]
 
 
 # The deep tier: the formats of the default one and others at more operands, under the knobs one by one.
@@ -138,6 +136,7 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (5, 16, 2000, {"mode": 1, "sm": 1, "wm": 32}),
     (5, 16, 512, {}),
     (8, 36, 2048, {"mode": 1} | synthesized(36, 1)),
+    *((5, 16, 256, {"sc": member, "mode": mode}) for mode in (0, 1, 2) for member in ~LACKED[mode]),
 ]
 
 
@@ -160,10 +159,6 @@ def test_vectoring(row: tuple[int, int, int]) -> None:
 @pytest.mark.parametrize("row", [VECTORINGS[0], VECTORINGS[2]], ids=str)
 def test_vectoring_without_fast(row: tuple[int, int, int]) -> None:
     run(*row, mode=1, fa=False)
-
-
-def test_rotation_sampled() -> None:
-    run(2, 16, "every", mode=0, shard=5, shards=13)
 
 
 @pytest.mark.deep
@@ -237,8 +232,10 @@ def test_one_front(front: Cordic.CoreStages, si: int) -> None:
 
 
 # A width changes the parity of the divider, the count of iterations and the widths of what the modes share, which
-# a mode alone has narrower.
-@pytest.mark.parametrize("wman", range(16, 54))
+# a mode alone has narrower. 50 alone truncates the corrections' angle, so it is of the default tier.
+@pytest.mark.parametrize(
+    "wman", [pytest.param(wman, marks=() if wman == 50 else pytest.mark.deep) for wman in range(16, 54)]
+)
 def test_every_width(wman: int) -> None:
     run(8, wman, "directed", **synthesized(wman))
 
@@ -287,7 +284,9 @@ def test_cut_fast(mode: int, held: bool) -> None:
 # its start, next to an engine path's and a rotation's.
 @pytest.mark.parametrize("fast", [False, True])
 @pytest.mark.parametrize("mode", [1, 2])
-@pytest.mark.parametrize("wman", [21, 33, 45])
+@pytest.mark.parametrize(
+    "wman", [pytest.param(wman, marks=() if wman == 21 else pytest.mark.deep) for wman in (21, 33, 45)]
+)
 def test_cut_early_bypass(wman: int, mode: int, fast: bool) -> None:
     fmt = ZkfFormat(8, wman)
     model = build(fmt, mode, fa=fast)

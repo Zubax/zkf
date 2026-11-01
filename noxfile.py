@@ -12,8 +12,7 @@ nox.options.reuse_existing_virtualenvs = True
 
 BLACK_TARGETS = ("zkf", "tests", "noxfile.py")
 
-# Half the cores, not all: the simulations are memory-bound.
-PYTEST_DIST = ("-n", str(max(1, (os.cpu_count() or 2) // 2)), "--dist", "worksteal")
+PYTEST_DIST = ("-n", str(max(1, round(2 * (os.cpu_count() or 2) / 3))), "--dist", "worksteal")
 
 
 @nox.session(python=False, default=False)
