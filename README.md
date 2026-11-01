@@ -297,6 +297,9 @@ Roughly ordered by severity.
   `cordic`'s division. SRT digits on a carry-save remainder, one of radix 8 or two of radix 4 a stage, run slower on the
   ECP5.
 
+- Audit all opererators for special cases or other complexities introduced to handle narrow formats with wman<~10 bits.
+  Formats with such narrow significands are rarely used in practice and supporting them is not worth the effort.
+
 - `divsqrt` at e8m27 needs ECP5 speed grade 7 because LSE puts the packer's fraction mask on the set and reset of the
   result's register. An attribute hook on the masked fraction would take `syn_keep`, which keeps the mask in LUTs
   (115 to 122 MHz on speed grade 6), but LSE takes the attribute value only unsized (e.g., `1`), and Yosys's
