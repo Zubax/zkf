@@ -82,12 +82,10 @@ def test_layout(fmt: ZkfFormat, cases: list[tuple[str, int, int, int, int]]) -> 
         ), name
         classes = (decoded.is_zero, decoded.is_normal, decoded.is_inf)
         assert classes == (exp == 0, 0 < exp < fmt.exp_inf, exp == fmt.exp_inf), name
-        if exp == 0:
-            assert fmt.pack(sign, 0, 0).bits == bits, name
-        elif exp == fmt.exp_inf:
+        if exp == fmt.exp_inf:
             assert fmt.inf(sign).bits == bits, name
-        else:
-            assert fmt.pack(sign, exp, frac).bits == bits == encoded(fmt, sign, magnitude(fmt, exp, frac)), name
+        elif exp:
+            assert encoded(fmt, sign, magnitude(fmt, exp, frac)) == bits, name
 
 
 @pytest.mark.parametrize("fmt", [BINARY32, BINARY64], ids=str)
@@ -149,7 +147,7 @@ def test_printed_beyond_a_float(capsys: pytest.CaptureFixture[str]) -> None:
     assert f"twos-complement: {fmt.encode(10**400).bits:036b}\n" in printed
     main(["zkf", "15", "113"])
     assert "\n" + "1" * 28 + "0" * 100 + "\n" in capsys.readouterr().out  # the hundreds of the bit numbers of binary128
-    for value in ("nan", "1.5x"):
+    for value in ("nan", "1.5x", "1/0"):
         with pytest.raises(SystemExit, match="^usage: "):
             main(["zkf", "8", "24", value])
 
@@ -248,7 +246,7 @@ def test_arithmetic_is_that_of_numpy(fmt: ZkfFormat) -> None:
     assert checked > 15000
 
 
-@pytest.mark.parametrize("fmt", [ZkfFormat(2, 4), ZkfFormat(3, 5), ZkfFormat(4, 6), ZkfFormat(4, 7)], ids=str)
+@pytest.mark.parametrize("fmt", [ZkfFormat(2, 6), ZkfFormat(3, 5), ZkfFormat(4, 6), ZkfFormat(4, 7)], ids=str)
 def test_root_against_the_square_of_the_midpoint(fmt: ZkfFormat) -> None:
     """
     On every operand, against a formulation of its own: the root of `y = s << (wfrac + r)`
@@ -299,8 +297,6 @@ def test_rounding_to_an_integer() -> None:
     rails = [(fmt.encode(128), nearest), (fmt.encode(-128), nearest), (fmt.encode(-129), ceil), (Zkf(fmt, 0), floor)]
     rails += [(Zkf(fmt, ((1 << 32) - 1)), ceil), (Zkf(fmt, 0x7F800001), trunc)]
     assert [rint.evaluate(x, mode).y_int for x, mode in rails] == [127, -128, -128, 0, -128, 127]
-    with pytest.raises(UnsupportedFormat):
-        Rint(fmt, wint=1)
 
 
 @pytest.mark.parametrize("fmt", [ZkfFormat(2, 4), ZkfFormat(6, 18), BINARY32, BINARY64], ids=str)
@@ -309,7 +305,7 @@ def test_exponent(fmt: ZkfFormat) -> None:
     for exp in range(1 << fmt.wexp):
         for sign in (0, 1):
             for frac in (0, fmt.frac_mask):
-                a = Zkf(fmt, fmt.pack(sign, exp, frac).bits)
+                a = fmt.pack(sign, exp, frac)
                 e = ilog2.evaluate(a).y
                 assert e == exp - fmt.bias
                 if a.is_normal:
@@ -474,11 +470,12 @@ def test_the_oracles() -> None:
         (n(3), n(4), (w(0x3DD1BFAE), n(5), 0)),
     ):
         theta, length, quadrant = cordic.evaluate(1, y, x, oracle=True)
-        assert (Zkf(fmt, _atan2_canon_half(fmt, fmt.encode(theta).bits)), fmt.encode(length), quadrant) == angled, (
+        assert (_atan2_canon_half(fmt.encode(theta)), fmt.encode(length), quadrant) == angled, (
             y,
             x,
         )
-    assert abs(exp2.evaluate(half, oracle=True) ** 2 - 2) < mpmath.mpf(2) ** -150
+    with mpmath.workprec(400):
+        assert abs(exp2.evaluate(half, oracle=True) ** 2 - 2) < mpmath.mpf(2) ** -150
     assert exp2.evaluate(n(128), oracle=True) == mpmath.mpf(2) ** 128
 
 

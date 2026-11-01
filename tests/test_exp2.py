@@ -4,14 +4,12 @@ import pytest
 
 from _catalog import CATALOG
 from _trans import build, others, run, simulate, staging
-from zkf import ZkfFormat
-from zkf._exp2 import Exp2
+from zkf import Exp2, UnsupportedFormat, ZkfFormat
 
 CoreStages = Exp2.CoreStages
 
 # wexp, wman, kind: every table of a degree.
 FORMATS: list[tuple[int, int, str | int]] = [
-    (2, 16, "every"),
     (6, 16, 512),
     (8, 24, 1024),
     (8, 32, 768),
@@ -24,10 +22,15 @@ def test_formats(row: tuple[int, int, str | int]) -> None:
     run("exp2", *row)
 
 
+@pytest.mark.parametrize("shard", range(2))
+def test_every(shard: int) -> None:
+    run("exp2", 3, 16, "every", shard, 2)
+
+
 @pytest.mark.parametrize("stages", staging(CoreStages), ids=str)
 def test_stages(stages: dict[str, Any]) -> None:
-    """Stages change no result: the format that `test_formats` walks whole is sampled here."""
-    run("exp2", 2, 16, 4096, **stages)
+    """Stages change no result: the format that `test_every` walks whole is sampled here."""
+    run("exp2", 3, 16, 4096, **stages)
 
 
 # Every count of the kernel at degree 3, whose square takes two multipliers, and the core beside it; the least is the
@@ -83,6 +86,8 @@ def test_refusals() -> None:
             build("exp2", fmt, **knobs)
     with pytest.raises(ValueError, match="set 3..4"):
         build("exp2", ZkfFormat(8, 36), stage_core_kernel=2)  # c1*w is a grid of 3x2
+    with pytest.raises(UnsupportedFormat, match="^WEXP=2 is below 3$"):
+        Exp2(ZkfFormat(2, 16), wmultiplier=18)
 
 
 # wexp, wman, kind, shard, shards, stages
@@ -96,8 +101,7 @@ EACH: tuple[dict[str, Any], ...] = (
     {"sk": 3, "sc": CoreStages.SUM},
 )
 DEEP: list[Row] = []
-DEEP += [(2, 16, "every", 0, 1, stages) for stages in EACH[1:]]  # bare, it is a row of `test_formats`
-DEEP += [(3, 16, "every", shard, 2, stages) for shard in (0, 1) for stages in EACH]
+DEEP += [(3, 16, "every", shard, 2, stages) for shard in range(2) for stages in EACH[1:]]  # bare, it is `test_every`
 DEEP += [(w, m, 512 if m > 16 else 128, 0, 1, stages) for w, m in ((8, 27), (8, 32), (14, 16)) for stages in EACH]
 DEEP += [(8, 36, 512, 0, 1, {"sk": 4})]  # 3 is the catalog's
 DEEP += [

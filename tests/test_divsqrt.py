@@ -18,8 +18,7 @@ from _operands import (
     random_operand,
     random_zero,
 )
-from zkf import Zkf, ZkfFormat
-from zkf._divsqrt import Divsqrt
+from zkf import Divsqrt, UnsupportedFormat, Zkf, ZkfFormat
 
 # Operands, the result and the error, worked by hand at 8/24: IEEE's, and ZKF's own for its zeros and infinities.
 DIVISIONS = [
@@ -77,7 +76,7 @@ def divisions(fmt: ZkfFormat) -> list[tuple[int, int]]:
     digit, at the last decision by compares, and at the limits of the result's exponent.
     """
     top, ones = fmt.exp_max_finite, fmt.frac_mask
-    numbers = list(directed_numbers(fmt).values()) if fmt.wexp >= 3 else []
+    numbers = list(directed_numbers(fmt).values())
     out = [(a, b) for a in numbers for b in numbers]
     one, unit = fmt.bias << fmt.wfrac, 1 << fmt.wfrac
     for f in (0, 1, 2, ones >> 1, ones - 1, ones):
@@ -108,10 +107,7 @@ def radicands(fmt: ZkfFormat) -> list[int]:
         out += [fmt.pack(sign, exp, 0).bits for exp in exponents for sign in (0, 1)]
         out += [fmt.pack(0, 1, 1).bits, fmt.pack(0, 2, 0).bits]
     for exp in (fmt.bias, fmt.bias + 1):
-        if exp <= fmt.exp_max_finite:
-            out += [fmt.pack(0, exp, fmt.frac_mask).bits] + [
-                fmt.pack(0, exp, 1 << bit).bits for bit in range(fmt.wfrac)
-            ]
+        out += [fmt.pack(0, exp, fmt.frac_mask).bits] + [fmt.pack(0, exp, 1 << bit).bits for bit in range(fmt.wfrac)]
     # A root of half the significand's bits at most has an exact square.
     half = fmt.wman // 2
     for q, scale in product(range(1 << min(half - 1, 6)), (0, 1, -1)):
@@ -177,9 +173,8 @@ def operands(
     if kind == "every":
         return [(a, 0) for a in every] if root else [(a, b) for a in every[shard::shards] for b in every]
     if kind == "significands":
-        parities = [fmt.bias, fmt.bias + 1][: 2 if fmt.bias < fmt.exp_max_finite else 1]
         if root:
-            return [(fmt.pack(0, exp, f).bits, 0) for exp in parities for f in fractions]
+            return [(fmt.pack(0, exp, f).bits, 0) for exp in (fmt.bias, fmt.bias + 1) for f in fractions]
         return [
             (fmt.pack(0, fmt.bias, fa).bits, fmt.pack(0, fmt.bias, fb).bits) for fa in fractions for fb in fractions
         ]
@@ -224,13 +219,13 @@ def decodes(wman: int) -> tuple[Divsqrt.CoreStages, ...]:
     return (Divsqrt.CoreStages(0), Divsqrt.CoreStages.FIRST_DIGIT) if wman % 2 == 0 else (Divsqrt.CoreStages(0),)
 
 
-# mode, wexp, wman, kind: division where two operands can be walked, roots further, the runtime mode on both.
+# mode, wexp, wman, kind: roots walked whole up to 4/7, the runtime mode at 3/5; division alone, in the deep tier.
 FORMATS = (
-    [(0, 2, 4, "every"), (0, 3, 4, "every"), (0, 3, 5, 512), (0, 4, 6, 512), (0, 5, 11, 768), (0, 6, 18, 768)]
+    [(0, 3, 5, 512), (0, 4, 6, 512), (0, 5, 11, 768), (0, 6, 18, 768)]
     + [(0, 7, 17, 768), (0, 8, 24, 1024), (0, 11, 53, 384)]
-    + [(1, 2, 4, "every"), (1, 3, 4, "every"), (1, 5, 11, 512), (1, 8, 24, 1024), (1, 11, 53, 384)]
+    + [(1, 5, 11, 512), (1, 8, 24, 1024), (1, 11, 53, 384)]
     + [(1, 3, 5, "every"), (1, 4, 6, "every"), (1, 4, 7, "every")]
-    + [(2, 2, 4, "every"), (2, 3, 4, "every"), (2, 3, 5, "every"), (2, 4, 6, 1024), (2, 5, 11, 768)]
+    + [(2, 3, 5, "every"), (2, 4, 6, 1024), (2, 5, 11, 768)]
     + [(2, 6, 18, 768), (2, 8, 27, 768), (2, 8, 36, 768), (2, 11, 53, 384)]
 )
 
@@ -242,11 +237,11 @@ def test_formats(row: tuple[int, int, int, str | int]) -> None:
 
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
-@pytest.mark.parametrize("wman", [4, 5])
-def test_stages(mode: int, wman: int) -> None:
-    each = ({"stage_input": 1}, {"stage_output": 1}) if wman == 4 else ()
+@pytest.mark.parametrize("wman, kind", [(5, "every"), (6, 2048)])
+def test_stages(mode: int, wman: int, kind: str | int) -> None:
+    each = ({"stage_input": 1}, {"stage_output": 1}) if wman == 6 else ()
     for knobs in (*each, {"stage_input": 2, "stage_core": decodes(wman)[-1], "stage_output": 1}, {"stage_output": 3}):
-        run(3, wman, "every", mode, **knobs)
+        run(3, wman, kind, mode, **knobs)
 
 
 @pytest.mark.parametrize("model", [pytest.param(m, id=n) for n, m in CATALOG.items() if isinstance(m, Divsqrt)])
@@ -254,16 +249,21 @@ def test_catalog(model: Divsqrt) -> None:
     simulate(model, 768)
 
 
-def test_refusals() -> None:
+def test_latency() -> None:
     fmt = ZkfFormat(6, 18)
     unfolded = Divsqrt(fmt, stage_core=Divsqrt.CoreStages.FIRST_DIGIT, stage_output=3)
     assert Divsqrt(fmt).timing.latency == 8 and unfolded.timing.latency == 12
+
+
+def test_refusals() -> None:
     with pytest.raises(ValueError):
-        Divsqrt(fmt, mode=3)
+        Divsqrt(ZkfFormat(6, 18), mode=3)
     with pytest.raises(
         ValueError, match=re.escape("stage_core=CoreStages.FIRST_DIGIT: WMAN=17 is odd; leave FIRST_DIGIT out")
     ):
         Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT)
+    with pytest.raises(UnsupportedFormat, match="^WMAN=4 is below 5$"):
+        Divsqrt(ZkfFormat(3, 4))
 
 
 # mode, wexp, wman, kind, stage_core, shard, shards: a shard holds 2**18 divisions at most.
@@ -275,7 +275,7 @@ DEEP: list[tuple[int, int, int, str | int, Divsqrt.CoreStages, int, int]] = (
     + [(mode, w, m, "every", sd, 0, 1) for mode in (0, 1, 2) for w, m in ((3, 6), (4, 5)) for sd in decodes(m)]
     + [
         (0, w, m, kind, NONE, 0, 1)
-        for w, m, kind in ((3, 5, "every"), (2, 5, "every"), (5, 4, "every"), (6, 17, 512), (8, 23, 512), (7, 12, 512))
+        for w, m, kind in ((3, 5, "every"), (2, 5, "every"), (6, 17, 512), (8, 23, 512), (7, 12, 512))
     ]
     + [(mode, w, m, 512, NONE, 0, 1) for mode in (1, 2) for w, m in ((6, 17), (8, 23))]
     + [(1, 2, 5, "every", NONE, 0, 1)]
@@ -300,4 +300,4 @@ def test_deep(row: tuple[int, int, int, str | int, Divsqrt.CoreStages, int, int]
 @pytest.mark.parametrize("stages", [stages for stages in range(8) if stages & (stages - 1)])
 def test_deep_stages(mode: int, stages: int) -> None:
     values: dict[str, Any] = {"stage_input": 1, "stage_core": Divsqrt.CoreStages.FIRST_DIGIT, "stage_output": 1}
-    run(3, 4, "every", mode, **{name: value for bit, (name, value) in enumerate(values.items()) if (stages >> bit) & 1})
+    run(3, 6, "every", mode, **{name: value for bit, (name, value) in enumerate(values.items()) if (stages >> bit) & 1})

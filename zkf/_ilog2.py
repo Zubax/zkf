@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import NamedTuple
 
-from amaranth.hdl import Cat, Module, Signal, signed
+from amaranth.hdl import Module, Signal, signed
 from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 
@@ -95,6 +95,6 @@ class _Ilog2(wiring.Component):
         m.d.comb += payload.eq(found)
         valid, out = pipe(m, "out", valid, result, payload, model.stage_output)
         m.d.comb += self.out_valid.eq(valid)
-        m.d.comb += self.y.eq(Cat(out.unbiased, out.unbiased[-1].replicate(model.wint - fmt.wexp - 1)).as_signed())
+        m.d.comb += self.y.eq(out.unbiased)
         m.d.comb += [self.zero.eq(out.zero), self.infinity.eq(out.infinity), self.negative.eq(out.negative)]
         return m

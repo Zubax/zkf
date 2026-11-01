@@ -7,9 +7,9 @@ from amaranth.hdl import Cat, Const, Module, Mux, Signal, signed, Value
 from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 
-from ._block import FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe
+from ._block import FloatLayout, FloatView, Operator, Timing, bundle, delay, ge, pipe
 from ._pack import Pack, pack_reference
-from ._value import Zkf
+from ._value import UnsupportedFormat, Zkf
 
 
 class DivsqrtResult(NamedTuple):
@@ -54,6 +54,8 @@ class Divsqrt(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
+        if self.fmt.wman < 5:
+            raise UnsupportedFormat(f"WMAN={self.fmt.wman} is below 5")
         if Divsqrt.CoreStages.FIRST_DIGIT in self.stage_core and self.fmt.wman % 2:
             raise ValueError(f"stage_core={self.stage_core}: WMAN={self.fmt.wman} is odd; leave FIRST_DIGIT out")
         if not 0 <= self.mode <= 2:
@@ -112,8 +114,7 @@ class Divsqrt(Operator):
                 guard = 1 if rem > raw else 0
             sticky = 1 if rem else 0
             exp_unbiased = (a.exp - fmt.bias) // 2
-            y = pack_reference(fmt, 0, 0, 0, exp_unbiased, significand_value, guard, 0, sticky)
-            return DivsqrtResult(Zkf(fmt, y), False)
+            return DivsqrtResult(pack_reference(fmt, 0, 0, 0, exp_unbiased, significand_value, guard, 0, sticky), False)
 
         div0 = b.is_zero
         if a.is_zero or b.is_inf:
@@ -173,7 +174,7 @@ class DivsqrtStep(wiring.Component):
         digit = self.digit
 
         def placed(value: Value) -> Value:
-            return Cat(Const(0, iq + 1), value, Const(0, ww))[:ww]
+            return Cat(Const(0, iq + 1), value)
 
         high = d3[iq + 1 :]
         wh = len(high)
@@ -183,7 +184,7 @@ class DivsqrtStep(wiring.Component):
             d_next, d3_next = d, d3
         elif mode == 1:
             # Selected by the digit, which lets a tool fold the candidates for `d3` into one adder.
-            lower, upper, upper2 = ((high + step)[:wh] for step in (-3, 3, 6))
+            lower, upper, upper2 = (high + step for step in (-3, 3, 6))
             w_sel, hi_sel = Signal(ww, name="w_sel"), Signal(wh, name="hi_sel")
             with m.Switch(digit):
                 for value, (w_case, hi_case) in enumerate(
@@ -327,7 +328,7 @@ class _Divsqrt(wiring.Component):
             below, above = Const(0, wframe - wfrac), Const(0, ww + 2 - wman - (wframe - wfrac))
             den = Cat(below, b.significand, above)
             den3 = Signal(ww + 2, name="den3")
-            m.d.comb += den3.eq((den + Cat(Const(0, 1), den[:-1]))[: ww + 2])
+            m.d.comb += den3.eq(den + Cat(Const(0, 1), den[:-1]))
             lowered = Signal(name="lowered", reset_less=True)
             m.d.sync += lowered.eq(div0.h & ~op if mode == 2 else div0.h)
             quotient = _First(
@@ -364,22 +365,15 @@ class _Divsqrt(wiring.Component):
         exp = Signal(signed(weu), name="exp0", reset_less=True)
         m.d.sync += exp.eq(exp0)
         if lowered is not None:
-            exp = (exp - lowered)[:weu].as_signed()
+            exp = exp - lowered
         sign, zero = Signal(name="sign0", reset_less=True), Signal(name="zero0", reset_less=True)
         m.d.sync += [sign.eq(sign0), zero.eq(zero0)]
         inf, err = Signal(name="inf0", reset_less=True), Signal(name="err0", reset_less=True)
         m.d.sync += [inf.eq(inf0), err.eq(err0)]
-        first = prefix0
-        if divides and stages == 1:
-            first = Signal(3, name="first")
-            m.d.comb += first.eq(prefix0)
         prefix = plus1 = None
         if divides:
             prefix = Signal(3, name="prefix0", reset_less=True)
-            m.d.sync += prefix.eq(first)
-        if stages == 1:
-            plus1 = Signal(3, name="plus1", reset_less=True)
-            m.d.sync += plus1.eq((first + 1)[:3])
+            m.d.sync += prefix.eq(prefix0)
         inj = None
         if mode == 2:  # what the root puts into the subtrahends of the next stage, registered off its compares
             assert quotient is not None
@@ -402,9 +396,9 @@ class _Divsqrt(wiring.Component):
                 m.d.sync += plus1.eq(Mux(step.digit == 3, carried, Cat((step.digit + 1)[:2], taken_so_far)))
                 if divides and not even:  # 5 and 7 times the divisor, for the step of radix 8 that ends it
                     d5 = Signal(ww + 3, name="d5", reset_less=True)
-                    m.d.sync += d5.eq((d + Cat(Const(0, 2), d))[: ww + 3])
+                    m.d.sync += d5.eq(d + Cat(Const(0, 2), d))
                     d7 = Signal(ww + 3, name="d7", reset_less=True)
-                    m.d.sync += d7.eq((Cat(Const(0, 3), d) - d)[: ww + 3])
+                    m.d.sync += d7.eq(Cat(Const(0, 3), d) - d)
             if mode == 2:
                 assert ops is not None
                 held_bits = Cat(d[iq - 2], d[iq - 1], d3[iq - 2]) if iq >= 2 else None
@@ -475,11 +469,6 @@ def _sum3(either: Value, both: Value, r: Value, carry_in: int) -> Value:
     return ((either ^ r) + Cat(Const(carry_in, 1), carry[:-1]))[: len(r)]
 
 
-def _ge(left: Value, right: Value) -> Value:
-    """`left >= right` as the borrow of a subtraction, which goes onto a carry chain."""
-    return ~(left - right)[-1]
-
-
 class _Div0(wiring.Component):
     """
     The divider's stage 0. `h = sa < sb`, and the dividend is `n = sa << h`, so that `n / sb` is in [1, 2). Unfolded,
@@ -502,9 +491,9 @@ class _Div0(wiring.Component):
         m = Module()
         wman, sa, sb = self._wman, self.sa, self.sb
         plain = Signal(wman + 1, name="r0")
-        m.d.comb += plain.eq((sa - sb)[: wman + 1])
+        m.d.comb += plain.eq(sa - sb)
         doubled = Signal(wman + 1, name="r1")
-        m.d.comb += doubled.eq((Cat(Const(0, 1), sa) - sb)[: wman + 1])
+        m.d.comb += doubled.eq(Cat(Const(0, 1), sa) - sb)
         h = plain[-1]
         m.d.comb += self.h.eq(h)
         if not self._fold:
@@ -579,14 +568,14 @@ class _Root0(wiring.Component):
         m.d.comb += digit.eq(Cat((r & t[4] & t[0:4].any()) | (ge1 & ~ge2), ge2))
         radicand = Mux(r, Cat(Const(0, 1), frac, Const(1, 1)), Cat(frac, Const(1, 2)))
         m1 = Signal(wman + 1, name="m1")
-        m.d.comb += m1.eq((radicand - (1 << wfrac))[: wman + 1])
+        m.d.comb += m1.eq(radicand - (1 << wfrac))
         scaled = Cat(Const(0, 2 + wframe - wfrac), m1)  # four times the remainder, in the frame
         h = scaled[wframe - 2 :]  # in units of a quarter of the last digit's weight
         h_next, d3_half = Signal(6, name="h_next"), Signal(5, name="d3_half")  # `d3` in halves of that weight
         with m.Switch(digit):
             for value, (less, halves) in enumerate(((0, 13), (9, 16), (20, 19), (33, 22))):
                 with m.Case(value) if value < 3 else m.Default():
-                    m.d.comb += h_next.eq((h - less)[:6] if less else h)
+                    m.d.comb += h_next.eq(h - less if less else h)
                     m.d.comb += d3_half.eq(Const(halves, 5))
         m.d.comb += self.digit.eq(digit)
         m.d.comb += self.w.eq(Cat(scaled[: wframe - 2], h_next[:4]))
@@ -641,8 +630,8 @@ class _Last(wiring.Component):
                 m.d.comb += self.significand.eq(prefix1[1 : wman + 1])
                 return m
             bits = (Const(3, 2) if mode == 1 else self.inj) if self._fold and roots else Cat(d[0], d3[0])
-            ge1 = _ge(m4, Cat(bits[0], d[1:], Const(0, 3)))
-            ge3 = _ge(m4, Cat(bits[1], d3[1:], Const(0, 1)))
+            ge1 = ge(m4, Cat(bits[0], d[1:], Const(0, 3)))
+            ge3 = ge(m4, Cat(bits[1], d3[1:], Const(0, 1)))
             digit = Mux(ge3, Cat(Const(0, 1), prefix1[: wman - 1]), Cat(ge1, prefix[: wman - 1]))
             m.d.comb += self.significand.eq(digit if self._fold else either(prefix1[1 : wman + 1], digit))
             return m
@@ -650,15 +639,15 @@ class _Last(wiring.Component):
         quotient, root = Const(0, wman), Const(0, wman)
         if divides:
             m8 = Cat(Const(0, 3), w)
-            ge = [_ge(m8, Cat(d, Const(0, 3))), _ge(m8, Cat(d3, Const(0, 1))), _ge(m8, self.d5)]
+            reached = [ge(m8, Cat(d, Const(0, 3))), ge(m8, Cat(d3, Const(0, 1))), ge(m8, self.d5)]
             tail = Signal(2, name="tail")
-            with m.Switch(Cat(*ge)):
+            with m.Switch(Cat(*reached)):
                 for value, pattern in ((3, 0b111), (2, 0b011), (1, 0b001), (0, None)):
                     with m.Default() if pattern is None else m.Case(pattern):
                         m.d.comb += tail.eq(Const(value, 2))
             exact = Cat(tail, prefix[: wman - 2])
-            quotient = Mux(_ge(m8, self.d7), Cat(Const(0, 2), prefix1[: wman - 2]), exact)
+            quotient = Mux(ge(m8, self.d7), Cat(Const(0, 2), prefix1[: wman - 2]), exact)
         if roots:
-            root = Mux(_ge(m4, Cat(Const(1, 1), d, Const(0, 2))), prefix1[:wman], prefix[:wman])
+            root = Mux(ge(m4, Cat(Const(1, 1), d, Const(0, 2))), prefix1[:wman], prefix[:wman])
         m.d.comb += self.significand.eq(either(root, quotient))
         return m

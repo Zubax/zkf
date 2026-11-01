@@ -3,7 +3,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
 from ._block import FloatLayout, FloatView, bundle, pipe
-from ._value import ZkfFormat
+from ._value import Zkf, ZkfFormat
 
 
 class Pack(wiring.Component):
@@ -53,6 +53,7 @@ class Pack(wiring.Component):
         self._exp_is_biased = exp_is_biased
         self._assume_no_overflow = assume_no_overflow
         self._saturate_round_carry = saturate_round_carry
+        assert stage_input in (0, 1), stage_input
         self._stage_input = stage_input
         self._stage_output = stage_output
         super().__init__(
@@ -142,7 +143,7 @@ class Pack(wiring.Component):
             held = Signal(fmt.wfull, name="expsig_held")
             m.d.comb += held.eq(Cat(significand & keep.replicate(fmt.wman), exp_held))
             rounded = Signal(fmt.wfull, name="expsig_rounded")
-            m.d.comb += rounded.eq((held + increment)[: fmt.wfull])
+            m.d.comb += rounded.eq(held + increment)
             if self._saturate_round_carry:
                 # A saturated result is the held one, picked rather than masked so that no set or reset takes it.
                 saturating = Signal(name="result_saturating")
@@ -155,7 +156,7 @@ class Pack(wiring.Component):
             # the exponent, and from the largest finite one lands on the infinity with a zero fraction.
             increment = guard & (round_bit | sticky | significand[0])
             rounded = Signal(fmt.wfull, name="expsig_rounded")
-            m.d.comb += rounded.eq((Cat(significand, exp_biased) + increment)[: fmt.wfull])
+            m.d.comb += rounded.eq(Cat(significand, exp_biased) + increment)
             saturate = Signal(name="result_saturate")
             m.d.comb += saturate.eq(finite & significand.all() & at_max if self._saturate_round_carry else 0)
             normal = Signal(name="result_normal")
@@ -185,32 +186,18 @@ def pack_reference(
     sticky: int,
     *,
     saturate_round_carry: bool = False,
-) -> int:
-    """The bits that `Pack` gives for an unbiased exponent."""
-    exp_biased = exp_unbiased + fmt.bias
-    exp_underflow_zero = exp_unbiased < (fmt.min_exp_unbiased - 1)
-    exp_one_below_min = exp_unbiased == (fmt.min_exp_unbiased - 1)
-    exp_overflow = exp_unbiased > fmt.max_exp_unbiased
-
-    round_increment = bool(guard and (round_bit or sticky or (significand_value & 1)))
-    rounded_ext = (significand_value & ((1 << fmt.wman) - 1)) + (1 if round_increment else 0)
-    round_carry = (rounded_ext >> fmt.wman) & 1
-    exp_round_overflow = (exp_biased == fmt.exp_max_finite) and bool(round_carry)
-    saturated = saturate_round_carry and exp_round_overflow
-    infinity = bool(force_inf or exp_overflow or (exp_round_overflow and not saturate_round_carry))
-
-    result_zero = bool(force_zero or ((not force_inf) and exp_underflow_zero))
-    result_infinity = (not result_zero) and infinity
-    result_min_normal = (not result_zero) and (not result_infinity) and (not force_inf) and exp_one_below_min
-
-    if result_zero:
-        return 0
-    if result_infinity:
-        return fmt.inf(sign).bits
-    if result_min_normal:
-        return fmt.pack(sign, 1, 0).bits
-    if saturated:
-        return fmt.pack(sign, fmt.exp_max_finite, fmt.frac_mask).bits
-
-    exp_rounded = (exp_biased + round_carry) & ((1 << fmt.wexp) - 1)
-    return fmt.pack(sign, exp_rounded, rounded_ext & fmt.frac_mask).bits
+) -> Zkf:
+    """What `Pack` gives for an unbiased exponent."""
+    if force_zero or (not force_inf and exp_unbiased < fmt.min_exp_unbiased - 1):
+        return Zkf(fmt, 0)
+    if force_inf or exp_unbiased > fmt.max_exp_unbiased:
+        return fmt.inf(sign)
+    if exp_unbiased == fmt.min_exp_unbiased - 1:
+        return fmt.pack(sign, 1, 0)
+    # A normal significand, rounded; its carry takes it a binade up, past the largest to the infinity or to `max`.
+    increment = int(bool(guard and (round_bit or sticky or (significand_value & 1))))
+    rounded = significand_value + increment
+    exp_biased = exp_unbiased + fmt.bias + (rounded >> fmt.wman)
+    if exp_biased > fmt.exp_max_finite:
+        return fmt.pack(sign, fmt.exp_max_finite, fmt.frac_mask) if saturate_round_carry else fmt.inf(sign)
+    return fmt.pack(sign, exp_biased, rounded & fmt.frac_mask)

@@ -1,6 +1,6 @@
 """
-`FixedToFloat`, also with the options of `cordic`'s packers, against its reference: every magnitude at small widths,
-and directed ones at the widths of `cordic`'s packers, where Yosys also proves its normalizer against a plain one.
+`FixedToFloat` as `cordic`'s packers have it, against its reference: every magnitude at small widths, and directed
+ones at the widths of those packers, where Yosys also proves its normalizer against a plain one.
 """
 
 import subprocess
@@ -16,17 +16,17 @@ from amaranth.lib.wiring import In, Out
 from _bench import Case, run_pipeline
 from _operands import SEED
 from _yosys import YOSYS
-from zkf import Zkf, ZkfFormat
+from zkf import ZkfFormat
 from zkf._fixed_to_float import FixedToFloat, fixed_to_float_reference
 from zkf._shift import Normshift
 
 type Txn = tuple[int, int, int, int]
 """sign, force_inf, exp_offset, mag"""
 
-# NORMALIZE_INPUT, NORMALIZE, PACK, ROUNDED: none, the catalog's `cordic` less NORMALIZE_INPUT, and all.
-STAGES = [(0, 0, 0, 0), (0, 1, 1, 0), (1, 1, 1, 1)]
-# The defaults and the packers of `cordic`.
-OPTIONS = [{}, {"classify_ahead": True, "exp_is_biased": True}]
+# NORMALIZE, PACK, ROUNDED: none, the catalog's `cordic`, and all.
+STAGES = [(0, 0, 0), (1, 1, 0), (1, 1, 1)]
+# The packers of `cordic`: a rotation's, which takes no magnitude that overflows, and a vectoring's, which saturates.
+KINDS = {"rotation": {"assume_no_overflow": True}, "vectoring": {"saturate_round_carry": True}}
 
 
 def weu_of(fmt: ZkfFormat, wmag: int) -> int:
@@ -38,29 +38,32 @@ def run(
     wmag: int,
     txns: list[Txn],
     *,
-    options: dict[str, bool],
-    stages: tuple[int, int, int, int],
+    kind: str,
+    stages: tuple[int, int, int],
     most: int | None = None,
-    saturate: bool = False,
+    weu: int | None = None,
 ) -> None:
+    options = KINDS[kind]
     dut = FixedToFloat(
         fmt,
         wmag=wmag,
-        weu=weu_of(fmt, wmag),
-        saturate_round_carry=saturate,
-        stage_input=stages[0],
-        stage_normalize=stages[1],
-        stage_pack=stages[2],
-        stage_output=stages[3],
+        weu=weu or weu_of(fmt, wmag),
+        classify_ahead=True,
+        exp_is_biased=True,
+        stage_normalize=stages[0],
+        stage_pack=stages[1],
+        stage_output=stages[2],
         most=most,
         **options,
     )
-    bias = fmt.bias if options.get("exp_is_biased") else 0
+    saturate = options.get("saturate_round_carry", False)
     cases = []
     for sign, inf, exp, mag in txns:
-        bits = fixed_to_float_reference(fmt, sign, mag, exp, wmag, saturate_round_carry=saturate)
-        want = fmt.inf(sign) if inf else Zkf(fmt, bits)
-        cases.append(Case({"sign": sign, "force_inf": inf, "exp_offset": exp + bias, "mag": mag}, {"y": want}))
+        found = fixed_to_float_reference(fmt, sign, mag, exp, wmag, saturate_round_carry=saturate)
+        if found.is_inf and not inf and options.get("assume_no_overflow"):
+            continue
+        want = fmt.inf(sign) if inf else found
+        cases.append(Case({"sign": sign, "force_inf": inf, "exp_offset": exp + fmt.bias, "mag": mag}, {"y": want}))
     run_pipeline(dut, sum(stages), cases)
 
 
@@ -88,14 +91,12 @@ SMALL = [(5, 4, 7, None), (5, 4, 8, None), (5, 4, 9, None), (6, 5, 12, None), (6
 
 
 @pytest.mark.parametrize("stages", STAGES, ids=str)
-@pytest.mark.parametrize("options", OPTIONS, ids=str)
+@pytest.mark.parametrize("kind", KINDS)
 @pytest.mark.parametrize("row", SMALL, ids=str)
-def test_every_magnitude(
-    row: tuple[int, int, int, int | None], options: dict[str, bool], stages: tuple[int, int, int, int]
-) -> None:
+def test_every_magnitude(row: tuple[int, int, int, int | None], kind: str, stages: tuple[int, int, int]) -> None:
     wexp, wman, wmag, most = row
     fmt = ZkfFormat(wexp, wman)
-    run(fmt, wmag, every(fmt, wmag, most), options=options, stages=stages, most=most)
+    run(fmt, wmag, every(fmt, wmag, most), kind=kind, stages=stages, most=most)
 
 
 def directed(fmt: ZkfFormat, wmag: int, most: int | None) -> list[Txn]:
@@ -134,20 +135,18 @@ def directed(fmt: ZkfFormat, wmag: int, most: int | None) -> list[Txn]:
     return txns
 
 
-# The widths of the catalog's packers of `cordic`: a rotation's, a vectoring's or both modes', and the second packer.
-CATALOG_WIDTHS = [(6, 18, 52, 28, False), (6, 18, 57, 34, True), (8, 36, 96, 54, False), (8, 36, 102, 61, True)]
-CATALOG_WIDTHS += [(8, 36, 61, 1, False)]
+# The catalog's packers of `cordic`, with their widths of the magnitude and the exponent: a rotation's, a vectoring's or
+# both modes', and the second packer.
+CATALOG_WIDTHS = [(6, 18, 52, 28, "rotation", 9), (6, 18, 57, 34, "vectoring", 15), (8, 36, 96, 54, "rotation", 11)]
+CATALOG_WIDTHS += [(8, 36, 102, 61, "vectoring", 18), (6, 18, 34, 1, "rotation", 8), (8, 36, 61, 1, "rotation", 10)]
 
 
 @pytest.mark.parametrize("stages", STAGES, ids=str)
-@pytest.mark.parametrize("options", OPTIONS, ids=str)
 @pytest.mark.parametrize("row", CATALOG_WIDTHS, ids=str)
-def test_directed(
-    row: tuple[int, int, int, int, bool], options: dict[str, bool], stages: tuple[int, int, int, int]
-) -> None:
-    wexp, wman, wmag, most, saturate = row
+def test_directed(row: tuple[int, int, int, int, str, int], stages: tuple[int, int, int]) -> None:
+    wexp, wman, wmag, most, kind, weu = row
     fmt = ZkfFormat(wexp, wman)
-    run(fmt, wmag, directed(fmt, wmag, most), options=options, stages=stages, most=most, saturate=saturate)
+    run(fmt, wmag, directed(fmt, wmag, most), kind=kind, stages=stages, most=most, weu=weu)
 
 
 class Miter(wiring.Component):
@@ -178,10 +177,10 @@ class Miter(wiring.Component):
 
 
 @pytest.mark.skipif(YOSYS is None, reason="no Yosys of the system")
-@pytest.mark.parametrize("row", [(5, 4, 9, None, False), *CATALOG_WIDTHS], ids=str)
-def test_proved_against_a_plain_normalizer(row: tuple[int, int, int, int | None, bool], tmp_path: Path) -> None:
+@pytest.mark.parametrize("row", CATALOG_WIDTHS, ids=str)
+def test_proved_against_a_plain_normalizer(row: tuple[int, int, int, int, str, int], tmp_path: Path) -> None:
     assert YOSYS is not None
-    _, wman, wmag, most, _ = row
+    _, wman, wmag, most, _, _ = row
     miter = Miter(wmag, most, wmag - wman - 2)
     (tmp_path / "miter.il").write_text(rtlil.convert(miter, name="miter"))
     (tmp_path / "prove.ys").write_text(

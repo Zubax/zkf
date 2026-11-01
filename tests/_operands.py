@@ -15,15 +15,16 @@ def raw_corners(fmt: ZkfFormat) -> list[int]:
     """Zeros and infinities of both signs, with and without a payload, as raw bits."""
     sign = 1 << fmt.sign_shift
     inf = fmt.exp_inf << fmt.wfrac
-    return [0, 1, fmt.frac_mask, sign, sign | min(fmt.frac_mask, 1), inf, sign | inf, (1 << fmt.wfull) - 1]
+    return [0, 1, fmt.frac_mask, sign, sign | 1, inf, sign | inf, (1 << fmt.wfull) - 1]
 
 
 def directed_numbers(fmt: ZkfFormat) -> dict[str, int]:
-    if fmt.bias - 1 < 1 or fmt.bias + 1 > fmt.exp_max_finite:
-        raise ValueError(f"format too small for generic directed values: {fmt}")
+    """None at WEXP 2, which has no exponent below one's."""
+    if fmt.wexp < 3:
+        return {}
     return {
         "zero": 0,
-        "neg_zero": fmt.pack(1, 0, min(fmt.frac_mask, 1)).bits,
+        "neg_zero": fmt.pack(1, 0, 1).bits,
         "one": fmt.pack(0, fmt.bias, 0).bits,
         "minus_one": fmt.pack(1, fmt.bias, 0).bits,
         "half": fmt.pack(0, fmt.bias - 1, 0).bits,
@@ -37,7 +38,7 @@ def directed_numbers(fmt: ZkfFormat) -> dict[str, int]:
         "neg_max_finite": fmt.pack(1, fmt.exp_max_finite, fmt.frac_mask).bits,
         "pos_inf": fmt.inf(0).bits,
         "neg_inf": fmt.inf(1).bits,
-        "noncanonical_pos_inf": fmt.pack(0, fmt.exp_inf, min(fmt.frac_mask, 1)).bits,
+        "noncanonical_pos_inf": fmt.pack(0, fmt.exp_inf, 1).bits,
         "noncanonical_neg_inf": fmt.pack(1, fmt.exp_inf, fmt.frac_mask).bits,
     }
 
@@ -84,7 +85,7 @@ def unary_operands(fmt: ZkfFormat, count: int, seed: int = SEED) -> list[int]:
     """`count` 0 is every operand; otherwise the corners and the directed numbers made up to `count` at random."""
     if not count:
         return list(range(1 << fmt.wfull))
-    out = raw_corners(fmt) + (list(directed_numbers(fmt).values()) if fmt.wexp >= 3 else [])
+    out = raw_corners(fmt) + list(directed_numbers(fmt).values())
     out = list(dict.fromkeys(out))
     rng = np.random.default_rng(seed)
     seen = set(out)
@@ -143,7 +144,7 @@ def random_pack_mag_scale(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int
         width = int(rng.integers(1, wmag + 1))
         mag = (1 << (width - 1)) | random_bits(width - 1, rng)
     elif mode <= 5:
-        centers = [1, 1 << max(fmt.wfrac - 1, 0), 1 << fmt.wfrac, 1 << fmt.wman, (1 << wmag) - 1]
+        centers = [1, 1 << (fmt.wfrac - 1), 1 << fmt.wfrac, 1 << fmt.wman, (1 << wmag) - 1]
         mag = min(max(centers[int(rng.integers(0, len(centers)))] + int(rng.integers(-16, 17)), 0), ((1 << wmag) - 1))
     else:
         mag = random_bits(wmag, rng)
@@ -167,19 +168,17 @@ def exp2_operands(fmt: ZkfFormat, count: int, cf: int, seed: int = SEED) -> list
     result sits above; then random ones, half of them at an exponent that leaves a reduced argument of `cf` bits
     nonzero, the others saturating at a wide exponent.
     """
-    out = raw_corners(fmt)
-    if fmt.wexp >= 3:
-        out += directed_numbers(fmt).values()
-        for k in (1, 2, 3, -1, -2, -3):
-            if 1 <= fmt.bias + k <= fmt.exp_max_finite:
-                out += [fmt.pack(sign, fmt.bias + k, 0).bits for sign in (0, 1)]
-        shift, top = fmt.wfrac - (fmt.wexp - 2), fmt.bias + fmt.wexp - 2
-        half = 1 << (shift - 1)
-        ends = [(1, ((fmt.bias + 1) << shift) - 1), (1, (fmt.bias << shift) + half), (1, (fmt.bias << shift) + 1)]
-        ends += [(1, fmt.bias << shift), (1, (fmt.bias << shift) - half), (1, ((fmt.bias - 1) << shift) + 1)]
-        ends += [(1, (fmt.bias - 1) << shift), (0, ((fmt.bias + 1) << shift) - 1)]
-        out += [fmt.pack(sign, top, q - (1 << fmt.wfrac)).bits for sign, q in ends]
-        out += [fmt.pack(0, fmt.bias - 1, 1 << (fmt.wfrac - 1)).bits, fmt.pack(0, 1, 0).bits, fmt.pack(1, 1, 0).bits]
+    out = raw_corners(fmt) + list(directed_numbers(fmt).values())
+    for k in (1, 2, 3, -1, -2, -3):
+        if 1 <= fmt.bias + k:
+            out += [fmt.pack(sign, fmt.bias + k, 0).bits for sign in (0, 1)]
+    shift, top = fmt.wfrac - (fmt.wexp - 2), fmt.bias + fmt.wexp - 2
+    half = 1 << (shift - 1)
+    ends = [(1, ((fmt.bias + 1) << shift) - 1), (1, (fmt.bias << shift) + half), (1, (fmt.bias << shift) + 1)]
+    ends += [(1, fmt.bias << shift), (1, (fmt.bias << shift) - half), (1, ((fmt.bias - 1) << shift) + 1)]
+    ends += [(1, (fmt.bias - 1) << shift), (0, ((fmt.bias + 1) << shift) - 1)]
+    out += [fmt.pack(sign, top, q - (1 << fmt.wfrac)).bits for sign, q in ends]
+    out += [fmt.pack(0, fmt.bias - 1, 1 << (fmt.wfrac - 1)).bits, fmt.pack(0, 1, 0).bits, fmt.pack(1, 1, 0).bits]
     out = list(dict.fromkeys(out))
     rng = np.random.default_rng(seed)
     seen = set(out)

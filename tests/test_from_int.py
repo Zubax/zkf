@@ -45,10 +45,9 @@ FORMATS = [
 ]
 
 
-@pytest.mark.parametrize("stage_input", [0, 1])
 @pytest.mark.parametrize("row", FORMATS, ids=str)
-def test_formats(row: tuple[int, int, int, int | None], stage_input: int) -> None:
-    run(*row, stage_input=stage_input)
+def test_formats(row: tuple[int, int, int, int | None]) -> None:
+    run(*row)
 
 
 @pytest.mark.parametrize(
@@ -90,11 +89,9 @@ DEEP = [
 
 
 @pytest.mark.deep
-@pytest.mark.parametrize("stage_output", [0, 1])
-@pytest.mark.parametrize("stage_input", [0, 1])
 @pytest.mark.parametrize("row", DEEP, ids=str)
-def test_deep(row: tuple[int, int, int, int], stage_input: int, stage_output: int) -> None:
-    run(*row, stage_input=stage_input, stage_output=stage_output)
+def test_deep(row: tuple[int, int, int, int]) -> None:
+    run(*row)
 
 
 @pytest.mark.deep

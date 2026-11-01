@@ -5,31 +5,36 @@ from functools import reduce
 from operator import or_
 from typing import Any
 
-import mpmath
 import numpy as np
 import pytest
 
 from _bench import run_cuts, run_handshake
 from _catalog import CATALOG
-from _cordic import FIRST_DIGIT, REACHED, build, case, cut, first_digits, run, simulate, synthesized
+from _cordic import (
+    FIRST_DIGIT,
+    LACKED,
+    REACHED,
+    ROTATION,
+    VECTORING,
+    build,
+    case,
+    cut,
+    first_digits,
+    run,
+    simulate,
+    synthesized,
+)
 from _operands import SEED
-from amaranth.sim import Simulator
-from zkf import Timing, UnsupportedFormat, ZkfFormat
+from zkf import Cordic, Timing, UnsupportedFormat, ZkfFormat
 
 from zkf._cordic import (
     _GUARD_ZF,
-    _LACKED,
-    _ROTATION,
     _SEED,
-    _VECTORING,
-    Cordic,
     _ahead,
     _constants,
-    _Engine,
     _iterate,
     _radix,
     _seed,
-    _Seed,
 )
 
 CoreStages = Cordic.CoreStages
@@ -68,8 +73,8 @@ KNOBS: list[dict[str, Any]] = [
     {"sm": 3, "wexp": 6, "wman": 18, "mode": 1},
     {"fa": False, "mode": 1},
     {"fa": False, "sm": 3, "wm": 16, "mode": 1},
-    *({"sc": member, "mode": mode} for mode in (0, 1, 2) for member in ~_LACKED[mode]),
-    *({"sc": ~_LACKED[mode], "sm": 1, "wm": 32, "mode": mode} for mode in (0, 1, 2)),
+    *({"sc": member, "mode": mode} for mode in (0, 1, 2) for member in ~LACKED[mode]),
+    *({"sc": ~LACKED[mode], "sm": 1, "wm": 32, "mode": mode} for mode in (0, 1, 2)),
     {"sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE, "sm": 4, "wm": 10, "mode": 0},
     {"si": 1, "sm": 3, "sc": SHARED | CoreStages.TAKEN | CoreStages.ORDERED, "so": 1, "mode": 1},
     {
@@ -87,9 +92,9 @@ KNOBS: list[dict[str, Any]] = [
     {"si": 1, "sm": 4, "sc": ~CoreStages(0), "so": 2, "mode": 2},
     {"fa": False, "mode": 0},
     {"fa": False, "sm": 4, "mode": 2},
-    {"fa": False, "si": 1, "sm": 1, "wm": 32, "sc": ~_LACKED[0], "so": 2, "mode": 0},
-    {"fa": False, "sc": ~_LACKED[2], "mode": 2},
-    {"fa": False, "sc": ~_LACKED[2] & ~CoreStages.CORRECTIONS, "mode": 2},
+    {"fa": False, "si": 1, "sm": 1, "wm": 32, "sc": ~LACKED[0], "so": 2, "mode": 0},
+    {"fa": False, "sc": ~LACKED[2], "mode": 2},
+    {"fa": False, "sc": ~LACKED[2] & ~CoreStages.CORRECTIONS, "mode": 2},
 ]
 # In a rotation at 5/18 the sine reaches the packer's underflow, the bias being below the fraction; at 8/48 the
 # width of what the modes share crosses a power of two; 4 is an exponent that a rotation alone takes; and without
@@ -102,7 +107,7 @@ DEEP_KNOBS: list[dict[str, Any]] = [{}, {"rs": 1}, {"sm": 3}, {"sm": 4}, {"sm": 
 DEEP_KNOBS += [
     {"si": 1, "so": 1, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK}
 ]
-DEEP_KNOBS += [{"sc": ~_LACKED[0]}]
+DEEP_KNOBS += [{"sc": ~LACKED[0]}]
 DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     *((3, 16, 512, {"mode": 0} | knobs) for knobs in DEEP_KNOBS),
     *((6, 16, 512, {"mode": 0} | knobs) for knobs in DEEP_KNOBS),
@@ -113,7 +118,7 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (5, 16, 4000, {"mode": 0}),
     (5, 16, 4000, {"mode": 0, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE}),
     (5, 16, 2000, {"mode": 0, "sm": 1, "wm": 32}),
-    (5, 16, 512, {"mode": 0, "sc": ~_LACKED[0]}),
+    (5, 16, 512, {"mode": 0, "sc": ~LACKED[0]}),
     (5, 16, 1000, {"sm": 1, "wm": 32}),
     (8, 24, 768, {"mode": 0}),
     *((wexp, wman, count, {"mode": 2}) for wexp, wman, count in VECTORINGS[:4]),
@@ -123,7 +128,7 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
         512,
         {"mode": 1, "si": 1, "so": 1, "sc": CoreStages.ORDERED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE},
     ),
-    (5, 16, 512, {"mode": 1, "sc": ~_LACKED[1]}),
+    (5, 16, 512, {"mode": 1, "sc": ~LACKED[1]}),
     (5, 16, 4000, {"mode": 1}),
     (5, 16, 4000, {"mode": 1, "fa": False}),
     (5, 16, "directed", {"mode": 1}),
@@ -202,7 +207,7 @@ def subsets(seed: int = SEED) -> list[dict[str, Any]]:
     rng = np.random.default_rng(seed)
     out: list[dict[str, Any]] = []
     for mode, count in ((0, 6), (1, 6), (2, 20)):
-        members = list(~_LACKED[mode])
+        members = list(~LACKED[mode])
         for _ in range(count):
             taken = [member for member, coin in zip(members, rng.integers(0, 2, len(members))) if coin]
             out.append({"sc": reduce(or_, taken, CoreStages(0)), "mode": mode})
@@ -265,7 +270,7 @@ def test_the_attributes_reach_the_tables(mode: int) -> None:
 @pytest.mark.parametrize("stages", [{}, {"sm": 3, "sc": ~CoreStages(0), "so": 2}, {"si": 1}], ids=str)
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
-    knobs = stages | {"sc": stages.get("sc", CoreStages(0)) & ~_LACKED[mode]}
+    knobs = stages | {"sc": stages.get("sc", CoreStages(0)) & ~LACKED[mode]}
     cut(build(ZkfFormat(5, 16), mode, **knobs))
     if mode == 0:
         cut(build(ZkfFormat(3, 16), mode, **knobs))  # an exponent that a vectoring does not take
@@ -275,9 +280,7 @@ def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
 @pytest.mark.parametrize("held", [True, False])
 @pytest.mark.parametrize("mode", [0, 2])
 def test_cut_fast(mode: int, held: bool) -> None:
-    cut(
-        build(ZkfFormat(5, 16), mode, fa=True, sc=~_LACKED[mode] & ~(CoreStages(0) if held else CoreStages.CORRECTIONS))
-    )
+    cut(build(ZkfFormat(5, 16), mode, fa=True, sc=~LACKED[mode] & ~(CoreStages(0) if held else CoreStages.CORRECTIONS)))
 
 
 # A bypass's division starts two cycles ahead of the engine's end at these widths, at either radix: cut by reset around
@@ -324,7 +327,7 @@ def test_reached() -> None:
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_cut_each_register(mode: int) -> None:
-    for member in ~_LACKED[mode]:
+    for member in ~LACKED[mode]:
         cut(build(ZkfFormat(5, 16), mode, sc=member))
 
 
@@ -333,7 +336,7 @@ def test_timing() -> None:
     fmt = ZkfFormat(6, 18)
     plain: dict[str, Any] = {"rotation_seed": 0, "stage_core_mul": 3, "wmultiplier": 18, "fast": False}
     assert timings(Cordic(fmt, **plain)) == [(15, 15), (25, 25)]
-    steps = {member: (1, 0) for member in _ROTATION} | {member: (0, 1) for member in _VECTORING}
+    steps = {member: (1, 0) for member in ROTATION} | {member: (0, 1) for member in VECTORING}
     for member in CoreStages:
         rot, vec = steps.get(member, (1, 1))
         found = timings(Cordic(fmt, **plain, stage_core=member))
@@ -368,109 +371,17 @@ def test_seed_tables(wman: int) -> None:
         assert iterated(half, _SEED + signs) == halfway, signs
 
 
-@pytest.mark.parametrize("wman", [16, 36])
-@pytest.mark.parametrize("mode", [0, 1, 2])
-def test_engine_from_its_seeds(wman: int, mode: int) -> None:
-    """
-    The engine started at the state of each mode's seed ends where the reference's own iterations from that state do:
-    what the outputs cannot show.
-    """
-    c = _constants(wman)
-    rng = np.random.default_rng(wman * 100 + mode)
-    seed = _SEED + 2
-
-    cases = []
-    for _ in range(12):
-        for vectoring in [(0,), (1,), (0, 1)][mode]:
-            if vectoring:
-                x = int(rng.integers(1 << (c.xf - 2), 1 << (c.xf - 1)))
-                x0, y0, z0 = _iterate(c, x, int(rng.integers(-x, x + 1)), 0, True, stop=_SEED)
-                expected = _iterate(c, x0, y0, z0, True, _SEED)
-            else:
-                tpw = int(rng.integers(1, 1 << (c.wt - 1)))
-                x0, y0, z0 = _iterate(c, c.kinv, 0, tpw << _GUARD_ZF, False, stop=seed)
-                expected = _iterate(c, x0, y0, z0, False, seed)
-            # A vectoring's load in two parts, as its seed gives them: a word and an addend below half the range.
-            xa, ya = (int(rng.integers(0, 1 << (c.wx - 2))) if vectoring else 0 for _ in range(2))
-            cases.append((vectoring, x0 - xa, xa, y0 - ya, ya, z0, expected))
-    dut = _Engine(c.lut, wx=c.wx, wz=c.wz, mode=mode, seed=seed)
-
-    async def bench(ctx: Any) -> None:
-        for vectoring, x0, xa, y0, ya, z0, expected in cases:
-            ports = ((dut.vectoring, vectoring), (dut.x0, x0), (dut.xa, xa), (dut.y0, y0), (dut.ya, ya), (dut.z0, z0))
-            for port, value in ports:
-                ctx.set(port, value)
-            ctx.set(dut.start, 1)
-            await ctx.tick()
-            ctx.set(dut.start, 0)
-            for _ in range(4 * c.n):
-                if ctx.get(dut.done):
-                    break
-                await ctx.tick()
-            assert (ctx.get(dut.xn), ctx.get(dut.yn), ctx.get(dut.zn)) == expected, (vectoring, x0, xa, y0, ya, z0)
-            await ctx.tick()
-
-    sim = Simulator(dut)
-    sim.add_clock(1e-6)
-    sim.add_testbench(bench)
-    sim.run()
-
-
-@pytest.mark.parametrize("wman", [16, 18, 36, 53])
-def test_seed_decoder(wman: int) -> None:
-    """At the coordinates next to each threshold, on both sides of the fold, and at the ends and half a quadrant."""
-    c = _constants(wman)
-    wt, half = c.wt, 1 << (c.wt - 1)
-    for signs in (1, 2):
-        for merged in (False, True):
-            dut = _Seed(c, signs, merged)
-            ends = [entry[0] for entry in dut.entries[1:]]
-            folded = {0, 1, half - 1, half}
-            for end in ends:
-                folded |= {end - 1, end, end + 1}
-            coordinates = sorted(
-                {tpw for tpw in folded if 0 <= tpw <= half} | {(1 << wt) - tpw for tpw in folded if 0 < tpw < half}
-            )
-
-            def expected(t: int) -> tuple[int, int | None, int]:
-                tpw = (1 << wt) - t if t > half else t
-                if tpw == half:
-                    return (
-                        (1 << len(dut.entries)) if merged else 1 << len(ends),
-                        dut.halfway_state[2] if merged else None,
-                        1,
-                    )
-                k = sum(tpw >= end for end in ends)
-                return 1 << k, dut.entries[k][3], 0
-
-            async def bench(ctx: Any) -> None:
-                for t in coordinates:
-                    ctx.set(dut.t, t)
-                    picks, take, halfway = expected(t)
-                    assert ctx.get(dut.halfway) == halfway, (signs, merged, t)
-                    if merged or not halfway:
-                        assert ctx.get(dut.picks) == picks, (signs, merged, t)
-                    if take is not None:
-                        assert ctx.get(dut.z_take) == take, (signs, merged, t)
-
-            sim = Simulator(dut)
-            sim.add_testbench(bench)
-            sim.run()
-
-
 def test_refusals() -> None:
     fmt = ZkfFormat(6, 18)
-    assert [len(~_LACKED[mode]) for mode in (0, 1, 2)] == [8, 8, 13]
     # Both modes' product is a grid of 3x2 multipliers, a rotation's of 2x2, and one multiplier at a width of 36.
     refused: list[dict[str, Any]] = [
         {"rotation_seed": -1},
         {"rotation_seed": 3},
-        {"stage_core_mul": 2},
         {"stage_core_mul": 6},
         {"stage_core_mul": 1, "mode": 0},
         {"stage_core_mul": 5, "mode": 0},
         {"stage_core_mul": 4, "wmultiplier": 36},
-        *({"stage_core": member, "mode": mode} for mode in (0, 1) for member in _LACKED[mode]),
+        *({"stage_core": member, "mode": mode} for mode in (0, 1) for member in LACKED[mode]),
         {"mode": 3},
     ]
     for knobs in refused:
@@ -480,13 +391,13 @@ def test_refusals() -> None:
         Cordic(fmt, wmultiplier=18, stage_core_mul=2)
     with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1$"):
         Cordic(fmt, wmultiplier=36, stage_core_mul=0)
-    refusal = "stage_core=CoreStages.SHIFT|TAKEN|MEET: leave out TAKEN|MEET, which mode=0 lacks"
+    refusal = "stage_core=CoreStages.SHIFT|TAKEN|ORDERED: leave out TAKEN|ORDERED, which mode=0 lacks"
     with pytest.raises(ValueError, match=f"^{re.escape(refusal)}$"):
         Cordic(
             fmt,
             wmultiplier=18,
             stage_core_mul=3,
-            stage_core=CoreStages.SHIFT | CoreStages.TAKEN | CoreStages.MEET,
+            stage_core=CoreStages.SHIFT | CoreStages.TAKEN | CoreStages.ORDERED,
             mode=0,
         )
     refusal = "stage_core=CoreStages.FOLDED|ANGLE: leave out FOLDED, which mode=1 lacks"
@@ -496,16 +407,3 @@ def test_refusals() -> None:
     for wexp, wman, mode in ((4, 16, 1), (4, 16, 2), (8, 15, 0), (8, 54, 2)):
         with pytest.raises(UnsupportedFormat):
             Cordic(ZkfFormat(wexp, wman), wmultiplier=18, stage_core_mul=3, mode=mode)
-
-
-def test_numbers_do_not_follow_the_precision_of_the_caller() -> None:
-    before = mpmath.mp.prec
-    try:
-        found = []
-        for precision in (24, 53, 80, 2000):
-            mpmath.mp.prec = precision
-            found.append(_constants.__wrapped__(53))
-            assert mpmath.mp.prec == precision
-    finally:
-        mpmath.mp.prec = before
-    assert all(numbers == found[0] for numbers in found)

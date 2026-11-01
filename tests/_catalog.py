@@ -5,43 +5,26 @@ stage pinned or a register more, as 0.9.0's suite had them. Every multiplying op
 which every chip of the figures has.
 """
 
-from collections.abc import Callable
-from dataclasses import dataclass
-from functools import partial
 from types import MappingProxyType
 from typing import Any
 
-from amaranth.back import verilog
-from amaranth.lib import wiring
-
-from zkf import Add, Block, Cmp, Cordic, Divsqrt, Exp2, Fma, FromInt, Ilog2, Log2, Mul, MulIlog2, Resize, Rint
-from zkf import Timing, ZkfFormat
-from zkf._pack import Pack
-
-
-@dataclass(frozen=True)
-class CoreSpec:
-    """A private core, which is no operator, as a spec: what the harness reads of an operator."""
-
-    name: str
-    component: Callable[[], wiring.Component]
-    latency: int
-
-    @property
-    def timing(self) -> Timing:
-        return Timing(self.latency, 1)
-
-    @property
-    def clocked(self) -> bool:
-        return self.latency > 0
-
-    @property
-    def signature(self) -> wiring.Signature:
-        return self.component().signature
-
-    def compile(self) -> str:
-        return verilog.convert(self.component(), name=self.name, emit_src=False, strip_internal_attrs=True)
-
+from zkf import (
+    Add,
+    Block,
+    Cmp,
+    Cordic,
+    Divsqrt,
+    Exp2,
+    Fma,
+    FromInt,
+    Ilog2,
+    Log2,
+    Mul,
+    MulIlog2,
+    Resize,
+    Rint,
+    ZkfFormat,
+)
 
 F18, F24, F36 = ZkfFormat(6, 18), ZkfFormat(8, 24), ZkfFormat(8, 36)
 _FMA36: dict[str, Any] = dict(stage_core_mul=3, wmultiplier=18)
@@ -62,7 +45,7 @@ def _grade(spec: Block, **grades: int) -> Block:
     return spec
 
 
-CATALOG: dict[str, Block | CoreSpec] = {
+CATALOG: dict[str, Block] = {
     spec.name: spec
     for spec in (
         Ilog2(F18),
@@ -70,7 +53,6 @@ CATALOG: dict[str, Block | CoreSpec] = {
         Ilog2(F24),
         Ilog2(F24, stage_input=1),
         Ilog2(ZkfFormat(11, 53), wint=64),
-        CoreSpec("_zkf_pack_e6m18_wexp_unbiased8", partial(Pack, F18, wexp_unbiased=8), 0),
         # At 0 Diamond makes 79.9 MHz: the product and its rounding in one cycle.
         Mul(F18, stage_core_mul=1, wmultiplier=18),
         Mul(F18, stage_core_mul=2, wmultiplier=18),
@@ -108,9 +90,9 @@ CATALOG: dict[str, Block | CoreSpec] = {
             wmultiplier=18,
         ),
         # Without PACK nextpnr's seeds make 96.5 to 100.8 MHz.
-        Fma(F36, stage_output=1, stage_core_add=~Add.CoreStages.NORMALIZE_INPUT, **_FMA36),
+        Fma(F36, stage_output=1, stage_core_add=~Add.CoreStages(0), **_FMA36),
         # Without PACK nextpnr makes 97.1 to 103.7 MHz and Diamond 97.8.
-        Fma(F36, stage_input=1, stage_core_add=~Add.CoreStages.NORMALIZE_INPUT, **_FMA36),
+        Fma(F36, stage_input=1, stage_core_add=~Add.CoreStages(0), **_FMA36),
         Divsqrt(F18),
         Divsqrt(F18, mode=0),
         Divsqrt(F18, mode=1),
@@ -134,6 +116,7 @@ CATALOG: dict[str, Block | CoreSpec] = {
         FromInt(F18, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
         FromInt(F18, stage_input=1, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
         FromInt(F36, stage_core=FromInt.CoreStages.ABS | FromInt.CoreStages.NORMALIZE),
+        Resize(F18, fmt_in=ZkfFormat(6, 24)),  # the packer alone
         Resize(ZkfFormat(5, 11), fmt_in=ZkfFormat(6, 18)),
         Resize(ZkfFormat(5, 11), fmt_in=ZkfFormat(6, 18), stage_input=1),
         Resize(F18, fmt_in=ZkfFormat(5, 11)),
@@ -181,9 +164,9 @@ CATALOG: dict[str, Block | CoreSpec] = {
         ),
         # At stage_core_mul=2 nextpnr's seeds make 88.5 to 92.4 MHz, in the length's product.
         Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-        # On speed grade 7 it closes thinly: Diamond makes 102.0 to 108.7 MHz, from the engine's adds of an iteration,
-        # and nextpnr's seeds 102.8 to 110.1, from the sine's sum into the normalizer; without the attribute Diamond
-        # puts the tables in block RAM and makes 94.0 to 104.0, from their reads.
+        # Grade 7 is closed too, but thinly: Diamond makes 102.0 to 108.7 MHz there, from the engine's adds of an
+        # iteration, and nextpnr's seeds 102.8 to 110.1, from the sine's sum into the normalizer; without the attribute
+        # Diamond puts the tables in block RAM and makes 94.0 to 104.0, from their reads.
         _large(
             _grade(
                 Cordic(
@@ -218,7 +201,6 @@ CATALOG: dict[str, Block | CoreSpec] = {
                         Cordic.CoreStages.SHIFT
                         | Cordic.CoreStages.CORRECTIONS
                         | Cordic.CoreStages.SHIFTED
-                        | Cordic.CoreStages.MEET
                         | Cordic.CoreStages.NORMALIZE_INPUT
                         | Cordic.CoreStages.ROUNDED
                     ),

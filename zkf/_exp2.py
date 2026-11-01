@@ -11,7 +11,7 @@ from amaranth.utils import ceil_log2
 
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe
 from ._trans import Kernel, kernel_check, kernel_depth, pack_fixed, spec as table
-from ._value import Zkf, ZkfFormat, context
+from ._value import UnsupportedFormat, Zkf, ZkfFormat, context
 
 
 @dataclass(frozen=True, kw_only=True, eq=False)
@@ -62,6 +62,8 @@ class Exp2(Operator):
             raise ValueError(f"stage_output={self.stage_output} is negative")
         if self.wmultiplier < 8:
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
+        if self.fmt.wexp < 3:
+            raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is below 3")
         kernel_check(self.stage_core_kernel, table("exp2", self.fmt.wman, self.wmultiplier), self.wmultiplier)
 
     @property
@@ -92,8 +94,6 @@ class Exp2(Operator):
         if oracle:
             prec = 4 * fmt.wman + 80
             return mpmath.mpf(context(prec).power(2, x.to_mpf()), prec=prec)
-        if x.is_inf:
-            return fmt.inf() if not x.negative else Zkf(fmt, 0)
         if x.is_zero:
             return fmt.pack(0, fmt.bias, 0)
         e = x.exp - fmt.bias
@@ -115,7 +115,7 @@ class Exp2(Operator):
         assert not (s >> (cf + 1) and (s >> (cf - fmt.wfrac)) & fmt.frac_mask), "exp2 round-up with a nonzero fraction"
         # Without the half ULP; 2**f is 1 at least, and 2 where it rounds up to it, as 2**x of a negative integer.
         v = 1 << (cf + 1) if s >> (cf + 1) else max(s - (1 << (cf - fmt.wman)), 1 << cf)
-        return Zkf(fmt, pack_fixed(fmt, 0, i, v, cf))
+        return pack_fixed(fmt, 0, i, v, cf)
 
 
 class _Exp2(wiring.Component):
@@ -194,15 +194,15 @@ class _Reduce(wiring.Component):
         fmt, wff, x = self._fmt, self._wff, self.x
         wexp, wmag = fmt.wexp, fmt.wexp - 1 + wff  # |x| < 2**(wexp - 1) in range
         top = fmt.bias + wexp - 2  # the largest exponent in range: the significand is at the top of the magnitude
-        wfine = min(wexp, 3)
+        wfine = 3
         pad = -(top + 1) % (1 << wfine)
         coarse_top = (top + pad) >> wfine
         coarse_count = ((wmag + pad - 1) >> wfine) + 1  # coarse amounts that leave bits
         wcount = ceil_log2(coarse_count + 1)
-        high = x.exp[wfine:] if wexp > wfine else Const(0, 1)
+        high = x.exp[wfine:]
         wcoarse = max(len(high) + 1, wcount)
         coarse = Signal(wcoarse, name="coarse")
-        m.d.comb += coarse.eq((Const(coarse_top, wcoarse) - high)[:wcoarse])  # not negative in range
+        m.d.comb += coarse.eq(Const(coarse_top, wcoarse) - high)  # not negative in range
         fine = Cat(Const(0, wmag - fmt.wman + pad), x.frac, Const(1, 1)) >> ~x.exp[:wfine]
         shifted = (fine >> Cat(Const(0, wfine), coarse[:wcount]))[:wmag]
         magnitude = Signal(wmag, name="magnitude")
@@ -259,7 +259,7 @@ class _Pack(wiring.Component):
             m.d.comb += low.eq(z)
             m.d.comb += high.eq(1)
         with m.Else():
-            m.d.comb += low.eq((z - 1)[:wexp])
+            m.d.comb += low.eq(z - 1)
             m.d.comb += high.eq(z)
             m.d.comb += fraction.eq(1)
         m.d.comb += self.y.sign.eq(0)

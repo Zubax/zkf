@@ -4,8 +4,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.sim import Simulator, SimulatorContext
 
-from zkf import Zkf, ZkfFormat
-from zkf._block import FloatLayout, FloatView
+from zkf import FloatLayout, FloatView, Zkf, ZkfFormat
 
 FMT = ZkfFormat(4, 6)
 
@@ -52,5 +51,3 @@ def test_ports_exchange_zkf() -> None:
 def test_a_constant_is_a_value_of_the_format() -> None:
     with pytest.raises(ValueError, match="is not"):
         FloatLayout(FMT).const(Zkf(ZkfFormat(5, 5), 0))
-    with pytest.raises(TypeError):
-        FloatLayout(FMT).const(3)

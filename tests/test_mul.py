@@ -169,12 +169,11 @@ def taken(wman: int, wmultiplier: int) -> range:
     return counts(wman, wman, signed=False, wmultiplier=wmultiplier)
 
 
-@pytest.mark.parametrize("stage_input", [0, 1])
 @pytest.mark.parametrize(
     "row, stage_core_mul", [(row, core) for row in FORMATS for core in range(4) if core in taken(row[1], 18)], ids=str
 )
-def test_formats(row: tuple[int, int, int], stage_core_mul: int, stage_input: int) -> None:
-    run(*row, stage_core_mul=stage_core_mul, stage_input=stage_input)
+def test_formats(row: tuple[int, int, int], stage_core_mul: int) -> None:
+    run(*row, stage_core_mul=stage_core_mul)
 
 
 @pytest.mark.parametrize(
@@ -239,22 +238,15 @@ DEEP = [
 ]
 
 
-# No split at a width that has none, and one run on every pair once.
+# No split at a width that has none.
 @pytest.mark.deep
 @pytest.mark.parametrize(
-    "row, stage_core_mul, stage_input, stage_output",
-    [
-        (row, core, si, so)
-        for row in DEEP
-        for core in taken(row[1], 8)
-        for si in (0, 1)
-        for so in (0, 1)
-        if core < 3 or row[1] > 8 and (row[2] or not si + so)
-    ],
+    "row, stage_core_mul",
+    [(row, core) for row in DEEP for core in taken(row[1], 8) if core < 3 or row[1] > 8],
     ids=str,
 )
-def test_deep(row: tuple[int, int, int], stage_core_mul: int, stage_input: int, stage_output: int) -> None:
-    run(*row, 8, stage_core_mul=stage_core_mul, stage_input=stage_input, stage_output=stage_output)
+def test_deep(row: tuple[int, int, int], stage_core_mul: int) -> None:
+    run(*row, 8, stage_core_mul=stage_core_mul)
 
 
 @pytest.mark.deep

@@ -5,7 +5,7 @@ from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 
 from ._add import Add, AddCore
-from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, pipe
+from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, ge, pipe, zext
 from ._pmul import Pmul, check
 from ._value import Zkf
 
@@ -24,10 +24,7 @@ class Fma(Operator):
     wmultiplier: int
     """As `Mul`'s."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
-    """
-    On the last input stage at `stage_core_mul=1`, which the multiplier takes the factors from; from 2 on, on the
-    product's capture behind the masks, where a register follows the multipliers (a grid's from 3 on).
-    """
+    """As `Mul`'s; the capture is behind the masks."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -70,7 +67,7 @@ class Fma(Operator):
             return fmt.inf(c.negative)
 
         if p_zero:
-            return fmt.encode(c.to_fraction())
+            return c.canonicalize()
         return fmt.encode(a.to_fraction() * b.to_fraction() + c.to_fraction())
 
 
@@ -97,10 +94,7 @@ class _Fma(wiring.Component):
 
         operands = data.StructLayout({"a": layout, "b": layout, "c": layout})
         taken = bundle(operands, a=self.a, b=self.b, c=self.c)
-        # At `stage_core_mul=1`, which only a product of one multiplier takes, it takes the last input stage's factors
-        # unmasked.
-        direct = model.stage_core_mul == 1
-        valid, q = pipe(m, "in", self.in_valid, operands, taken, model.stage_input, model.mul_attrs if direct else None)
+        valid, q = pipe(m, "in", self.in_valid, operands, taken, model.stage_input)
         a, b, c = q.a, q.b, q.c
 
         # A zero factor gives a zero product, which only an infinite `c` overrides; otherwise an infinite factor gives
@@ -161,12 +155,12 @@ class _Fma(wiring.Component):
         normalized = Mux(high, product, Cat(Const(0, 1), product[:-1]))
         p_key = normalized if masked else Mux(p_finite, normalized, Const(0, wmag))
         ep = Mux(p_finite, (pr.ep_base + high)[:weu].as_signed(), lowest)
-        ec = Mux(c_finite, Cat(pr.c_exp, Const(0, 2)).as_signed(), lowest)
+        ec = Mux(c_finite, zext(pr.c_exp, weu).as_signed(), lowest)
         # The magnitude order: by exponent, then by significand with `c` aligned to the product's top; the product wins
         # a tie. Decided ahead of the decode register, as the adder decides its own, so that its fan-out over the
         # operands' selection starts at a register. The equality of the exponents is found beside their subtraction.
         level = ~(ep ^ ec).any()
-        p_larger = (~(ep - ec)[-1] & ~level) | (level & ~(p_key - Cat(Const(0, wman), pr.c_sig))[-1])
+        p_larger = (ge(ep, ec) & ~level) | (level & ge(p_key, Cat(Const(0, wman), pr.c_sig)))
         decoded = bundle(
             keys,
             p_key=p_key,

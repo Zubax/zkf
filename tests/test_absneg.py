@@ -36,12 +36,6 @@ def test_stages(cls: type[AbsNeg] | type[Finite], knobs: dict[str, int]) -> None
     run(cls, 3, 4, 0, **knobs)
 
 
-@pytest.mark.parametrize("cls", [AbsNeg, Finite], ids=lambda cls: cls.operator)
-def test_no_register_is_no_clock(cls: type[AbsNeg] | type[Finite]) -> None:
-    fmt = ZkfFormat(3, 4)
-    assert not cls(fmt).clocked and cls(fmt, stage_output=1).clocked
-
-
 @pytest.mark.deep
 @pytest.mark.parametrize("cls", [AbsNeg, Finite], ids=lambda cls: cls.operator)
 @pytest.mark.parametrize("row", DEEP, ids=str)

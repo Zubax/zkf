@@ -1,5 +1,9 @@
+import enum
 import re
+import subprocess
+import sys
 from dataclasses import replace
+from pathlib import Path
 from collections.abc import Callable
 from typing import Any
 
@@ -65,14 +69,11 @@ def test_names() -> None:
         "//   stage_input: 1",
         "//   stage_core: CoreStages.SUM|PACK",
         "//   stage_output: 2",
-        "//   timing: Timing(latency=5, initiation_interval=1)",
+        f"//   timing: {add.timing}",
         f"module {add.name}(clk, rst, in_valid, a, b, out_valid, y);",
     ]
-    both = Cordic(F36, stage_core_mul=3, wmultiplier=18).compile().splitlines()
-    timing = (
-        "//   timing: {0: Timing(latency=21, initiation_interval=21), 1: Timing(latency=35, initiation_interval=35)}"
-    )
-    assert timing in both
+    both = Cordic(F36, stage_core_mul=3, wmultiplier=18)
+    assert f"//   timing: {both.timing}" in both.compile().splitlines()
 
 
 def test_a_latency_renames(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -81,6 +82,20 @@ def test_a_latency_renames(monkeypatch: pytest.MonkeyPatch) -> None:
     before, later = add.name, Timing(add.timing.latency + 1, 1)
     monkeypatch.setattr(Add, "timing", property(lambda self: later))
     assert add.name != before
+
+
+def test_a_new_register_renames_no_module(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A version that adds a member to a set of registers, shifting the members' values, renames no module."""
+
+    class CoreStages(enum.Flag):
+        NEW = enum.auto()
+        PACK = enum.auto()
+
+    assert CoreStages.PACK.value != Add.CoreStages.PACK.value
+    add = Add(ZkfFormat(7, 18), stage_core=Add.CoreStages.PACK)
+    before, config = add.name, dict(add.config, stage_core=CoreStages.PACK)
+    monkeypatch.setattr(Add, "config", property(lambda self: config))
+    assert add.name == before
 
 
 def test_the_top_of_the_text() -> None:
@@ -124,8 +139,8 @@ def test_names_are_distinct() -> None:
                 try:
                     model = make(cls, fmt, **knobs)
                 except ValueError:
-                    # Every value of the sweep is taken but a product's own refusals and a nested register alone.
-                    assert cls in (Add, Mul, Fma, Cordic, Exp2, Log2), knobs
+                    # Every value of the sweep is taken but a product's own refusals.
+                    assert cls in (Mul, Fma, Cordic, Exp2, Log2), knobs
                     continue
                 assert seen.setdefault(model.name, model) == model
 
@@ -170,14 +185,13 @@ def test_refusals() -> None:
     knobs: tuple[Callable[[], Block], ...] = (
         lambda: Mul(F18, wmultiplier=18, stage_core_mul=4),
         lambda: Mul(F18, wmultiplier=18, stage_core_mul=-1),
-        lambda: Mul(F36, wmultiplier=18, stage_core_mul=1),
         lambda: Mul(F36, wmultiplier=18, stage_core_mul=5),
         lambda: Mul(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=2),
         lambda: Fma(F36, wmultiplier=18, stage_core_mul=1),
         lambda: Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
         lambda: Exp2(F18, wmultiplier=18),
         lambda: Exp2(F36, wmultiplier=18, stage_core_kernel=2),
-        lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, mode=0, stage_core=Cordic.CoreStages.MEET),
+        lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, mode=0, stage_core=Cordic.CoreStages.TAKEN),
         lambda: Log2(F18, wmultiplier=18, stage_core_kernel=2),
         lambda: Pipe(w=0),
     )
@@ -275,12 +289,57 @@ def test_one_configuration_is_one_model() -> None:
 
 
 def test_clocked() -> None:
-    assert not AbsNeg(F18).clocked and not Pipe(w=1).clocked and Pipe(w=1, n=1).clocked
+    assert not Pipe(w=1).clocked and Pipe(w=1, n=1).clocked
     assert Mul(F18, stage_core_mul=1, wmultiplier=18).clocked and Cordic(F18, stage_core_mul=3, wmultiplier=18).clocked
-    assert not Mul(F18, wmultiplier=18).clocked and not Add(F18).clocked
+    assert AbsNeg(F18, stage_output=1).clocked and Finite(F18, stage_output=1).clocked
+    unclocked = (
+        AbsNeg(F18),
+        Finite(F18),
+        Add(F18),
+        Mul(F18, wmultiplier=18),
+        Resize(F18, fmt_in=F18),
+        Ilog2(F18),
+        Rint(F18),
+    )
+    assert not any(model.clocked for model in unclocked)
 
 
 def test_a_default_follows_the_format() -> None:
     """A knob left to its default is derived again when the model is copied to another format; a given one stays."""
     assert replace(MulIlog2(F18), fmt=F36) == MulIlog2(F36)
     assert replace(MulIlog2(F18, wk=5), fmt=F36) == MulIlog2(F36, wk=5)
+
+
+TEXTS = """
+import hashlib, sys, mpmath
+from concurrent.futures import ThreadPoolExecutor
+import zkf._trans
+from zkf import Cordic, Exp2, Log2, ZkfFormat
+mpmath.mp.prec = int(sys.argv[1])
+fitting = zkf._trans._fitting.prec  # the search's context, which generations at once would leave moved
+models = [
+    lambda: Log2(ZkfFormat(6, 16), wmultiplier=18, stage_core_kernel=2, stage_core_mul=2),
+    lambda: Log2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel=3, stage_core_mul=3),
+    lambda: Exp2(ZkfFormat(8, 24), wmultiplier=18, stage_core_kernel=3),
+    lambda: Exp2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel=3),
+    lambda: Cordic(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=3),
+]
+compile = lambda model: model().compile()  # made where it is compiled, which generates its tables
+texts = list(ThreadPoolExecutor(8).map(compile, models) if sys.argv[2] == "threads" else map(compile, models))
+assert mpmath.mp.prec == int(sys.argv[1]) and zkf._trans._fitting.prec == fitting
+print(hashlib.sha256("".join(texts).encode()).hexdigest())
+"""
+
+
+def test_the_text_follows_neither_the_precision_nor_the_threads_of_the_caller() -> None:
+    """Each in a fresh interpreter, as the tables and the constants are generated once a process."""
+
+    def digest(precision: int, how: str) -> str:
+        root = Path(__file__).resolve().parents[1]
+        done = subprocess.run(
+            [sys.executable, "-c", TEXTS, str(precision), how], cwd=root, capture_output=True, text=True
+        )
+        assert done.returncode == 0, done.stderr
+        return done.stdout
+
+    assert len({digest(20, "serial"), digest(53, "serial"), digest(2000, "serial"), digest(53, "threads")}) == 1

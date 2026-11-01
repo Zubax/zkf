@@ -74,7 +74,7 @@ class _Finite(wiring.Component):
             layout, frac=Const(fmt.frac_mask, fmt.wfrac), exp=Const(fmt.exp_max_finite, fmt.wexp), sign=x.sign
         )
         result = data.StructLayout({"finite": 1, "saturated": layout})
-        chosen = layout(Mux(finite, x.as_value(), largest.as_value()))
+        chosen = layout(Mux(finite, x, largest))
         payload = Signal(result, name="result")
         m.d.comb += payload.eq(bundle(result, finite=finite, saturated=chosen))
         valid, out = pipe(m, "out", valid, result, payload, model.stage_output)

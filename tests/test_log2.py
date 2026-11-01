@@ -4,8 +4,7 @@ import pytest
 
 from _catalog import CATALOG
 from _trans import build, others, run, simulate, staging
-from zkf import ZkfFormat
-from zkf._log2 import Log2
+from zkf import Log2, ZkfFormat
 
 CoreStages = Log2.CoreStages
 

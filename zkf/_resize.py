@@ -4,7 +4,7 @@ from amaranth.hdl import Cat, Const, Module, Mux, Signal
 from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 
-from ._block import FloatLayout, FloatView, Operator, Timing, bundle, pipe
+from ._block import FloatLayout, FloatView, Operator, Timing, bundle, pipe, zext
 from ._pack import Pack
 from ._value import Zkf, ZkfFormat
 
@@ -43,12 +43,7 @@ class Resize(Operator):
     def evaluate(self, a: Zkf) -> Zkf:
         if a.fmt != self.fmt_in:
             raise ValueError(f"an operand of {a.fmt} where {self.fmt_in} is due")
-        fmt = self.fmt
-        if a.is_zero:
-            return Zkf(fmt, 0)
-        if a.is_inf:
-            return fmt.inf(a.negative)
-        return fmt.encode(a.to_fraction())
+        return self.fmt.inf(a.negative) if a.is_inf else self.fmt.encode(a.to_fraction())
 
 
 class _Resize(wiring.Component):
@@ -69,11 +64,11 @@ class _Resize(wiring.Component):
         if out.wman >= source.wman and out.wexp >= source.wexp:
             # Nothing is rounded and nothing leaves the range.
             layout = FloatLayout(out)
-            exp = (Cat(a.exp, Const(0, out.wexp - source.wexp)) + (out.bias - source.bias))[: out.wexp]
+            exp = (zext(a.exp, out.wexp) + (out.bias - source.bias))[: out.wexp]
             frac = Cat(Const(0, out.wfrac - source.wfrac), a.frac)
             infinity = bundle(layout, frac=Const(0, out.wfrac), exp=Const(out.exp_inf, out.wexp), sign=a.sign)
             normal = bundle(layout, frac=frac, exp=exp, sign=a.sign)
-            finite = Mux(a.is_inf, infinity.as_value(), normal.as_value())
+            finite = Mux(a.is_inf, infinity, normal)
             valid, y = pipe(
                 m, "out", valid, layout, layout(Mux(a.is_zero, Const(0, out.wfull), finite)), model.stage_output
             )
@@ -90,7 +85,7 @@ class _Resize(wiring.Component):
         m.d.comb += pack.sign.eq(a.sign)
         m.d.comb += pack.force_zero.eq(a.is_zero)
         m.d.comb += pack.force_inf.eq(a.is_inf)
-        m.d.comb += pack.exp_unbiased.eq((Cat(a.exp, Const(0, weu - source.wexp)) - source.bias)[:weu].as_signed())
+        m.d.comb += pack.exp_unbiased.eq(zext(a.exp, weu) - source.bias)
         m.d.comb += pack.significand.eq(Cat(Const(0, -drop), significand) if drop <= 0 else significand[drop:])
         m.d.comb += pack.guard.eq(significand[drop - 1] if drop >= 1 else Const(0, 1))
         m.d.comb += pack.round.eq(significand[drop - 2] if drop >= 2 else Const(0, 1))

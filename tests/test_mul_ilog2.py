@@ -43,10 +43,10 @@ def operands(fmt: ZkfFormat) -> list[int]:
         fmt.frac_mask,
         1 << fmt.sign_shift,
         fmt.exp_inf << fmt.wfrac,
-        (1 << fmt.sign_shift) | (fmt.exp_inf << fmt.wfrac) | min(fmt.frac_mask, 1),
+        (1 << fmt.sign_shift) | (fmt.exp_inf << fmt.wfrac) | 1,
         ((1 << fmt.wfull) - 1),
     ]
-    return raw + (list(directed_numbers(fmt).values()) if fmt.wexp >= 3 else [])
+    return raw + list(directed_numbers(fmt).values())
 
 
 def pairs(fmt: ZkfFormat, wk: int, count: int) -> list[tuple[int, int]]:
@@ -56,9 +56,17 @@ def pairs(fmt: ZkfFormat, wk: int, count: int) -> list[tuple[int, int]]:
     out = list(dict.fromkeys((a, k) for a in operands(fmt) for k in shifts(fmt, wk)))
     rng = np.random.default_rng(SEED)
     seen = set(out)
-    while len(out) < max(count, len(seen)):
+    taken = signed_range(wk)
+    low, high = taken[0], taken[-1]
+    while len(out) < count:
         a = random_operand(fmt, rng) if int(rng.integers(0, 4)) else random_bits(fmt.wfull, rng)
-        pair = (a, int(rng.integers(signed_range(wk)[0], signed_range(wk)[-1] + 1)))
+        # Half the shifts keep a normal result normal; the others are of the whole range, which mostly saturates.
+        exp = (a >> fmt.wfrac) & fmt.exp_inf
+        bounds = max(low, 1 - exp), min(high, fmt.exp_max_finite - exp)
+        if rng.integers(0, 2) or bounds[0] > bounds[1]:
+            bounds = low, high
+        k = int(rng.integers(bounds[0], bounds[1] + 1))
+        pair = (a, k)
         if pair not in seen:
             seen.add(pair)
             out.append(pair)
@@ -81,7 +89,6 @@ def test_formats(row: tuple[int, int, int], stage_core: MulIlog2.CoreStages) -> 
     run(*row, stage_core=stage_core)
 
 
-# A narrow `k` cannot leave the normal range; a wide one reaches the boundaries where it saturates.
 @pytest.mark.parametrize(
     "knobs",
     [
@@ -104,8 +111,8 @@ def test_catalog(model: MulIlog2) -> None:
     simulate(model, 512)
 
 
-# The scaling at 8/36 with no register, of a wide `k`; that of a narrow one is the catalog's.
-def test_single_cycle() -> None:
+# The scaling at 8/36 of a wide `k`; that of a narrow one is the catalog's.
+def test_wide_k() -> None:
     run(8, 36, 512, wk=44)
 
 

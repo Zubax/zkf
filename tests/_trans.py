@@ -1,19 +1,20 @@
-"""The bench of `exp2` and `log2`, whose rows have one shape, and the directed operands of their accuracy checks."""
+"""The bench of `exp2` and `log2`, whose rows have one shape, their tables, and their accuracy checks' operands."""
 
 import enum
 from collections.abc import Callable
 from fractions import Fraction
 from typing import Any
 
+import numpy as np
 from mpmath import mp
 
 from _bench import Case, run_pipeline
-from _operands import exp2_operands, log2_operands
+from _operands import SEED, exp2_operands, log2_operands, random_bits
 import zkf._exp2
 import zkf._log2
 from zkf import Exp2, Log2, Zkf, ZkfFormat
 from zkf._pmul import counts
-from zkf._trans import _GUARD, kernel_counts, spec as table
+from zkf._trans import _GUARD, Kernel, Spec, _generate, kernel_counts, spec as table
 
 SHORT = {
     "si": "stage_input",
@@ -176,3 +177,42 @@ def strata(function: str, fmt: ZkfFormat, span: int = 1 << 12) -> dict[str, list
     if function == "exp2":
         return {"edges": edges(fmt), "boundary": boundaries(fmt), "seam": seams(function, fmt)}
     return {"edges": edges(fmt), "seam": seams(function, fmt), "near1": near_one(fmt, span)}
+
+
+# Those of 0.9.0, and others that it never had: other significands, degree 4 among them, and other multipliers.
+TABLES = [(function, wman, 18) for function in ("exp2", "log2") for wman in (16, 18, 24, 27, 32, 36, 48, 53)]
+OTHERS = [
+    (function, wman, width)
+    for function in ("exp2", "log2")
+    for wman, width in ((20, 18), (25, 17), (30, 24), (40, 18), (44, 27), (17, 8), (37, 25), (47, 18), (26, 12))
+]
+# Where the search passes over a shape over the budget: the first segmentation, and a shortened wide product.
+OTHERS += [("log2", 36, 16), ("log2", 27, 16)]
+# A structure that the formats reach only at widths no test can enumerate, generated at WMAN 16: degree 3 with a
+# square of two multipliers, a shortened `c3` and a shortened wide product; degree 4, whose last pair is one
+# coefficient; degree 5.
+INSTRUMENTS: dict[str, tuple[str, int, dict[str, int]]] = {
+    "exp2 of degree 3": ("exp2", 11, {"d": 3, "k_base": 4}),
+    "log2 of degree 3": ("log2", 12, {"d": 3, "k_base": 4}),
+    "exp2 of degree 4": ("exp2", 18, {"d": 4, "k_base": 3}),
+    "log2 of degree 4": ("log2", 18, {"d": 4, "k_base": 4}),
+    "exp2 of degree 5": ("exp2", 18, {"d": 5, "k_base": 2}),
+    "log2 of degree 5": ("log2", 18, {"d": 5, "k_base": 3}),
+}
+
+
+def instrument(name: str) -> Spec:
+    function, wmultiplier, shape = INSTRUMENTS[name]
+    return _generate(function, 16, wmultiplier, **shape)
+
+
+def every_row(spec: Spec, dut: Kernel) -> None:
+    """The kernel of the table against its reference at both ends of every row and inside it."""
+    function = spec.function
+    rw, rng = spec.rw, np.random.default_rng(SEED)
+    name, result = ("f", "s") if function == "exp2" else ("frac", "c")
+    cases = []
+    for segment, row in enumerate(spec.coeffs):
+        for low in (0, ((1 << rw) - 1), random_bits(rw, rng)):
+            cases.append(Case({name: (segment << rw) | low}, {result: spec._polynomial(row, low)}))
+    run_pipeline(dut, dut.latency, cases)

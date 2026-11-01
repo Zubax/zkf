@@ -22,16 +22,21 @@ from _operands import (
     random_operand,
     random_zero,
 )
-from zkf import Timing, Zkf, ZkfFormat
+from zkf import Cordic, Timing, Zkf, ZkfFormat
 from zkf._cordic import (
-    _LACKED,
-    Cordic,
     _constants,
     _geometry,
     _iterate,
     _vector_residual,
 )
 from zkf._pmul import counts
+
+# The registers on the path of one mode alone, as `Cordic.CoreStages` states them, and those that each mode lacks.
+ROTATION = (
+    Cordic.CoreStages.SHIFT | Cordic.CoreStages.REDUCED | Cordic.CoreStages.FOLDED | Cordic.CoreStages.CORRECTIONS
+)
+VECTORING = Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.SHIFTED | Cordic.CoreStages.ANGLE
+LACKED = (VECTORING, ROTATION, Cordic.CoreStages(0))
 
 SHORT = {
     "si": "stage_input",
@@ -58,7 +63,7 @@ def synthesized(wman: int, mode: int = 2) -> dict[str, Any]:
     taken = counts(*_geometry(wman).operands(mode), signed=mode != 1, wmultiplier=18)
     sm = min(max(sm, taken.start), taken.stop - 1)
     (rs,) = {model.rotation_seed for model in own if model.mode != 1} or {0}
-    sc = reduce(or_, (model.stage_core for model in found)) & ~_LACKED[mode]
+    sc = reduce(or_, (model.stage_core for model in found)) & ~LACKED[mode]
     return {"sm": sm, "fa": fa, "rs": rs, "sc": sc}
 
 
@@ -109,16 +114,14 @@ def rotations(fmt: ZkfFormat) -> list[int]:
     for sign in (0, 1):
         for k in range(1, 8):
             top = k.bit_length() - 1
-            exp = fmt.bias + top - 2
-            if 1 <= exp <= fmt.exp_max_finite:
-                out.append(fmt.pack(sign, exp, (k << (fmt.wfrac - top)) & fmt.frac_mask).bits)
+            out.append(fmt.pack(sign, fmt.bias + top - 2, (k << (fmt.wfrac - top)) & fmt.frac_mask).bits)
         out += [fmt.encode(Fraction(k, 8)).bits | (sign << fmt.sign_shift) for k in (1, 3, 5, 7)]
         quarter = fmt.bias - 2
         if quarter >= 2:
             out.append(fmt.pack(sign, quarter - 1, fmt.frac_mask).bits)
         if quarter >= 1:
             out.append(fmt.pack(sign, quarter, 1).bits)
-        out += [fmt.pack(sign, fmt.bias + k, 0).bits for k in (0, 1, 2) if fmt.bias + k <= fmt.exp_max_finite]
+        out += [fmt.pack(sign, fmt.bias + k, 0).bits for k in (0, 1, 2)]
         out.append(fmt.pack(sign, fmt.exp_max_finite, 0).bits)
         for quadrant in range(4):
             for center in (Fraction(quadrant, 4) + edge, Fraction(quadrant + 1, 4) - edge):
@@ -126,7 +129,7 @@ def rotations(fmt: ZkfFormat) -> list[int]:
                 if bits >> fmt.wfrac >= 2:
                     out += [(bits + step) | (sign << fmt.sign_shift) for step in (-2, -1, 0, 1, 2)]
         for exp in (1, 2, 3):
-            out += [fmt.pack(sign, exp, frac).bits for frac in (1, fmt.frac_mask) if exp <= fmt.exp_max_finite]
+            out += [fmt.pack(sign, exp, frac).bits for frac in (1, fmt.frac_mask)]
         wff = spec.wff
         least = fmt.bias - (wff - fmt.wman) - 1  # of the exponents whose significand reaches the reduced fraction
         clamps = [*range(least - 1, least + 2), *range(least + wff - 1, least + wff + 2)]
@@ -236,7 +239,7 @@ def operands(
 ) -> list[tuple[int, int]]:
     """
     `(a, b)` of one mode: "every" operand of a rotation, of one shard of so many; the "directed" ones; or those and
-    random ones up to a count. A rotation's `b` is noise.
+    random ones up to a count, an eighth of it at the least. A rotation's `b` is noise.
     """
     rng = np.random.default_rng(seed + vectoring)
     full = (1 << fmt.wfull) - 1
@@ -246,11 +249,13 @@ def operands(
     count = 0 if kind == "directed" else int(kind)
     if vectoring:
         found = dict.fromkeys((y & full, x & full) for y, x in pairs(fmt))
-        while len(found) < count:
+        target = max(count, len(found) + count // 8)
+        while len(found) < target:
             found.setdefault(_random_pair(fmt, rng))
         return list(found)
     xs = dict.fromkeys(x & full for x in rotations(fmt))
-    while len(xs) < count:
+    target = max(count, len(xs) + count // 8)
+    while len(xs) < target:
         xs.setdefault(random_operand(fmt, rng) if int(rng.integers(0, 4)) else random_bits(fmt.wfull, rng))
     # Next to a half and to a whole turn, where the sine is smallest and its exponent is decided.
     for exp in (fmt.bias - 1, fmt.bias) if fmt.wexp >= 3 else ():

@@ -5,7 +5,8 @@ from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, pipe
-from ._pack import Pack, pack_reference
+from ._pack import Pack
+from ._fixed_to_float import fixed_to_float_reference
 from ._pmul import Pmul, check
 from ._value import Zkf
 
@@ -26,8 +27,7 @@ class Mul(Operator):
     """The operand width of the target's multipliers."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
     """
-    On the last input stage at `stage_core_mul=1`, which the multiplier takes the operands from; from 2 on, on the
-    product's capture, where a register follows the multipliers (a grid's from 3 on).
+    On the product's capture, where a register follows the multipliers: from `stage_core_mul=2` on, a grid's from 3 on.
     """
 
     def __post_init__(self) -> None:
@@ -57,17 +57,14 @@ class Mul(Operator):
         if a.fmt != self.fmt or b.fmt != self.fmt:
             raise ValueError(f"an operand is not of {self.fmt}")
         fmt = self.fmt
-        result_zero = a.is_zero or b.is_zero
-        result_inf = (not result_zero) and (a.is_inf or b.is_inf)
-
-        product = a.significand() * b.significand()
-        high = product >> (2 * fmt.wman - 1)  # the product of two significands is below 4
-        drop = fmt.wman - 1 + high
-        tail = (product >> (drop - 1)) & 1, (product >> (drop - 2)) & 1, int(product & ((1 << (drop - 2)) - 1) != 0)
-        exp = a.exp + b.exp - 2 * fmt.bias + high
-        significand = (product >> drop) & ((1 << fmt.wman) - 1)
+        if a.is_zero or b.is_zero:
+            return Zkf(fmt, 0)
         sign = a.negative ^ b.negative
-        return Zkf(fmt, pack_reference(fmt, sign, int(result_zero), int(result_inf), exp, significand, *tail))
+        if a.is_inf or b.is_inf:
+            return fmt.inf(sign)
+        product = a.significand() * b.significand()
+        exp = a.exp + b.exp - 2 * fmt.bias + 1
+        return fixed_to_float_reference(fmt, sign, product, exp, 2 * fmt.wman)
 
 
 class _Mul(wiring.Component):
@@ -86,10 +83,9 @@ class _Mul(wiring.Component):
         model, fmt = self._model, self._model.fmt
         wman, wexp_biased = fmt.wman, fmt.wexp + 2
 
-        direct = model.stage_core_mul == 1
         operands = data.StructLayout({"a": FloatLayout(fmt), "b": FloatLayout(fmt)})
         given = bundle(operands, a=self.a, b=self.b)
-        valid, q = pipe(m, "in", self.in_valid, operands, given, model.stage_input, model.mul_attrs if direct else None)
+        valid, q = pipe(m, "in", self.in_valid, operands, given, model.stage_input)
         a, b = q.a, q.b
 
         # The exponent stays biased: one bias is subtracted here, and the packer adds none.
@@ -119,7 +115,7 @@ class _Mul(wiring.Component):
         m.d.comb += pack.sign.eq(pmul.sb_out.sign)
         m.d.comb += pack.force_zero.eq(pmul.sb_out.zero)
         m.d.comb += pack.force_inf.eq(pmul.sb_out.inf)
-        m.d.comb += pack.exp_unbiased.eq((pmul.sb_out.exp + carried)[:wexp_biased].as_signed())
+        m.d.comb += pack.exp_unbiased.eq(pmul.sb_out.exp + carried)
         m.d.comb += pack.significand.eq(Mux(carried, product[wman:], product[wman - 1 : -1]))
         m.d.comb += pack.guard.eq(Mux(carried, product[wman - 1], product[wman - 2]))
         m.d.comb += pack.round.eq(Mux(carried, product[wman - 2], product[wman - 3]))

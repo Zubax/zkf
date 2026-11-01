@@ -3,9 +3,11 @@
 faithful.
 """
 
+import math
 import random
+from collections.abc import Callable, Mapping
 from fractions import Fraction
-from functools import cache
+from functools import cache, partial
 from typing import Any
 
 import numpy as np
@@ -15,18 +17,18 @@ from mpmath import mp
 import zkf._exp2
 import zkf._log2
 from _cordic import ROTATED, VECTORED, rotation_strata, vectoring_strata
-from _trans import boundaries, build, edges, near_one, seams
-from test_table import INSTRUMENTS, instrument
+from _trans import INSTRUMENTS, TABLES, boundaries, build, edges, instrument, near_one, seams
 from zkf import Cordic, Exp2, Log2, Zkf, ZkfFormat
 from _certificate import certify
-from test_table import TABLES
 from zkf._cordic import _atan2_canon_half, _atan2_special
 from zkf._trans import _ERR_GUARD, _GUARD, Spec, _arith_range, spec as table
 
 pytestmark = pytest.mark.accuracy
 
-# The narrow formats are walked whole; then every table, and binary64.
-FORMATS = [(2, 16), (3, 16), (6, 18), (8, 20), (8, 24), (8, 27), (8, 32), (8, 36), (8, 40), (8, 48), (8, 53), (11, 53)]
+# Every table, and binary64; a format of 24 bits at most is walked whole.
+FORMATS = [(6, 18), (8, 20), (8, 24), (8, 27), (8, 32), (8, 36), (8, 40), (8, 48), (8, 53), (11, 53)]
+# The cheapest to walk whole, ahead of those: the least exponents that each function takes, of `Exp2` from 3.
+NARROW = {"exp2": [(3, 16)], "log2": [(2, 16), (3, 16)]}
 DIRECTED = [(8, wman) for wman in (16, 18, 20, 24, 27, 32, 36, 40, 48, 53)] + [(11, 53)]
 SAMPLES = {"exp2": 300000, "log2": 500000}
 SHARD = 1 << 16
@@ -43,6 +45,8 @@ ROTATIONS = [(2, 16), (3, 16), (6, 16), (6, 18), (6, 36), (11, 53)] + [(8, wman)
 VECTORINGS = [(5, 16), (6, 16), (6, 18), (11, 53)] + [(8, wman) for wman in range(16, 54)]
 TURNED = 1 << 17
 """Random operands of a format and a mode."""
+TURNED_MISROUNDED = 2.0**-2
+"""Of `cordic`, which is faithful and no nearer: up to 12% of its results measured, where truncating would give half."""
 
 
 def adjacent(fmt: ZkfFormat, z: Zkf, outward: bool) -> Zkf:
@@ -99,7 +103,7 @@ def faithful(fmt: ZkfFormat, got_bits: int, truth: Any, wrap: bool = False) -> t
         if nearest.to_mpf() != truth:
             span.add(adjacent(fmt, nearest, abs(truth) > abs(nearest.to_mpf())).bits)
         if wrap:
-            span = {_atan2_canon_half(fmt, bits) for bits in span}
+            span = {_atan2_canon_half(Zkf(fmt, bits)).bits for bits in span}
     return error, got_bits in span, nearest.bits
 
 
@@ -217,10 +221,18 @@ def judged(function: str, fmt: ZkfFormat, xs: Any) -> tuple[float, int, int, int
     return worst, wrong, differing, count, first
 
 
-def passes(worst: float, wrong: int, differing: int = 0, count: int = 0, kind: str = "random") -> bool:
+def passes(
+    worst: float,
+    wrong: int,
+    differing: int = 0,
+    count: int = 0,
+    kind: str = "random",
+    ceiling: float = ERR_CEILING,
+    misrounded: float = MISROUNDED,
+) -> bool:
     """The share of misrounded results is gated where a unit samples its inputs: directed ones crowd the hard cases."""
     sampled = kind in ("random", "every") and count >= SAMPLED
-    return count > 0 and wrong == 0 and worst <= ERR_CEILING and (not sampled or differing <= MISROUNDED * count)
+    return count > 0 and wrong == 0 and worst <= ceiling and (not sampled or differing <= misrounded * count)
 
 
 @cache
@@ -231,9 +243,9 @@ def certified(spec: Spec) -> float:
 
 def units() -> list[tuple[str, int, int, str, int, int]]:
     out = []
-    for wexp, wman in FORMATS:
-        kind = "every" if wexp + wman <= 24 else "random"
-        for function in ("exp2", "log2"):
+    for function in ("exp2", "log2"):
+        for wexp, wman in NARROW[function] + FORMATS:
+            kind = "every" if wexp + wman <= 24 else "random"
             shards = max(1, (1 << (wexp + wman) if kind == "every" else SAMPLES[function]) // SHARD)
             out += [(function, wexp, wman, kind, shard, shards) for shard in range(shards)]
             out.append((function, wexp, wman, "edges", 0, 1))
@@ -252,8 +264,7 @@ def test_faithful(unit: tuple[str, int, int, str, int, int]) -> None:
     assert worst <= 0.5 + certified(table(function, wman, 18)) + 1e-9, worst
 
 
-@pytest.mark.parametrize("wexp", [2, 3])
-@pytest.mark.parametrize("name", INSTRUMENTS)
+@pytest.mark.parametrize("name, wexp", [(name, w) for name in INSTRUMENTS for w, _ in NARROW[name[:4]]], ids=str)
 def test_instruments_are_faithful(name: str, wexp: int, monkeypatch: pytest.MonkeyPatch) -> None:
     function, fmt, spec = name[:4], ZkfFormat(wexp, 16), instrument(name)
     bound = certified(spec)
@@ -262,17 +273,19 @@ def test_instruments_are_faithful(name: str, wexp: int, monkeypatch: pytest.Monk
     assert passes(worst, wrong, differing, count, "every") and worst <= 0.5 + bound + 1e-9, (worst, wrong, first)
 
 
-def every_table() -> dict[str, Spec]:
-    return {name: instrument(name) for name in INSTRUMENTS} | {f"{f} at {w}": table(f, w, m) for f, w, m in TABLES}
+BUILDERS: Mapping[str, Callable[[], Spec]] = {name: partial(instrument, name) for name in INSTRUMENTS} | {
+    f"{f} at {w}": partial(table, f, w, m) for f, w, m in sorted(TABLES)
+}
+"""Each instrument and table by name, built when called."""
 
 
-@pytest.mark.parametrize("name", [*INSTRUMENTS, *(f"{f} at {w}" for f, w, m in sorted(TABLES))])
+@pytest.mark.parametrize("name", BUILDERS)
 def test_the_kernel_is_inside_the_arithmetic_bound(name: str) -> None:
     """
     The integer kernel against the exact polynomial: every argument of every segment of a narrow table, in int64
     and float64; of a wide one, the ends and a few arguments of each segment in exact arithmetic.
     """
-    spec = every_table()[name]
+    spec = BUILDERS[name]()
     rw, d = spec.rw, spec.d
     sign = -1 if spec.function == "log2" else 1
     rng = random.Random(name)
@@ -302,27 +315,26 @@ def turned(vectoring: bool, fmt: ZkfFormat, kind: str, shard: int, shards: int) 
     if kind == "strata":
         return (vectoring_strata(fmt) if vectoring else rotation_strata(fmt))[shard::shards]
     rng = np.random.default_rng([1, shard, fmt.wexp, fmt.wman, vectoring])
-    raw = [
-        int.from_bytes(rng.bytes(16)) & fmt.pack(1, fmt.exp_inf, fmt.frac_mask).bits
-        for _ in range(TURNED // shards * 2)
-    ]
+    mask = (1 << fmt.wfull) - 1
+    raw = [int.from_bytes(rng.bytes(16)) & mask for _ in range(TURNED // shards * 2)]
     return list(zip(raw[::2], raw[1::2])) if vectoring else raw[::2]
 
 
-def rotated(model: Cordic, x: int) -> tuple[float, bool]:
-    """The worse error of the two results, and whether they and the quadrant are right."""
+def rotated(model: Cordic, x: int) -> tuple[float, bool, bool]:
+    """The worse error of the two results, whether they and the quadrant are right, and whether one is not nearest."""
     fmt = model.fmt
     v = Zkf(fmt, x)
     found = model.evaluate(0, v, Zkf(fmt, 0))
     sin, cos, quadrant = model.evaluate(0, v, Zkf(fmt, 0), oracle=True)
     if v.is_inf or v.is_zero:  # by contract
         ok = found == (fmt.encode(sin), fmt.encode(cos), quadrant)
-        return (0.0 if ok else float("inf")), ok
+        return (0.0 if ok else float("inf")), ok, not ok
     of_sin, of_cos = faithful(fmt, found.r0.bits, sin), faithful(fmt, found.r1.bits, cos)
-    return max(of_sin[0], of_cos[0]), of_sin[1] and of_cos[1] and found.quadrant == quadrant
+    differs = of_sin[2] != found.r0.bits or of_cos[2] != found.r1.bits
+    return max(of_sin[0], of_cos[0]), of_sin[1] and of_cos[1] and found.quadrant == quadrant, differs
 
 
-def vectored(model: Cordic, y: int, x: int) -> tuple[float, bool]:
+def vectored(model: Cordic, y: int, x: int) -> tuple[float, bool, bool]:
     """As `rotated`. A distance on the circle would take an angle a whole turn off, so its range is held here."""
     fmt = model.fmt
     a, b = Zkf(fmt, y), Zkf(fmt, x)
@@ -332,24 +344,26 @@ def vectored(model: Cordic, y: int, x: int) -> tuple[float, bool]:
     theta, length, _ = model.evaluate(1, a, b, oracle=True)
     if _atan2_special(a, b) is not None:  # by contract
         ok = inside and found == (fmt.encode(theta), fmt.encode(length), 0)
-        return (0.0 if ok else float("inf")), ok
+        return (0.0 if ok else float("inf")), ok, not ok
     of_theta = faithful(fmt, found.r0.bits, theta, wrap=True)
     of_length = faithful(fmt, found.r1.bits, length)
-    return max(of_theta[0], of_length[0]), inside and of_theta[1] and of_length[1]
+    differs = _atan2_canon_half(Zkf(fmt, of_theta[2])) != found.r0 or of_length[2] != found.r1.bits
+    return max(of_theta[0], of_length[0]), inside and of_theta[1] and of_length[1], differs
 
 
-def turns(vectoring: bool, fmt: ZkfFormat, operands: Any) -> tuple[float, int, int, object]:
-    """The worst error, the results that are wrong, the count, and the first wrong."""
-    worst, wrong, count, first = 0.0, 0, 0, None
+def turns(vectoring: bool, fmt: ZkfFormat, operands: Any) -> tuple[float, int, int, int, object]:
+    """The worst error, the results that are wrong, those that are not nearest, the count, and the first wrong."""
+    worst, wrong, differing, count, first = 0.0, 0, 0, 0, None
     model = Cordic(fmt, stage_core_mul=3, wmultiplier=18, mode=int(vectoring))
     for operand in operands:
-        error, ok = vectored(model, *operand) if vectoring else rotated(model, operand)
+        error, ok, differs = vectored(model, *operand) if vectoring else rotated(model, operand)
         count += 1
         worst = max(worst, error)
+        differing += differs
         if not ok:
             wrong += 1
             first = first or (operand, error)
-    return worst, wrong, count, first
+    return worst, wrong, differing, count, first
 
 
 def trig_units() -> list[tuple[str, int, int, str, int, int]]:
@@ -371,5 +385,6 @@ def trig_units() -> list[tuple[str, int, int, str, int, int]]:
 def test_cordic_is_faithful(unit: tuple[str, int, int, str, int, int]) -> None:
     name, wexp, wman, kind, shard, shards = unit
     fmt, vectoring = ZkfFormat(wexp, wman), name == "atan2"
-    worst, wrong, count, first = turns(vectoring, fmt, turned(vectoring, fmt, kind, shard, shards))
-    assert count and not wrong, (worst, wrong, count, first)
+    worst, wrong, differing, count, first = turns(vectoring, fmt, turned(vectoring, fmt, kind, shard, shards))
+    # Faithfulness is its own bound on the error.
+    assert passes(worst, wrong, differing, count, kind, math.inf, TURNED_MISROUNDED), (wrong, differing, count, first)

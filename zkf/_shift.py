@@ -17,8 +17,7 @@ class Normshift(wiring.Component):
     `x` beside the shift. `most`, where given, is the most leading zeros of a nonzero `x`, and only the tree and the
     levels that reach it are built.
 
-    `stage_input` registers `x`, `stage_split` `x` with its count ahead of the shift, and `stage_wide` the shift behind
-    its widest level.
+    `stage_split` registers `x` with its count ahead of the shift, and `stage_wide` the shift behind its widest level.
     """
 
     in_valid: Signal
@@ -34,7 +33,6 @@ class Normshift(wiring.Component):
         width: int,
         *,
         wsticky: int = 0,
-        stage_input: int = 0,
         stage_split: int = 0,
         stage_wide: int = 0,
         sideband: ShapeLike,
@@ -43,7 +41,7 @@ class Normshift(wiring.Component):
         self._width, self._wsticky = width, wsticky
         # The tree spans the top bits that can hold the leading one, as a power of two.
         self._span = 1 << ceil_log2(max(width if most is None else min(most + 1, width), 2))
-        self._stage_input, self._stage_split, self._stage_wide = stage_input, stage_split, stage_wide
+        self._stage_split, self._stage_wide = stage_split, stage_wide
         self._sideband = sideband
         super().__init__(
             {
@@ -62,15 +60,11 @@ class Normshift(wiring.Component):
     def elaborate(self, platform: object) -> Module:
         m = Module()
         width, span, wsticky = self._width, self._span, self._wsticky
-        taken = data.StructLayout({"x": width, "sb": self._sideband})
-        valid, given = pipe(m, "in", self.in_valid, taken, bundle(taken, x=self.x, sb=self.sb_in), self._stage_input)
-        x = Signal(width, name="x_in")
-        m.d.comb += x.eq(given.x)
-
+        x = self.x
         zero, count = _leading_zeros(m, Cat(Const(0, max(span - width, 0)), x[max(width - span, 0) :]), "lz")
         counted = data.StructLayout({"x": width, "count": len(count), "zero": 1, "sb": self._sideband})
-        found = bundle(counted, x=x, count=count, zero=zero, sb=given.sb)
-        valid, held = pipe(m, "counted", valid, counted, found, self._stage_split)
+        found = bundle(counted, x=x, count=count, zero=zero, sb=self.sb_in)
+        valid, held = pipe(m, "counted", self.in_valid, counted, found, self._stage_split)
         x, count = Signal(width, name="x_counted"), Signal(len(count), name="count_counted")
         m.d.comb += [x.eq(held.x), count.eq(held.count)]
 
@@ -121,6 +115,7 @@ class RshiftSticky(wiring.Component):
     def __init__(self, width: int, *, wshift: int, stage_split: int) -> None:
         self._width = width
         self._wshift = wshift
+        assert stage_split in (0, 1), stage_split
         self._stage_split = stage_split
         super().__init__({"x": In(width), "shamt": In(self._wshift), "y": Out(width)})
 
@@ -192,7 +187,7 @@ class _RightLevel(wiring.Component):
         m = Module()
         data, sel, width = self.data, self.sel, len(self.data)
         by = [min(n * self._unit, width) for n in (1, 2, 3)]
-        shifted = [Cat(data[n:], Const(0, n)) if n < width else Const(0, width) for n in by]
+        shifted = [data[n:] for n in by]
         # Shifts of the whole width or more drop the same bits and share a detector.
         lost = {n: Signal(name=f"lost{n}") for n in sorted(set(by))}
         m.d.comb += [dropped.eq(data[:n].any()) for n, dropped in lost.items()]

@@ -13,7 +13,6 @@ from pathlib import Path
 from amaranth.hdl import Shape
 from amaranth.lib import wiring
 
-from _catalog import CoreSpec
 from zkf import Attrs, Block, Cordic, Divsqrt, Exp2, Log2, Timing
 
 type Row = dict[str, str]
@@ -105,7 +104,7 @@ def harness(
     return "\n".join(lines)
 
 
-def unused(model: Block | CoreSpec) -> Mapping[str, int | None]:
+def unused(model: Block) -> Mapping[str, int | None]:
     """
     The ports that a spec of one fixed mode leaves out of its harness, as an instance of that mode in a design ties
     the inputs off and leaves the outputs open: the constant an input is tied to, None for an output.
@@ -129,7 +128,7 @@ class Design:
     """A spec as a flow is handed it."""
 
     name: str
-    model: Block | CoreSpec
+    model: Block
     large: bool = False
     """Placed on the larger part, by the flows that offer one."""
     ecp5_grade: int = 6

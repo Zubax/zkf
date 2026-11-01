@@ -20,8 +20,10 @@ type Report = dict[str, object]
 """The JSON report of nextpnr-ecp5; nextpnr-xilinx gives none."""
 
 ROM_ATTRS = {"rom_style": "block"}
-YOSYS = shutil.which(os.environ.get("YOSYS", "yosys"))
+YOSYS_COMMAND = os.environ.get("YOSYS", "yosys")
 """The Yosys of the system, as Amaranth finds it: the one that comes with Amaranth reads no Verilog, has no solver."""
+YOSYS = shutil.which(YOSYS_COMMAND)
+"""Where `YOSYS_COMMAND` is, if anywhere."""
 # A diverging place-and-route fails its spec instead of stalling the run.
 YOSYS_TIMEOUT_S = 900.0
 NEXTPNR_TIMEOUT_S = 1200.0
@@ -60,7 +62,7 @@ def synthesize(target: Target, design: Design, directory: Path) -> Row:
     ys, netlist, report = directory / "synth.ys", directory / "netlist.json", directory / "nextpnr.json"
     sources = design.write(directory, rom_attrs=ROM_ATTRS)
     ys.write_text(script(target, design, sources, netlist))
-    run(["yosys", "-s", ys], directory / "yosys.log", YOSYS_TIMEOUT_S)
+    run([YOSYS_COMMAND, "-s", ys], directory / "yosys.log", YOSYS_TIMEOUT_S)
     run([target.nextpnr, *target.args(design, netlist, report)], directory / "nextpnr.log", NEXTPNR_TIMEOUT_S)
 
     nextpnr_text = (directory / "nextpnr.log").read_text()
@@ -75,7 +77,7 @@ def synthesize(target: Target, design: Design, directory: Path) -> Row:
         "target": f"{FREQ_MHZ:g} MHz",
         "status": "PASS" if timing_met(nextpnr_text, data) else "FAIL",
         "yosys_cells": format_cells(cells),
-        "utilization": utilization(nextpnr_text, data, target.util_resources),
+        "utilization": utilization(nextpnr_text, target.util_resources),
         "slack": slack(nextpnr_text, data),
         "json": (
             f"nextpnr JSON report keys: {', '.join(sorted(data))}" if data else "nextpnr did not emit a JSON report"
@@ -130,73 +132,46 @@ def read_report(path: Path) -> Report:
     return data if isinstance(data, dict) else {}
 
 
+def clocks(nextpnr_log: str, report: Report) -> dict[str, tuple[float, float, bool]]:
+    """
+    Each clock's achieved frequency and target, in MHz, and whether it meets the target: from the report, or else from
+    the log, which states each clock after placement and again after routing.
+    """
+    found: dict[str, tuple[float, float, bool]] = {}
+    table = report.get("fmax")
+    if isinstance(table, dict):
+        for name, clock in table.items():
+            if not isinstance(clock, dict):
+                continue
+            achieved, constraint = clock.get("achieved"), clock.get("constraint")
+            if isinstance(achieved, (int, float)) and isinstance(constraint, (int, float)):
+                found[name] = float(achieved), float(constraint), achieved >= constraint
+    if not found:
+        pattern = r"Max frequency for clock\s+'([^']+)':\s*([0-9.]+)\s*MHz\s*\((PASS|FAIL) at ([0-9.]+) MHz\)"
+        for name, achieved, verdict, constraint in re.findall(pattern, nextpnr_log):
+            found[name] = float(achieved), float(constraint), verdict == "PASS"
+    return found
+
+
 def fmax(nextpnr_log: str, report: Report) -> str:
-    clocks = report.get("fmax")
-    if isinstance(clocks, dict) and clocks:
-        achieved = []
-        for clock in clocks.values():
-            if isinstance(clock, dict) and isinstance(clock.get("achieved"), (int, float)):
-                achieved.append(float(clock["achieved"]))
-        if achieved:
-            return f"{min(achieved):.2f} MHz"
-
-    # nextpnr-xilinx has no report. nextpnr prints "Max frequency for clock 'X': Y MHz" after placement and again after
-    # routing; the last value of each clock is the one after routing, and the slowest clock is the figure.
-    per_clock: dict[str, float] = {}
-    for clock_name, value in re.findall(r"Max frequency for clock\s+'([^']+)':\s*([0-9.]+)\s*MHz", nextpnr_log):
-        per_clock[clock_name] = float(value)
-    if per_clock:
-        return f"{min(per_clock.values()):.2f} MHz"
-
-    matches = re.findall(r"Max frequency[^:]*:\s*([0-9.]+)\s*MHz", nextpnr_log)
-    if matches:
-        return f"{min(float(item) for item in matches):.2f} MHz"
-    return "not reported"
+    found = clocks(nextpnr_log, report)
+    return f"{min(achieved for achieved, _, _ in found.values()):.2f} MHz" if found else "not reported"
 
 
 def timing_met(nextpnr_log: str, report: Report) -> bool:
-    """The gate: every clock of the report achieves its constraint, or else passes in the log; neither is a miss."""
-    clocks = report.get("fmax")
-    if isinstance(clocks, dict) and clocks:
-        for clock in clocks.values():
-            if not isinstance(clock, dict):
-                return False
-            achieved = clock.get("achieved")
-            constraint = clock.get("constraint")
-            if not isinstance(achieved, (int, float)) or not isinstance(constraint, (int, float)):
-                return False
-            if float(achieved) < float(constraint):
-                return False
-        return True
-    # The last verdict of each clock is the one after routing.
-    per_clock: dict[str, str] = {}
-    for clock_name, verdict in re.findall(r"Max frequency for clock\s+'([^']+)':[^()]*\((PASS|FAIL) at", nextpnr_log):
-        per_clock[clock_name] = verdict
-    if per_clock:
-        return all(verdict == "PASS" for verdict in per_clock.values())
-    return False
+    """The gate: every clock meets its target; with no clock stated, the spec misses."""
+    found = clocks(nextpnr_log, report)
+    return bool(found) and all(met for _, _, met in found.values())
 
 
 def slack(nextpnr_log: str, report: Report) -> str:
-    clocks = report.get("fmax")
-    if isinstance(clocks, dict) and clocks:
-        lines = []
-        for clock_name, clock in clocks.items():
-            if not isinstance(clock, dict):
-                continue
-            achieved = clock.get("achieved")
-            constraint = clock.get("constraint")
-            if isinstance(achieved, (int, float)) and isinstance(constraint, (int, float)) and achieved > 0:
-                slack_ns = (1000.0 / float(constraint)) - (1000.0 / float(achieved))
-                lines.append(
-                    f"{clock_name}: {slack_ns:.3f} ns at {float(constraint):.2f} MHz target "
-                    f"(achieved {float(achieved):.2f} MHz)"
-                )
-        if lines:
-            return "\n".join(lines)
-
-    slack_lines = [line.strip() for line in nextpnr_log.splitlines() if "slack" in line.lower()]
-    return "\n".join(slack_lines[-8:]) if slack_lines else "not reported"
+    lines = [
+        f"{name}: {1000.0 / constraint - 1000.0 / achieved:.3f} ns at {constraint:.2f} MHz target "
+        f"(achieved {achieved:.2f} MHz)"
+        for name, (achieved, constraint, _) in clocks(nextpnr_log, report).items()
+        if achieved > 0
+    ]
+    return "\n".join(lines) if lines else "not reported"
 
 
 def used(count: int, available: int | None = None) -> str:
@@ -240,35 +215,16 @@ def format_cells(cells: Mapping[str, int]) -> str:
     return "\n".join(lines) if lines else "not reported"
 
 
-def utilization(nextpnr_log: str, report: Report, util_resources: tuple[str, ...]) -> str:
+def utilization(nextpnr_log: str, util_resources: tuple[str, ...]) -> str:
+    """nextpnr's table of resources, those listed and any other in use; on ECP5, after its total of LUT4s."""
     lines = []
     total = placed_lut4(nextpnr_log)
     if total is not None:
         lines.append(f"Total LUT4s: {used(*total)}")
-
-    table = report.get("utilization")
-    if isinstance(table, dict):
-        keys = set(util_resources)
-        keys.update(
-            key
-            for key, item in table.items()
-            if isinstance(key, str)
-            and isinstance(item, dict)
-            and isinstance(item.get("used"), int)
-            and item["used"] > 0
-        )
-        for key in sorted(keys):
-            found = resource(report, key)
-            if found is not None:
-                lines.append(f"{key}: {used(*found)}")
-        if lines:
-            return "\n".join(lines)
-
-    useful = []
-    for line in nextpnr_log.splitlines():
-        if any(cell in line for cell in ("TRELLIS_SLICE", "TRELLIS_FF", "LUT4", "PFU", "MULT18X18D", "DP16KD")):
-            useful.append(line.strip())
-    return "\n".join(useful[-12:]) if useful else "not reported"
+    tables = re.findall(r"Device utilisation:\n((?:Info:\s+\w+:\s+[0-9]+/\s*[0-9]+.*\n)+)", nextpnr_log)
+    rows = re.findall(r"(\w+):\s+([0-9]+)/\s*([0-9]+)", tables[-1]) if tables else []
+    lines += [f"{key}: {used(int(n), int(of))}" for key, n, of in sorted(rows) if key in util_resources or int(n)]
+    return "\n".join(lines) if lines else "not reported"
 
 
 ECP5_DEVICE, ECP5_LARGE_DEVICE = "LFE5U-12F", "LFE5U-45F"
@@ -328,7 +284,7 @@ def ecp5_synth(top: str, netlist: Path) -> str:
 
 ECP5 = Target(
     nextpnr="nextpnr-ecp5",
-    tools=("yosys", "nextpnr-ecp5"),
+    tools=(YOSYS_COMMAND, "nextpnr-ecp5"),
     synth=ecp5_synth,
     part=ecp5_part,
     args=ecp5_args,
@@ -375,8 +331,8 @@ def chipdb(directory: Path) -> Path:
 
 def spartan_args(design: Design, netlist: Path, report: Path) -> list[str | Path]:
     """
-    nextpnr-xilinx has no report: the figures come from its log. It refuses a top port with no IOSTANDARD, so every one
-    is given one and no pin; the harness registers every port, so where the pads land is not timed.
+    nextpnr-xilinx refuses a top port with no IOSTANDARD, so every one is given one and no pin; the harness registers
+    every port, so where the pads land is not timed.
     """
     xdc = netlist.with_suffix(".xdc")
     modules = json.loads(netlist.read_text()).get("modules", {})
@@ -396,15 +352,15 @@ def spartan_resources(cells: Mapping[str, int], report: Report, nextpnr_log: str
     def total(*keys: str) -> int:
         return sum(cells.get(key, 0) for key in keys)
 
-    io = total("IBUF", "OBUF", "OBUFT", "IOBUF")
     return {
-        "lut": str(total("LUT1", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6")),
+        # An inverter or a shift register takes a LUT.
+        "lut": str(total("LUT1", "LUT2", "LUT3", "LUT4", "LUT5", "LUT6", "INV", "SRL16E", "SRLC32E")),
         "ff": str(total("FDRE", "FDSE", "FDCE", "FDPE", "FDCPE")),
         "carry": str(total("CARRY4")),
         "wide": str(total("MUXF7", "MUXF8")),
-        "dsp": format_resource(report, "DSP48E1", total("DSP48E1")),
+        "dsp": str(total("DSP48E1")),
         "bram": str(total("RAMB18E1", "RAMB36E1")),
-        "io": str(io) if io else format_resource(report, "IOB33"),
+        "io": str(total("IBUF", "OBUF", "OBUFT", "IOBUF")),
     }
 
 
@@ -415,7 +371,7 @@ def spartan_synth(top: str, netlist: Path) -> str:
 
 SPARTAN = Target(
     nextpnr="nextpnr-xilinx",
-    tools=("yosys", "nextpnr-xilinx", "bbasm", "bbaexport.py"),
+    tools=(YOSYS_COMMAND, "nextpnr-xilinx", "bbasm", "bbaexport.py"),
     synth=spartan_synth,
     part=lambda design: SPARTAN_DEVICE,
     args=spartan_args,

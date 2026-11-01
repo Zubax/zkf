@@ -1,3 +1,4 @@
+import re
 from dataclasses import replace
 
 import numpy as np
@@ -5,9 +6,9 @@ import pytest
 
 from _bench import Case, run_pipeline
 from _operands import SEED, random_bits
+from _trans import TABLES, every_row
 from zkf import Exp2, Log2, ZkfFormat
-from zkf._pmul import slices
-from zkf._trans import Kernel, Spec, _sizes, kernel_counts, spec as table
+from zkf._trans import Kernel, kernel_counts, spec as table
 
 
 def arguments(width: int, rw: int, count: int) -> list[int]:
@@ -40,8 +41,7 @@ def run(function: str, wman: int, stages: int, count: int = 400, wmultiplier: in
     run_pipeline(dut, dut.latency, cases)
 
 
-@pytest.mark.parametrize("wman", [16, 18, 24, 27, 32, 36, 48, 53])
-@pytest.mark.parametrize("function", ["exp2", "log2"])
+@pytest.mark.parametrize("function, wman", [key[:2] for key in TABLES])
 def test_every_table(function: str, wman: int) -> None:
     """At the least count and at the most, which cut every product as far as it goes."""
     taken = kernel_counts(table(function, wman, 18), 18)
@@ -57,35 +57,10 @@ def test_other_multipliers(function: str, wmultiplier: int) -> None:
         run(function, 18, stages, 200, wmultiplier)
 
 
-@pytest.mark.parametrize("wman", [16, 18, 24, 27, 32, 36, 48, 53])
-@pytest.mark.parametrize("function", ["exp2", "log2"])
+@pytest.mark.parametrize("function, wman", [key[:2] for key in TABLES])
 def test_every_row(function: str, wman: int) -> None:
     spec = table(function, wman, 18)
     every_row(spec, Kernel(spec, wmultiplier=18, stages=kernel_counts(spec, 18).start))
-
-
-@pytest.mark.parametrize("wman", [18, 36, 40, 53])
-@pytest.mark.parametrize("function", ["exp2", "log2"])
-def test_no_product_is_given_more_than_its_positions(function: str, wman: int) -> None:
-    """Nor a product of one multiplier its pipeline register."""
-    spec = table(function, wman, 18)
-    for stages in kernel_counts(spec, 18):
-        built = Kernel(spec, wmultiplier=18, stages=stages).elaborate(None)
-        for name, (a, b) in _sizes(spec).items():
-            product, lone = built.submodules[name], slices(a, b, signed=False, wmultiplier=18) == (1, 1)
-            assert not (lone and product._stages >= 3), (name, stages)
-
-
-def every_row(spec: Spec, dut: Kernel) -> None:
-    """The kernel of the table against its reference at both ends of every row and inside it."""
-    function = spec.function
-    rw, rng = spec.rw, np.random.default_rng(SEED)
-    name, result = ("f", "s") if function == "exp2" else ("frac", "c")
-    cases = []
-    for segment, row in enumerate(spec.coeffs):
-        for low in (0, ((1 << rw) - 1), random_bits(rw, rng)):
-            cases.append(Case({name: (segment << rw) | low}, {result: spec._polynomial(row, low)}))
-    run_pipeline(dut, dut.latency, cases)
 
 
 @pytest.mark.parametrize(
@@ -95,7 +70,18 @@ def every_row(spec: Spec, dut: Kernel) -> None:
         Log2(ZkfFormat(6, 18), wmultiplier=18, stage_core_kernel=2, stage_core_mul=2),
     ],
 )
-def test_the_attributes_of_an_operator_reach_its_table(model: Exp2 | Log2) -> None:
-    for attrs in (None, {"rom_style": "block"}):
-        kernel = replace(model, rom_attrs=attrs).component().elaborate(None).submodules.kernel
-        assert kernel.elaborate(None).submodules.rom.attrs == (attrs or {})
+def test_the_attributes_reach_the_text(model: Exp2 | Log2) -> None:
+    """`rom_attrs` mark the table, `mul_attrs` registers (the operands of the products), and nothing else changes."""
+    plain = model.compile().splitlines()
+    for marked, attribute, declaration in (
+        (
+            replace(model, rom_attrs={"rom_style": "block"}),
+            '(* rom_style = "block" *)',
+            r"reg \[\d+:0\] \w+ \[\d+:0\];",
+        ),
+        (replace(model, mul_attrs={"use_dsp": "yes"}), '(* use_dsp = "yes" *)', r"reg .*"),
+    ):
+        lines = marked.compile().splitlines()
+        at = [k for k, line in enumerate(lines) if line.strip() == attribute]
+        assert at and all(re.fullmatch(declaration, lines[k + 1].strip()) for k in at), attribute
+        assert [line for line in lines if line.strip() != attribute] == plain

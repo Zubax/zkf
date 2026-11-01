@@ -209,7 +209,11 @@ class _Dut:
         """
         self.dut = dut
         members = dut.signature.members
-        self.inputs = [n for n, member in members.items() if member.flow == wiring.In and n not in control]
+        self.inputs = {
+            n: Shape.cast(member.shape)
+            for n, member in members.items()
+            if member.flow == wiring.In and n not in control
+        }
         self.outputs = [n for n, member in members.items() if member.flow == wiring.Out and n not in control]
         for case in cases:
             if set(case.inputs) != set(self.inputs) or not set(case.outputs) <= set(self.outputs):
@@ -226,7 +230,7 @@ class _Dut:
         self.sim.add_clock(1e-6)
 
     def noise(self, rng: random.Random) -> dict[str, int]:
-        shapes = {name: Shape.cast(self.dut.signature.members[name].shape) for name in self.inputs}
+        shapes = self.inputs
         raw = {name: rng.getrandbits(shape.width) for name, shape in shapes.items()}
         return {
             name: bits_to_signed(raw[name], shape.width) if shape.signed else raw[name]

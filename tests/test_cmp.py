@@ -15,24 +15,24 @@ def classes(fmt: ZkfFormat) -> list[int]:
 
 
 def directed(fmt: ZkfFormat) -> list[tuple[int, int]]:
-    numbers = list(directed_numbers(fmt).values()) if fmt.wexp >= 3 else []
+    numbers = list(directed_numbers(fmt).values())
     values = raw_corners(fmt) + numbers
     out = [(a, b) for a in values for b in values]
     out += [(a, b) for a in classes(fmt) for b in classes(fmt)]
-    # Each number against itself and against its neighbor, which is never equal to it.
     for value in numbers:
         out += [(value, value), (value, (value ^ 1) & ((1 << fmt.wfull) - 1))]
     return out
 
 
 def pairs(fmt: ZkfFormat, count: int) -> list[tuple[int, int]]:
-    """`count` 0 is every pair; otherwise the directed ones made up to `count` with random ones."""
+    """`count` 0 is every pair; otherwise the directed ones and `count` random ones."""
     if not count:
         return [(a, b) for a in range(1 << fmt.wfull) for b in range(1 << fmt.wfull)]
     out = list(dict.fromkeys(directed(fmt)))
     rng = np.random.default_rng(SEED)
     seen = set(out)
-    while len(out) < count:
+    target = len(out) + count
+    while len(out) < target:
         mode = int(rng.integers(0, 8))
         a = random_bits(fmt.wfull, rng) if mode in (5, 7) else random_operand(fmt, rng)
         b = random_bits(fmt.wfull, rng) if mode in (6, 7) else random_operand(fmt, rng)
@@ -56,12 +56,12 @@ def simulate(model: Cmp, count: int) -> None:
 FORMATS = [
     (2, 4, 0),
     (3, 4, 0),
-    (3, 5, 512),
-    (4, 6, 512),
-    (5, 11, 768),
-    (7, 17, 768),
-    (8, 24, 1024),
-    (11, 53, 384),
+    (3, 5, 256),
+    (4, 6, 256),
+    (5, 11, 256),
+    (7, 17, 256),
+    (8, 24, 512),
+    (11, 53, 256),
 ]
 
 

@@ -56,3 +56,20 @@ def test_synth(
         raise
     record_property(flow, row)
     assert row["status"] == "PASS", f"{row['fmax']} at {row['target']}; see {directory}"
+
+
+def test_the_timing_comes_from_the_report_or_else_the_log() -> None:
+    """In the log, the last line of a clock is the one after routing; with no clock stated, the spec misses."""
+    passed = (
+        "Info: Max frequency for clock 'dut.clk': 95.00 MHz (FAIL at 100.00 MHz)\n"
+        "Info: Max frequency for clock 'dut.clk': 165.32 MHz (PASS at 100.00 MHz)\n"
+    )
+    failed = (
+        "Info: Max frequency for clock 'dut.clk': 113.77 MHz (PASS at 100.00 MHz)\n"
+        "Warning: Max frequency for clock 'dut.clk': 95.00 MHz (FAIL at 100.00 MHz)\n"
+    )
+    assert _yosys.fmax(passed, {}) == "165.32 MHz" and _yosys.timing_met(passed, {})
+    assert _yosys.fmax(failed, {}) == "95.00 MHz" and not _yosys.timing_met(failed, {})
+    report: _yosys.Report = {"fmax": {"clk": {"achieved": 99.5, "constraint": 100.0}}}
+    assert _yosys.fmax(passed, report) == "99.50 MHz" and not _yosys.timing_met(passed, report)
+    assert _yosys.fmax("", {}) == "not reported" and not _yosys.timing_met("", {})

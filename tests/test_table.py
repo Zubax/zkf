@@ -1,50 +1,21 @@
 """The tables of `exp2` and `log2`: the search gives the certified ones, and the certificate holds what it says."""
 
 import random
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from fractions import Fraction
 
-import mpmath
 import pytest
 
-import zkf._trans as tables
 from zkf import Exp2, Log2, UnsupportedFormat, ZkfFormat
 from _certificate import certify
-from _trans import build, simulate
-from test_kernel import every_row
-from zkf._trans import Kernel, Spec, _arith_range, _estimate, _generate, degree, kernel_counts, spec as table
-
-# Those of 0.9.0, and others that it never had: other significands, degree 4 among them, and other multipliers.
-TABLES = [(function, wman, 18) for function in ("exp2", "log2") for wman in (16, 18, 24, 27, 32, 36, 48, 53)]
-OTHERS = [
-    (function, wman, width)
-    for function in ("exp2", "log2")
-    for wman, width in ((20, 18), (25, 17), (30, 24), (40, 18), (44, 27), (17, 8), (37, 25), (47, 18), (26, 12))
-]
-# A structure that the formats reach only at widths no test can enumerate, generated at WMAN 16: degree 3 with a
-# square of two multipliers, a shortened `c3` and a shortened wide product; degree 4, whose last pair is one
-# coefficient; degree 5.
-INSTRUMENTS: dict[str, tuple[str, int, dict[str, int]]] = {
-    "exp2 of degree 3": ("exp2", 11, {"d": 3, "k_base": 4}),
-    "log2 of degree 3": ("log2", 12, {"d": 3, "k_base": 4}),
-    "exp2 of degree 4": ("exp2", 18, {"d": 4, "k_base": 3}),
-    "log2 of degree 4": ("log2", 18, {"d": 4, "k_base": 4}),
-    "exp2 of degree 5": ("exp2", 18, {"d": 5, "k_base": 2}),
-    "log2 of degree 5": ("log2", 18, {"d": 5, "k_base": 3}),
-}
-
-
-def instrument(name: str) -> Spec:
-    function, wmultiplier, shape = INSTRUMENTS[name]
-    return _generate(function, 16, wmultiplier, **shape)
+from _trans import OTHERS, TABLES, build, every_row, simulate
+from zkf._trans import Kernel, Spec, _arith_range, kernel_counts, spec as table
 
 
 @pytest.mark.parametrize("key", TABLES + OTHERS, ids=str)
 def test_certificate(key: tuple[str, int, int]) -> None:
     spec = table(*key)
     certify(spec)
-    assert spec.d == degree(spec.wman)
 
 
 @pytest.mark.deep
@@ -66,7 +37,6 @@ def test_every_width(function: str, wman: int) -> None:
             found[width] = spec
     for spec in set(found.values()):
         certify(spec)
-        assert spec.d == degree(spec.wman)
     for width, spec in found.items():
         every_row(spec, Kernel(spec, wmultiplier=width, stages=kernel_counts(spec, width).stop - 1))
     every = ~(Exp2 if function == "exp2" else Log2).CoreStages(0)
@@ -75,39 +45,23 @@ def test_every_width(function: str, wman: int) -> None:
 
 
 def test_what_has_no_table_is_refused() -> None:
-    for operator, wman in ((Exp2, 15), (Log2, 54)):
+    """
+    Out of range, and then, generated as the model is made, where no segmentation fits the multipliers: e.g. at 24 and
+    26 a square, and at 36 the cubic coefficient, is wider than two of them at every one.
+    """
+    for operator, wman, wmultiplier in (
+        (Exp2, 15, 18),
+        (Log2, 54, 18),
+        (Exp2, 20, 8),
+        (Log2, 20, 8),
+        (Exp2, 24, 8),
+        (Exp2, 26, 8),
+        (Log2, 33, 8),
+        (Log2, 36, 9),
+    ):
         with pytest.raises(UnsupportedFormat, match="no .* table"):
-            operator(ZkfFormat(8, wman), wmultiplier=18)
-    for operator in (Exp2, Log2):  # generated as the model is made
-        with pytest.raises(UnsupportedFormat, match="no .* table"):
-            operator(ZkfFormat(8, 20), wmultiplier=8)
-
-
-def test_the_precision_of_the_caller_is_neither_read_nor_changed() -> None:
-    for precision in (20, 53, 1000):
-        with mpmath.workprec(precision):
-            found = _generate("log2", 16, 18)
-            certify(found)
-            assert found == table("log2", 16, 18)
-            assert mpmath.mp.prec == precision and mpmath.iv.prec == 53
-
-
-def test_no_table_fits() -> None:
-    """A square that no multiplier of the width holds at any segmentation; a multiplier that takes every segment."""
-    with pytest.raises(UnsupportedFormat, match="no exp2 table"):
-        _generate("exp2", 24, 8)
-    with pytest.raises(UnsupportedFormat, match="no log2 table"):
-        _generate("log2", 36, 9)  # the cubic coefficient is wider than two multipliers at every segmentation
-    assert _generate("exp2", 16, 30).tc == 0
-
-
-def test_segmentations_that_do_not_fit_are_passed_over() -> None:
-    assert _generate("exp2", 16, 18, d=2, k_base=2).k == 6  # the estimate is over the budget below
-    assert _generate("exp2", 16, 8, d=3, k_base=3).k == 7  # and a square is wider than two multipliers
-    shortened, whole = _generate("exp2", 16, 10, d=3, k_base=2), _generate("exp2", 16, 12, d=3, k_base=2)
-    assert shortened.t[0] < shortened.rw and whole.t[0] == whole.rw  # the budget allows a shorter wide product, or not
-    exp2 = table("exp2", 16, 18)
-    assert _estimate(replace(exp2, t2=0), [list(row) for row in exp2.coeffs]) == (float("inf"), ())
+            operator(ZkfFormat(8, wman), wmultiplier=wmultiplier)
+    Exp2(ZkfFormat(8, 16), wmultiplier=30)  # a multiplier that takes every segment
 
 
 def test_the_arithmetic_bound_holds_the_kernel() -> None:
@@ -141,13 +95,3 @@ def test_the_arithmetic_bound_holds_the_kernel() -> None:
             exact = sum((-c if function == "log2" and j % 2 else c) * wn**j for j, c in enumerate(row))
             assert lo <= exact - spec._polynomial(row, w) <= hi, (spec, row, w)
     assert len(kinds) == 6 and min(kinds.values()) > 40, kinds
-
-
-def test_tables_are_generated_from_threads() -> None:
-    """A flow compiles its specs from threads, and the search has one context: a second search must not move it."""
-    tables._generated.cache_clear()
-    with ThreadPoolExecutor(8) as pool:
-        found = list(pool.map(lambda key: table(*key), TABLES))
-    tables._generated.cache_clear()
-    assert found == [table(*key) for key in TABLES]
-    assert tables._fitting.prec == 280

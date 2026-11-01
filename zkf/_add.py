@@ -6,7 +6,7 @@ from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
-from ._block import FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe
+from ._block import FloatLayout, FloatView, Operator, Timing, bundle, delay, ge, pipe, sext
 from ._pack import Pack
 from ._shift import Normshift, RshiftSticky
 from ._value import Zkf, ZkfFormat
@@ -29,10 +29,8 @@ class Add(Operator):
         """The aligned operand, inverted for a difference."""
         SUM = enum.auto()
         """The raw sum or difference."""
-        NORMALIZE_INPUT = enum.auto()
-        """The raw sum or difference with the exponent and the sticky of what the normalizer carries beside it."""
         NORMALIZE = enum.auto()
-        """The sum or difference with that count, ahead of the normalizer's shift."""
+        """The sum or difference with its count of leading zeros, ahead of the normalizer's shift."""
         NORMALIZED = enum.auto()
         """The sum or the normalized difference."""
         PACK = enum.auto()
@@ -190,7 +188,7 @@ class AddCore(wiring.Component):
                 same_sign=s1.same_sign,
                 force_zero=s1.force_zero,
                 force_inf=s1.force_inf,
-                exp=Cat(s1.exp, s1.exp[-1].replicate(wen - we)).as_signed(),
+                exp=sext(s1.exp, wen),
                 raw=raw[: w + 1],
             ),
             on[Add.CoreStages.SUM],
@@ -200,12 +198,7 @@ class AddCore(wiring.Component):
             {"sign": 1, "same_sign": 1, "force_zero": 1, "force_inf": 1, "exp": signed(wen), "sig": wman}
             | {"guard": 1, "round": 1, "sticky": 1}
         )
-        m.submodules.normalize = normalize = Normshift(
-            w,
-            stage_input=on[Add.CoreStages.NORMALIZE_INPUT],
-            stage_split=on[Add.CoreStages.NORMALIZE],
-            sideband=rounded,
-        )
+        m.submodules.normalize = normalize = Normshift(w, stage_split=on[Add.CoreStages.NORMALIZE], sideband=rounded)
         m.d.comb += normalize.in_valid.eq(s2_valid)
         m.d.comb += normalize.x.eq(s2.raw[:w])
         low = w - wman
@@ -216,7 +209,7 @@ class AddCore(wiring.Component):
                 same_sign=s2.same_sign,
                 force_zero=s2.force_zero,
                 force_inf=s2.force_inf,
-                exp=(s2.exp + carry)[:wen].as_signed(),
+                exp=(s2.exp + carry)[:wen],
                 sig=Mux(carry, s2.raw[low + 1 :], s2.raw[low:w]),
                 guard=Mux(carry, s2.raw[low], s2.raw[low - 1]),
                 round=Mux(carry, s2.raw[low - 1], s2.raw[low - 2]),
@@ -287,9 +280,8 @@ class _Add(wiring.Component):
         m.d.comb += a_finite.eq(~a.is_zero & ~a_inf)
         b_finite = Signal(name="b_finite")
         m.d.comb += b_finite.eq(~b.is_zero & ~b_inf)
-        # The magnitude order of finite operands, which also orders their exponents; that of others does not matter. It
-        # is the borrow of a subtraction, which maps onto a carry chain where a comparison operator may not.
-        a_ge_b = ~(Cat(a.frac, a.exp) - Cat(b.frac, b.exp))[-1]
+        # The magnitude order of finite operands, which also orders their exponents; that of others does not matter.
+        a_ge_b = ge(Cat(a.frac, a.exp), Cat(b.frac, b.exp))
         decoded = data.StructLayout(
             {"a_sign": 1, "b_sign": 1, "a_inf": 1, "b_inf": 1, "a_ge_b": 1}
             | {"a_exp": wexp, "b_exp": wexp, "a_sig": wman, "b_sig": wman}
@@ -322,7 +314,7 @@ class _Add(wiring.Component):
         m.d.comb += core.force_zero.eq(d.a_inf & d.b_inf & ~same_sign)
         m.d.comb += core.force_inf.eq(d.a_inf | d.b_inf)
         m.d.comb += core.exp.eq(Cat(large_exp, Const(0, 1)).as_signed())
-        m.d.comb += core.shamt.eq((large_exp - Mux(d.a_ge_b, d.b_exp, d.a_exp))[:wexp])
+        m.d.comb += core.shamt.eq(large_exp - Mux(d.a_ge_b, d.b_exp, d.a_exp))
         m.d.comb += core.larger.eq(Mux(d.a_ge_b, d.a_sig, d.b_sig))
         m.d.comb += core.smaller.eq(Mux(d.a_ge_b, d.b_sig, d.a_sig))
         m.d.comb += self.out_valid.eq(core.out_valid)

@@ -34,7 +34,7 @@ def main(argv: list[str]) -> None:
     if len(argv) > 3:
         try:
             z = fmt.encode(number(argv[3]))
-        except ValueError as exc:
+        except (ValueError, ZeroDivisionError) as exc:
             raise SystemExit(f"{usage}  ({exc})")
         print(f"Value {argv[3]} represented in this format:")
         print(f"signed decimal: {bits_to_signed(z.bits, fmt.wfull):+d}")

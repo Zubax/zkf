@@ -57,7 +57,7 @@ def results(model: Add | Mul, pairs: Sequence[tuple[int, int]]) -> list[int]:
 
 def corners(fmt: ZkfFormat) -> list[int]:
     """Zeros and infinities, canonical and not, ones, and the ends of the range, at any exponent width."""
-    top, ones, stray = fmt.exp_max_finite, fmt.frac_mask, min(fmt.frac_mask, 1)
+    top, ones, stray = fmt.exp_max_finite, fmt.frac_mask, 1
     out = [
         0,
         fmt.pack(1, 0, 0).bits,
@@ -74,7 +74,7 @@ def corners(fmt: ZkfFormat) -> list[int]:
 @pytest.mark.parametrize("operator", STAGES)
 def test_properties(operator: str, fmt: ZkfFormat) -> None:
     rng = np.random.default_rng(SEED)
-    directed = list(directed_numbers(fmt).values()) if fmt.wexp >= 3 else []
+    directed = list(directed_numbers(fmt).values())
     commuted = [(a, b) for a in directed for b in directed]
     commuted += [(random_operand(fmt, rng), random_operand(fmt, rng)) for _ in range(64)]
     singles = corners(fmt) + [random_operand(fmt, rng) for _ in range(16)]

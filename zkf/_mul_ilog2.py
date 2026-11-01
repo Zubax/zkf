@@ -105,10 +105,8 @@ class _MulIlog2(wiring.Component):
         m.d.comb += a_inf.eq(a.is_inf)
         special = Signal(name="a_special")
         m.d.comb += special.eq(a_zero | a_inf)
-        far_up = far_down = Const(0, 1)
-        if wk <= narrow:
-            k_narrow = Cat(k, k[-1].replicate(narrow - wk)).as_signed()
-        else:
+        k_narrow, far_up, far_down = k, Const(0, 1), Const(0, 1)
+        if wk > narrow:
             # The bits cut off a wide `k` already force every normal input to a zero or an infinity.
             upper = k[narrow - 1 :]
             in_range = Signal(name="k_in_range")

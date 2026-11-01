@@ -20,7 +20,7 @@ from amaranth.lib.wiring import In, Out
 from ._block import Attrs, delay, pipe
 from ._pack import pack_reference
 from ._pmul import Pmul, counts, positions, slices
-from ._value import UnsupportedFormat, ZkfFormat
+from ._value import UnsupportedFormat, Zkf, ZkfFormat
 
 _ERR_GUARD = 8
 """A kernel is within `2**-(WMAN + _ERR_GUARD)` of its helper, relatively: `2**-_ERR_GUARD` ULP of a result."""
@@ -126,7 +126,7 @@ def spec(function: str, wman: int, wmultiplier: int) -> Spec:
         return _generated(function, wman, wmultiplier)
 
 
-def pack_fixed(fmt: ZkfFormat, sign: int, exp: int, v: int, point: int) -> int:
+def pack_fixed(fmt: ZkfFormat, sign: int, exp: int, v: int, point: int) -> Zkf:
     """
     The float nearest to `(-1)**sign * 2**exp * v / 2**point`, `v > 0`, a tie rounding away from zero, classified as
     `Pack` does.
@@ -305,9 +305,9 @@ class Kernel(wiring.Component):
             low = delay(m, "pl_d", rest, product("pl", c[1][sc:], w[:tc])[rw - sc :], total - at.ready["pl"])
             chain = (last + low)[: max(cw[2], rest) + 1]
         if exp2:
-            m.d.comb += self.s.eq((c0 + p1 + chain)[: len(self.s)])
+            m.d.comb += self.s.eq(c0 + p1 + chain)
         else:
-            m.d.comb += self.c.eq((c0 - p1 + chain)[: len(self.c)])
+            m.d.comb += self.c.eq(c0 - p1 + chain)
         return m
 
 
@@ -395,7 +395,7 @@ def _estimate(spec: Spec, raw: list[list[int]]) -> tuple[float, tuple[tuple[int,
     The share of the budget that the worst error of the helper is estimated to take, and the coefficients with the
     constants folded into `c0`: the half ULP of `exp2`, and the center of the span of the floors. The estimate is the
     error of the fit at its equioscillation points plus half that span, which is the certificate's bound of the
-    arithmetic. A shape that the certificate refuses takes more than the budget.
+    arithmetic.
     """
     exp2 = spec.function == "exp2"
     budget = _fitting.mpf(2) ** -(spec.wman + _ERR_GUARD)
@@ -404,10 +404,7 @@ def _estimate(spec: Spec, raw: list[list[int]]) -> tuple[float, tuple[tuple[int,
     worst = _fitting.mpf(0)
     rows = []
     for segment, row in enumerate(raw):
-        try:
-            lo, hi = _arith_range(spec, row)
-        except ValueError:
-            return float("inf"), ()
+        lo, hi = _arith_range(spec, row)
         if exp2:
             hi += Fraction(7, 10) * 2  # the reduced argument is low by up to 2**-cf: ln 2 * 2**f < 1.4 of an LSB
         rows.append((row[0] + (1 << (spec.cf - spec.wman) if exp2 else 0) + round((lo + hi) / 2), *row[1:]))

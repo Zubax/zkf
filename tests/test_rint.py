@@ -16,7 +16,7 @@ from _operands import (
     random_zero,
     raw_corners,
 )
-from zkf import Rint, RoundMode, Zkf, ZkfFormat
+from zkf import Rint, RoundMode, UnsupportedFormat, Zkf, ZkfFormat
 
 
 def directed(fmt: ZkfFormat, wint: int) -> list[int]:
@@ -135,10 +135,8 @@ def test_catalog(model: Rint) -> None:
 
 
 def test_refusals() -> None:
-    fmt = ZkfFormat(6, 18)
-    assert not Rint(fmt).clocked
-    with pytest.raises(ValueError):
-        Rint(fmt, wint=1)
+    with pytest.raises(UnsupportedFormat, match="^WINT=1 is below 2$"):
+        Rint(ZkfFormat(6, 18), wint=1)
 
 
 @pytest.mark.deep

@@ -18,7 +18,7 @@ from zkf import Resize, Zkf, ZkfFormat
 
 def directed(source: ZkfFormat, out: ZkfFormat) -> list[int]:
     """The corners of the format read, and what lands on half the smallest normal of the other and beside it."""
-    values = (list(directed_numbers(source).values()) if source.wexp >= 3 else []) + raw_corners(source)
+    values = list(directed_numbers(source).values()) + raw_corners(source)
     half = out.min_exp_unbiased - 1
     if source.min_exp_unbiased <= half <= source.max_exp_unbiased:
         exp = half + source.bias
@@ -80,16 +80,16 @@ FORMATS = [
 ]
 
 
-@pytest.mark.parametrize("stage_input", [0, 1])
 @pytest.mark.parametrize("row", FORMATS, ids=str)
-def test_formats(row: tuple[int, int, int, int, int], stage_input: int) -> None:
-    run(*row, stage_input=stage_input)
+def test_formats(row: tuple[int, int, int, int, int]) -> None:
+    run(*row)
 
 
-# Stages that do nothing, and the registered result of each path.
+# The input stages, and the registered result of each path.
 @pytest.mark.parametrize(
     "row",
     [
+        (3, 4, 4, 6, 0, {"stage_input": 1}),
         (3, 4, 4, 6, 0, {"stage_input": 2}),
         (4, 5, 4, 5, 0, {"stage_output": 1}),
         (5, 6, 3, 4, 0, {"stage_output": 1}),
@@ -106,11 +106,6 @@ def test_catalog(model: Resize) -> None:
     simulate(model, 768)
 
 
-def test_no_register_is_no_clock() -> None:
-    fmt = ZkfFormat(3, 4)
-    assert not Resize(fmt, fmt_in=fmt).clocked
-
-
 DEEP = [
     (4, 5, 4, 4, 0),
     (4, 4, 4, 5, 0),
@@ -124,11 +119,9 @@ DEEP = [
 
 
 @pytest.mark.deep
-@pytest.mark.parametrize("stage_output", [0, 1])
-@pytest.mark.parametrize("stage_input", [0, 1])
 @pytest.mark.parametrize("row", DEEP, ids=str)
-def test_deep(row: tuple[int, int, int, int, int], stage_input: int, stage_output: int) -> None:
-    run(*row, stage_input=stage_input, stage_output=stage_output)
+def test_deep(row: tuple[int, int, int, int, int]) -> None:
+    run(*row)
 
 
 @pytest.mark.deep
@@ -144,5 +137,4 @@ def test_deep(row: tuple[int, int, int, int, int], stage_input: int, stage_outpu
     ids=str,
 )
 def test_deep_rows(row: tuple[int, int, int, int, int]) -> None:
-    for stage_input in (0, 1) if not row[4] else (0,):
-        run(*row, stage_input=stage_input)
+    run(*row)

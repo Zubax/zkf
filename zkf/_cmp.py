@@ -120,8 +120,8 @@ class _Cmp(wiring.Component):
             a_gt_b=~(lt | eq),
             a_eq_b=eq,
             a_lt_b=lt,
-            min=layout(Mux(lt, a.as_value(), b.as_value())),
-            max=layout(Mux(lt, b.as_value(), a.as_value())),
+            min=layout(Mux(lt, a, b)),
+            max=layout(Mux(lt, b, a)),
         )
         payload = Signal(result, name="result")
         m.d.comb += payload.eq(found)

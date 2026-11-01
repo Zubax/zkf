@@ -9,7 +9,7 @@ from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
-from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe
+from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe, zext
 from ._trans import Kernel, Spec, kernel_check, kernel_depth, pack_fixed, spec as table
 from ._pmul import Pmul, check
 from ._shift import Normshift
@@ -149,7 +149,7 @@ class Log2(Operator):
         e_al, fb = e_al << (at - low), fb - low
         v = (e_al - prod) if sub else (e_al + prod)
         assert 1 << (fb - 1) <= v <= 1 << (fb + 1), "log2 leading-one prediction"
-        return Log2Result(Zkf(fmt, pack_fixed(fmt, sign, e_hi, v, fb)), False, False)
+        return Log2Result(pack_fixed(fmt, sign, e_hi, v, fb), False, False)
 
 
 def _last(spec: Spec, fmt: ZkfFormat) -> tuple[int, int]:
@@ -207,7 +207,7 @@ class _Log2(wiring.Component):
         # bit `wexp - 2`.
         m.submodules.normalize = normalize = Normshift(wfrac, stage_wide=1, sideband=decoded)
         up = Signal(len(d.p1), name="up")
-        m.d.comb += up.eq((Const(wexp - 1, len(d.p1)) - d.p1)[: len(d.p1)])
+        m.d.comb += up.eq(Const(wexp - 1, len(d.p1)) - d.p1)
         placed = {name: d[name] for name in names} | {"emag": (d.emag << up)[:wexp]}
         m.d.comb += normalize.in_valid.eq(m_valid)
         m.d.comb += normalize.x.eq(d.fmag)
@@ -303,7 +303,7 @@ class _Decode(wiring.Component):
         bias = Signal(wexp + 1, name="bias")
         m.d.comb += bias.eq(Mux(self.rc, Const(fmt.bias - 1, wexp + 1), Const(fmt.bias, wexp + 1)))
         above = Signal(wexp + 1, name="e_p")
-        m.d.comb += above.eq((self.exp - bias)[: wexp + 1])
+        m.d.comb += above.eq(self.exp - bias)
         below = (bias[:wexp] - self.exp)[:wexp]  # |e| of a negative e
         split = data.StructLayout(
             {"rc": 1, "sign": 1, "inf": 1, "pole": 1, "f_zero": 1, "ezero": 1, "e_neg": 1, "emag": wexp, "fmag": wfrac}
@@ -423,7 +423,7 @@ class _Pack(wiring.Component):
         m.d.comb += [is_inf.eq(self.is_inf), neg.eq(self.neg), one.eq(self.one)]
         frame = Signal(2, name="frame")
         m.d.comb += frame.eq(Cat(self.rc, self.ezero))
-        lz, p1 = Cat(self.lz, Const(0, web - len(self.lz))), Cat(self.p1, Const(0, web - len(self.p1)))
+        lz, p1 = zext(self.lz, web), zext(self.p1, web)
         offset = Signal(signed(web), name="off")
         m.d.comb += offset.eq(Mux(frame[1], ~lz, p1).as_signed())
         records, least = [], []
@@ -437,7 +437,7 @@ class _Pack(wiring.Component):
                 with m.Default():
                     m.d.comb += base.eq(Const(fmt.bias + k - 2, signed(web)))
             biased = Signal(signed(web), name=f"be_{name}")
-            m.d.comb += biased.eq((base + offset)[:web].as_signed())
+            m.d.comb += biased.eq(base + offset)
             is_least = Signal(name=f"least_{name}")
             m.d.comb += is_least.eq(biased == 0)
             candidate = Signal(record, name=f"rec_{name}")
@@ -448,7 +448,7 @@ class _Pack(wiring.Component):
             with m.Elif(is_least):
                 m.d.comb += candidate.eq(bundle(record, exp=Const(1, wexp), keep=Const(0, 1), sign=neg))
             with m.Else():
-                m.d.comb += candidate.eq(bundle(record, exp=biased[:wexp].as_unsigned(), keep=Const(1, 1), sign=neg))
+                m.d.comb += candidate.eq(bundle(record, exp=biased[:wexp], keep=Const(1, 1), sign=neg))
             records.append(candidate)
             least.append(is_least)
         side = data.StructLayout(
@@ -469,7 +469,7 @@ class _Pack(wiring.Component):
         # |e| with a half ULP at each rounding position.
         placed = Cat(Const(0, ws - wexp), q.eal)
         aligned = [Signal(ws, name="al_lo"), Signal(ws, name="al_hi")]
-        m.d.comb += [a.eq((placed + Cat(Const(0, wgb + k), ~q.exact[k]))[:ws]) for k, a in enumerate(aligned)]
+        m.d.comb += [a.eq(placed + Cat(Const(0, wgb + k), ~q.exact[k])) for k, a in enumerate(aligned)]
         sub = Signal(name="sub_q")
         m.d.comb += sub.eq(q.sub)
         low, high = Signal(ws, name="s_l"), Signal(ws, name="s_h")

@@ -292,6 +292,9 @@ not all states are mappable between the formats.
 
 Roughly ordered by severity.
 
+- The test suite is taking too long to execute (see CI run timings) and needs to be carefully trimmed,
+  with the expensive low-value parts moved into the `deep` job.
+
 - `divsqrt` could take a radix-8 digit a stage beside its radix-4 one, behind a knob: two thirds of the digits (e8m36:
   17 cycles to about 12), each about 2.3 times the LUTs of a radix-4 digit at 0.84 times its speed, as measured in
   `cordic`'s division. SRT digits on a carry-save remainder, one of radix 8 or two of radix 4 a stage, run slower on the

@@ -28,16 +28,21 @@ def run(wexp: int, wman: int, wint: int, count: int, **knobs: int) -> None:
 FORMATS = [(2, 4, 3, 0), (3, 4, 8, 0), (6, 18, 7, 512), (8, 24, 9, 512), (8, 24, 32, 512), (11, 53, 64, 512)]
 
 
-@pytest.mark.parametrize("stage_output", [0, 1])
-@pytest.mark.parametrize("stage_input", [0, 1, 2])
 @pytest.mark.parametrize("row", [*FORMATS, (6, 18, 32, 512)], ids=str)
-def test_formats(row: tuple[int, int, int, int], stage_input: int, stage_output: int) -> None:
-    run(*row, stage_input=stage_input, stage_output=stage_output)
+def test_formats(row: tuple[int, int, int, int]) -> None:
+    run(*row)
+
+
+@pytest.mark.parametrize(
+    "knobs", [{"stage_input": 1}, {"stage_output": 1}, {"stage_input": 2, "stage_output": 1}], ids=str
+)
+def test_stages(knobs: dict[str, int]) -> None:
+    run(3, 4, 8, 0, **knobs)
 
 
 def test_refusals() -> None:
     fmt = ZkfFormat(6, 18)
-    assert Ilog2(fmt, wint=7).timing.latency == 0 and not Ilog2(fmt).clocked
+    Ilog2(fmt, wint=7)
     with pytest.raises(ValueError):
         Ilog2(fmt, wint=6)
 
@@ -46,9 +51,7 @@ DEEP = [(2, 5, 0), (4, 5, 0), (3, 6, 0), (2, 6, 0), (6, 17, 512), (8, 23, 512)]
 
 
 @pytest.mark.deep
-@pytest.mark.parametrize("stage_output", [0, 1])
-@pytest.mark.parametrize("stage_input", [0, 1, 2])
 @pytest.mark.parametrize("wide", [False, True])
 @pytest.mark.parametrize("row", DEEP, ids=str)
-def test_deep(row: tuple[int, int, int], wide: bool, stage_input: int, stage_output: int) -> None:
-    run(row[0], row[1], 32 if wide else row[0] + 1, row[2], stage_input=stage_input, stage_output=stage_output)
+def test_deep(row: tuple[int, int, int], wide: bool) -> None:
+    run(row[0], row[1], 32 if wide else row[0] + 1, row[2])

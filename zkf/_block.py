@@ -108,8 +108,11 @@ class Block(ABC):
         share a name, nor does one whose latency changes, at a length that vendor tools take; attributes are no part of
         it, so two texts of one name can differ by them (`compile(prefix)` tells such modules apart).
         """
-        # `True` and 1 are one knob value.
-        knobs = [(knob, int(value) if isinstance(value, bool) else value) for knob, value in self.config.items()]
+        knobs = []
+        for knob, value in self.config.items():
+            if isinstance(value, enum.Flag):  # By its members' names: their values shift when a member is added.
+                value = sorted(member.name for member in value)
+            knobs.append((knob, int(value) if isinstance(value, bool) else value))  # `True` and 1 are one knob value.
         digest = hashlib.sha256(str((self.operator, knobs, self.timing)).encode()).hexdigest()
         return f"zkf_{self.operator}_{digest[:12]}"
 
@@ -198,15 +201,29 @@ def delay[T: ValueLike](m: Module, name: str, shape: ShapeLike, value: T, stages
 
 
 def pipe[T: ValueLike](
-    m: Module, name: str, valid: ValueLike, shape: ShapeLike, payload: T, stages: int, attrs: Attrs | None = None
+    m: Module, name: str, valid: ValueLike, shape: ShapeLike, payload: T, stages: int
 ) -> tuple[ValueLike, T]:
-    """`valid` and `payload` delayed by `stages` registers, `attrs` on the last payload; reset clears only the flags."""
+    """`valid` and `payload` delayed by `stages` registers; reset clears only the flags."""
     for k in range(stages):
-        kept = dict(attrs or {}) if k == stages - 1 else {}
-        flag, q = Signal(name=f"{name}{k}_valid"), Signal(shape, name=f"{name}{k}", reset_less=True, attrs=kept)
+        flag, q = Signal(name=f"{name}{k}_valid"), Signal(shape, name=f"{name}{k}", reset_less=True)
         m.d.sync += [flag.eq(valid), q.eq(payload)]
         valid, payload = flag, q
     return valid, payload
+
+
+def zext(value: Value, width: int) -> Value:
+    """With zeros above, unsigned."""
+    return Cat(value, Const(0, width - len(value)))
+
+
+def sext(value: Value, width: int) -> Value:
+    """With the sign above, signed."""
+    return Cat(value, value[-1].replicate(width - len(value))).as_signed()
+
+
+def ge(left: Value, right: Value) -> Value:
+    """`left >= right` as the borrow of a subtraction, which maps onto a carry chain where a comparison may not."""
+    return ~(left - right)[-1]
 
 
 def bundle(layout: data.StructLayout, **fields: ValueLike) -> data.View:

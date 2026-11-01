@@ -7,7 +7,7 @@ from amaranth.lib import wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
-from ._block import Attrs, pipe
+from ._block import Attrs, pipe, zext
 
 
 def slices(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> tuple[int, int]:
@@ -47,11 +47,6 @@ def check(knob: str, stages: int, wa: int, wb: int, *, signed: bool, wmultiplier
         raise ValueError(f"{knob}={stages}: set {span} on {wmultiplier}-bit multipliers")
 
 
-def held(wa: int, wb: int, *, signed: bool, wmultiplier: int, stages: int) -> bool:
-    """Whether a register follows each multiplier of `Pmul` at `stages`: a lone one's output, or the grid."""
-    return stages >= 3 or (stages >= 1 and slices(wa, wb, signed=signed, wmultiplier=wmultiplier) == (1, 1))
-
-
 class Pmul(wiring.Component):
     """
     `p = a * b`, exact, as `wa + wb` raw bits (two's complement where `signed`); the operands are both signed or both
@@ -62,7 +57,8 @@ class Pmul(wiring.Component):
     first of `positions`: `p`; the operands; the grid; each level of the sum but its last, from the grid's. The latency
     is `stages`.
 
-    `attrs` go on the capture where it is `held`.
+    `attrs` go on the operands' capture where a register follows each multiplier: a lone one's from 2 stages on, a
+    grid's from 3.
     """
 
     in_valid: Signal
@@ -84,12 +80,12 @@ class Pmul(wiring.Component):
     ) -> None:
         named = positions(wa, wb, signed=signed, wmultiplier=wmultiplier)
         assert 0 <= stages <= len(named), (stages, named)
-        behind = held(wa, wb, signed=signed, wmultiplier=wmultiplier, stages=stages)
+        self._ga, self._gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
+        behind = stages >= 3 or (stages >= 2 and self._ga == self._gb == 1)
         self._capture_attrs = dict(attrs or {}) if behind else {}
         self._wa, self._wb, self._signed, self._sideband = wa, wb, signed, sideband
         self._stages = stages
         self._capture = stages >= 2
-        self._ga, self._gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
         members = {"in_valid": In(1), "a": In(wa), "b": In(wb), "out_valid": Out(1), "p": Out(wa + wb)}
         if sideband is not None:
             members |= {"sb_in": In(sideband), "sb_out": Out(sideband)}
@@ -126,7 +122,7 @@ class Pmul(wiring.Component):
             for offset, bits, factor in slices:
                 piece = operand[offset : offset + bits]
                 if self._signed:
-                    piece = Cat(piece, Const(0, factor - bits)).as_signed()
+                    piece = zext(piece, factor).as_signed()
                 out.append(piece)
             return out
 
@@ -145,7 +141,7 @@ class Pmul(wiring.Component):
                 m.d["sync" if stages >= 3 else "comb"] += q.eq(product)
                 above = (q[-1] if self._signed else Const(0, 1)).replicate(max(0, wp - high[i][j]))
                 placed = Signal(wp, name=f"pp{i}_{j}")
-                m.d.comb += placed.eq(Cat(Const(0, low[i][j]), q.as_unsigned(), above)[:wp])
+                m.d.comb += placed.eq(Cat(Const(0, low[i][j]), q, above))
                 pp[i].append(placed)
 
         if not self._signed:
@@ -221,7 +217,7 @@ class Pmul(wiring.Component):
             """The sum of `terms`, below bit `to`; the bits below all but the lowest are those of the lowest."""
             (lowest, at, _), above = min(terms, key=lambda term: term[1]), sorted(term[1] for term in terms)[1]
             total = Signal(to - above, name=f"{label}_hi")
-            m.d.comb += total.eq(reduce(add, (term[above:to] for term, _, _ in terms))[: to - above])
+            m.d.comb += total.eq(reduce(add, (term[above:to] for term, _, _ in terms)))
             if cut:
                 return stored(label, Cat(lowest[at:above], total), at), at, to
             whole = Signal(wp, name=label)

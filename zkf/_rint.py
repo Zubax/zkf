@@ -8,7 +8,7 @@ from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
-from ._block import FloatLayout, FloatView, Operator, Timing, bundle, pipe
+from ._block import FloatLayout, FloatView, Operator, Timing, bundle, pipe, zext
 from ._value import UnsupportedFormat, Zkf
 
 
@@ -132,15 +132,14 @@ class _Rint(wiring.Component):
         m.d.comb += whole.eq(~sub_one)
         rounds = Signal(name="rounds")
         m.d.comb += rounds.eq(ordinary & whole)
-        exp_s = Cat(exp, Const(0, wa - wexp)).as_signed()
+        exp_s = zext(exp, wa).as_signed()
         fraction_bits = Signal(signed(wa), name="fraction_bits")
-        m.d.comb += fraction_bits.eq((Const(unit, signed(wa)) - exp_s)[:wa].as_signed())
+        m.d.comb += fraction_bits.eq(Const(unit, signed(wa)) - exp_s)
         # At `wint = WMAN + 1`, `unit == top` and one difference serves both.
-        distance = (Const(top, signed(wa)) - exp_s)[:wa].as_signed()
         shift = fraction_bits
         if unit != top:
             shift = Signal(signed(wa), name="shift")
-            m.d.comb += shift.eq(distance)
+            m.d.comb += shift.eq(Const(top, signed(wa)) - exp_s)
         beyond = Signal(name="beyond")
         m.d.comb += beyond.eq(is_inf | shift[-1])  # an infinity, or a magnitude of more than `wt` bits
         discarded = Signal(wpp, name="discarded")
@@ -151,9 +150,7 @@ class _Rint(wiring.Component):
                 m.d.comb += discarded.eq(0)
             with m.Default():  # an infinity discards its payload
                 m.d.comb += discarded.eq(Const(wfrac, wpp))
-        if wt == 1:
-            aligned = Const(1, 1)
-        elif fmt.wman >= wt:
+        if fmt.wman >= wt:
             aligned = Cat(frac[wfrac - (wt - 1) :], Const(1, 1))
         else:
             aligned = Cat(Const(0, wt - fmt.wman), frac, Const(1, 1))
@@ -192,7 +189,7 @@ class _Rint(wiring.Component):
             exp=Mux(sub_one, Const(bias - 1, wexp), exp),
             frac=frac,
             mask=~((ones << discarded)[:wfrac]),
-            trunc=((aligned >> shift[: ceil_log2(wt) if wt > 1 else 1]) & whole.replicate(wt)) | beyond.replicate(wt),
+            trunc=((aligned >> shift[: ceil_log2(wt)]) & whole.replicate(wt)) | beyond.replicate(wt),
         )
         payload = Signal(shifted, name="decoded")
         m.d.comb += payload.eq(decoded)
@@ -220,7 +217,7 @@ class _Rint(wiring.Component):
         selected = bundle(
             result,
             y_float=layout(Mux(inc, Cat(float_next, sh.sign), float_kept)),
-            y_int=Mux((inc ^ sh.sign) & sh.has_next, (int_base + 1)[:wint], int_base).as_signed(),
+            y_int=Mux((inc ^ sh.sign) & sh.has_next, (int_base + 1)[:wint], int_base),
         )
         payload = Signal(result, name="selected")
         m.d.comb += payload.eq(selected)

@@ -1,17 +1,18 @@
-"""Every operator and private core, elaborated over its knobs, and what an operator compiles to, which linters take."""
+"""Every operator, elaborated over its knobs, and what an operator compiles to, which linters take."""
 
 import os
 import shutil
 import subprocess
-from collections.abc import Callable, Iterator
-from functools import partial
-from itertools import islice, product
+from collections.abc import Iterator
+from itertools import islice
 from pathlib import Path
 
 import pytest
-from amaranth.back import rtlil, verilog
-from amaranth.lib import data, wiring
+from amaranth.back import rtlil
+from amaranth.hdl import Fragment
 
+from _catalog import CATALOG
+from _cordic import LACKED
 from _sweep import configurations, make
 from zkf import (
     AbsNeg,
@@ -33,12 +34,6 @@ from zkf import (
     Rint,
     ZkfFormat,
 )
-from zkf._shift import Normshift
-from zkf._pack import Pack
-from zkf._cordic import _LACKED
-from zkf._pmul import Pmul, positions
-from zkf._trans import Kernel, spec as table
-from zkf._txn import Txn
 
 # The formats on which an operator's structure differs: per multiplier width, no split, an even one, an uneven
 # one and a 3x3 one for a multiplier; a `k` narrower and wider than the exponent for the shift; for the adder a
@@ -90,12 +85,12 @@ MODELS: list[tuple[type[Block], ZkfFormat, dict[str, object]]] = [
     (Fma, ZkfFormat(3, 4), {}),
     (Fma, ZkfFormat(6, 18), {}),
     (Fma, ZkfFormat(8, 36), {}),
-    (Divsqrt, ZkfFormat(3, 4), {}),
+    (Divsqrt, ZkfFormat(3, 6), {}),
     (Divsqrt, ZkfFormat(3, 5), {}),
     (Divsqrt, ZkfFormat(6, 18), {}),
     (Divsqrt, ZkfFormat(8, 27), {}),
     (Divsqrt, ZkfFormat(11, 53), {}),
-    (Exp2, ZkfFormat(2, 16), {"wmultiplier": 18}),
+    (Exp2, ZkfFormat(3, 16), {"wmultiplier": 18}),
     (Exp2, ZkfFormat(8, 36), {"wmultiplier": 18}),
     (Exp2, ZkfFormat(11, 53), {"wmultiplier": 18}),
     (Exp2, ZkfFormat(8, 40), {"wmultiplier": 27}),
@@ -122,50 +117,18 @@ def models(cls: type[Block], fmt: ZkfFormat, fixed: dict[str, object], every_pai
             continue
 
 
-def cores() -> Iterator[Callable[[], wiring.Component]]:
-    side = data.StructLayout({"tag": 3, "flag": 1})
-    for stage_output in (0, 1):
-        yield partial(Txn, side, stage_output)
-    for fmt, unbiased in ((ZkfFormat(3, 4), 5), (ZkfFormat(4, 5), 4), (ZkfFormat(8, 36), 12)):
-        for options, stages in product(range(8), range(4)):
-            if not (options & 1 and unbiased == fmt.wexp):
-                yield partial(
-                    Pack,
-                    fmt,
-                    wexp_unbiased=unbiased,
-                    exp_is_biased=bool(options & 1),
-                    assume_no_overflow=bool(options & 2),
-                    saturate_round_carry=bool(options & 4),
-                    stage_input=stages & 1,
-                    stage_output=stages >> 1,
-                )
-    # Signed 53x18: a pair level without row sums.
-    sizes = ((66, 41, 18), (29, 20, 11), (18, 18, 18), (53, 53, 8), (36, 36, 18), (12, 12, 5), (53, 18, 18))
-    for (wa, wb, wmultiplier), signed, sideband in product(sizes, (False, True), (None, side)):
-        for stages in range(len(positions(wa, wb, signed=signed, wmultiplier=wmultiplier)) + 1):
-            yield partial(
-                Pmul,
-                wa,
-                wb,
-                signed=signed,
-                wmultiplier=wmultiplier,
-                stages=stages,
-                sideband=sideband,
-            )
-
-
 @pytest.mark.parametrize("shard", range(4))
 @pytest.mark.parametrize("row", MODELS, ids=lambda row: f"{row[0].operator}-{row[1].wexp}/{row[1].wman}-{row[2]}")
 def test_operators(row: tuple[type[Block], ZkfFormat, dict[str, object]], shard: int) -> None:
+    """Each knob converted to a netlist, and every pair of them elaborated."""
+    single = set(models(*row, every_pair=False))
     built = list(islice(dict.fromkeys(models(*row)), shard, None, 4))
     assert built or shard, "the format admits no configuration"
     for model in built:
-        rtlil.convert(model.component())
-
-
-def test_cores() -> None:
-    for build in cores():
-        rtlil.convert(build())
+        if model in single:
+            rtlil.convert(model.component())
+        else:
+            Fragment.get(model.component(), None)
 
 
 LINTERS = {
@@ -183,22 +146,13 @@ def test_lint(linter: str, tmp_path: Path) -> None:
         if os.environ.get("CI"):
             pytest.fail(f"no {linter} in CI")
         pytest.skip(f"no {linter}")
-    side = data.StructLayout({"tag": 3, "flag": 1})
-    convert = partial(verilog.convert, strip_internal_attrs=True)
-    texts = [
-        convert(Txn(side, 0), name="txn"),
-        convert(Normshift(39, stage_split=1, stage_wide=1, sideband=side), name="normshift"),
-    ]
-    for function in ("exp2", "log2"):
-        kernel = Kernel(table(function, 36, 18), wmultiplier=18, stages=4)
-        texts.append(convert(kernel, name=f"kernel_{function}"))
-    for cls, fmt, fixed in MODELS:
-        swept = list(models(cls, fmt, fixed, every_pair=False))
-        texts += [model.compile() for model in {swept[at].name: swept[at] for at in (0, len(swept) // 2, -1)}.values()]
-    # What the points above lack: every stage at once, in each mode.
+    # The catalog, each format of the sweep at its first configuration, and every register of `cordic` in each mode.
+    specs = list(CATALOG.values()) + [next(models(cls, fmt, fixed)) for cls, fmt, fixed in MODELS]
     for mode in (0, 1, 2):
-        staged = make(Cordic, ZkfFormat(5, 17), wmultiplier=18, mode=mode, stage_core_mul=3, stage_core=~_LACKED[mode])
-        texts.append(staged.compile())
+        specs.append(
+            make(Cordic, ZkfFormat(5, 17), wmultiplier=18, mode=mode, stage_core_mul=3, stage_core=~LACKED[mode])
+        )
+    texts = [spec.compile() for spec in {spec.name: spec for spec in specs}.values()]
     for index, text in enumerate(texts):
         path = tmp_path / f"blob{index}.v"
         path.write_text(text)

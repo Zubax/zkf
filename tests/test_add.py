@@ -77,8 +77,7 @@ def focused(fmt: ZkfFormat) -> list[tuple[int, int]]:
     ]
     out += [(fmt.pack(0, e, f).bits, fmt.pack(1, e, f).bits) for e in (1, bias, top) for f in (0, ones)]
     apart = [1 << k for k in range((wman + 4).bit_length()) if 1 << k <= min(wman + 4, top - 1)]
-    if top > 2:
-        apart.append(max(wman + 4, top - 1))
+    apart.append(max(wman + 4, top - 1))
     for difference in apart:
         small = fmt.pack(0, max(1, top - difference), ones).bits
         out += [(fmt.pack(0, top, 0).bits, small ^ flip) for flip in (0, 1 << fmt.sign_shift)]
@@ -145,7 +144,7 @@ def directed(fmt: ZkfFormat) -> list[tuple[int, int]]:
 
 def crossed(fmt: ZkfFormat) -> list[tuple[int, int]]:
     """Every pair of the raw corners and the directed numbers, with `b` in both signs."""
-    values = raw_corners(fmt) + (list(directed_numbers(fmt).values()) if fmt.wexp >= 3 else [])
+    values = raw_corners(fmt) + list(directed_numbers(fmt).values())
     return [(a, b ^ flip) for a in values for b in values for flip in (0, 1 << fmt.sign_shift)]
 
 
@@ -298,7 +297,6 @@ DEEP = [
 
 
 @pytest.mark.deep
-@pytest.mark.parametrize("stage_output", [0, 1])
 @pytest.mark.parametrize(
     "stage_core",
     [
@@ -310,5 +308,5 @@ DEEP = [
     ids=str,
 )
 @pytest.mark.parametrize("row", DEEP, ids=str)
-def test_deep(row: tuple[int, int, int], stage_core: Add.CoreStages, stage_output: int) -> None:
-    run(*row, stage_core=stage_core, stage_output=stage_output)
+def test_deep(row: tuple[int, int, int], stage_core: Add.CoreStages) -> None:
+    run(*row, stage_core=stage_core)
