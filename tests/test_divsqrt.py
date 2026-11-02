@@ -137,7 +137,7 @@ def drawn_division(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int]:
         divisor = random_normal_near(fmt, rng, [fmt.bias], [0, 1, 1 << (fmt.wfrac - 1)])
         return random_normal_near(fmt, rng, [fmt.bias], [0, 1]), divisor
     if pick == 7:
-        return fmt.pack(int(rng.integers(0, 2)), 1, int(rng.integers(0, min(4, fmt.frac_mask + 1)))).bits, v["two"]
+        return fmt.pack(int(rng.integers(0, 2)), 1, int(rng.integers(0, 4))).bits, v["two"]
     if pick == 8:
         return random_normal(fmt, rng), v["one"]
     return random_operand(fmt, rng), random_operand(fmt, rng)
@@ -165,8 +165,8 @@ def operands(
     fmt: ZkfFormat, kind: str | int, root: bool, rng: np.random.Generator, shard: int, shards: int
 ) -> list[tuple[int, int]]:
     """
-    Of one operation, a root's second being unused: "every" operand, the dividends being those of one `shard` of so
-    many; every pair of "significands" (the exponents only move the result's); or the directed ones and as many
+    Of one operation, a root's second being unused: "every" operand, or every pair of "significands" (the exponents
+    only move the result's), the dividends being those of one `shard` of so many; or the directed ones and as many
     random ones as `kind` says.
     """
     every, fractions = range(1 << fmt.wfull), range(1 << fmt.wfrac)
@@ -176,7 +176,9 @@ def operands(
         if root:
             return [(fmt.pack(0, exp, f).bits, 0) for exp in (fmt.bias, fmt.bias + 1) for f in fractions]
         return [
-            (fmt.pack(0, fmt.bias, fa).bits, fmt.pack(0, fmt.bias, fb).bits) for fa in fractions for fb in fractions
+            (fmt.pack(0, fmt.bias, fa).bits, fmt.pack(0, fmt.bias, fb).bits)
+            for fa in fractions[shard::shards]
+            for fb in fractions
         ]
     assert isinstance(kind, int)
     out = [(a, 0) for a in radicands(fmt)] if root else divisions(fmt)
@@ -214,34 +216,42 @@ def simulate(model: Divsqrt, kind: str | int, shard: int = 0, shards: int = 1) -
     run_pipeline(model.component(), model.timing.latency, cases)
 
 
-def decodes(wman: int) -> tuple[Divsqrt.CoreStages, ...]:
-    """The values of `stage_core`: an odd significand has no first digit to unfold."""
-    return (Divsqrt.CoreStages(0), Divsqrt.CoreStages.FIRST_DIGIT) if wman % 2 == 0 else (Divsqrt.CoreStages(0),)
+def decodes(wman: int, fast: bool) -> tuple[Divsqrt.CoreStages, ...]:
+    """The values of `stage_core`: a WMAN whose stage 0 folds no divider's digit has none to unfold."""
+    folds = wman % 3 != 1 if fast else wman % 2 == 0
+    return (Divsqrt.CoreStages(0), Divsqrt.CoreStages.FIRST_DIGIT) if folds else (Divsqrt.CoreStages(0),)
 
 
-# mode, wexp, wman, kind: roots walked whole up to 4/7, the runtime mode at 3/5; division alone, in the deep tier.
+# mode, wexp, wman, kind, fast: roots walked whole at each radix's smallest WMAN; radix 8 at each residue of WMAN by 3
+# with two middle digits at least (10, 11, 12), radix 4 at both parities; division alone, in the deep tier.
 FORMATS = (
-    [(0, 3, 5, 512), (0, 4, 6, 512), (0, 5, 11, 768), (0, 6, 18, 768)]
-    + [(0, 7, 17, 768), (0, 8, 24, 1024), (0, 11, 53, 384)]
-    + [(1, 5, 11, 512), (1, 8, 24, 1024), (1, 11, 53, 384)]
-    + [(1, 3, 5, "every"), (1, 4, 6, "every"), (1, 4, 7, "every")]
-    + [(2, 3, 5, "every"), (2, 4, 6, 1024), (2, 5, 11, 768)]
-    + [(2, 6, 18, 768), (2, 8, 27, 768), (2, 8, 36, 768), (2, 11, 53, 384)]
+    [(0, 4, 10, 512, True), (0, 5, 11, 512, True), (0, 4, 12, 512, True), (0, 6, 18, 768, True)]
+    + [(0, 8, 24, 1024, True), (0, 8, 25, 512, True), (0, 11, 53, 384, True)]
+    + [(1, 3, 9, "every", True), (1, 3, 10, "every", True), (1, 3, 11, "every", True), (1, 8, 24, 1024, True)]
+    + [(1, 11, 53, 384, True), (2, 4, 10, 1024, True), (2, 5, 11, 768, True), (2, 4, 12, 1024, True)]
+    + [(2, 6, 18, 768, True), (2, 8, 27, 768, True), (2, 8, 36, 768, True), (2, 11, 53, 384, True)]
+    + [(0, 5, 11, 768, False), (0, 6, 18, 768, False), (1, 3, 5, "every", False), (1, 4, 6, "every", False)]
+    + [(1, 8, 24, 1024, False), (2, 3, 6, 1024, False), (2, 6, 18, 768, False), (2, 8, 27, 768, False)]
 )
 
 
 @pytest.mark.parametrize("row", FORMATS, ids=str)
-def test_formats(row: tuple[int, int, int, str | int]) -> None:
-    for stage_core in decodes(row[2]):
-        run(row[1], row[2], row[3], row[0], stage_core=stage_core)
+def test_formats(row: tuple[int, int, int, str | int, bool]) -> None:
+    mode, wexp, wman, kind, fast = row
+    for stage_core in decodes(wman, fast):
+        run(wexp, wman, kind, mode, fast=fast, stage_core=stage_core)
 
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
-@pytest.mark.parametrize("wman, kind", [(5, "every"), (6, 2048)])
-def test_stages(mode: int, wman: int, kind: str | int) -> None:
-    each = ({"stage_input": 1}, {"stage_output": 1}) if wman == 6 else ()
-    for knobs in (*each, {"stage_input": 2, "stage_core": decodes(wman)[-1], "stage_output": 1}, {"stage_output": 3}):
-        run(3, wman, kind, mode, **knobs)
+@pytest.mark.parametrize("fast", [True, False])
+def test_stages(mode: int, fast: bool) -> None:
+    for knobs in (
+        {"stage_input": 1},
+        {"stage_output": 1},
+        {"stage_input": 2, "stage_core": decodes(12, fast)[-1], "stage_output": 1},
+        {"stage_output": 3},
+    ):
+        run(3, 12, 1024, mode, fast=fast, **knobs)
 
 
 @pytest.mark.parametrize("model", [pytest.param(m, id=n) for n, m in CATALOG.items() if isinstance(m, Divsqrt)])
@@ -251,53 +261,86 @@ def test_catalog(model: Divsqrt) -> None:
 
 def test_latency() -> None:
     fmt = ZkfFormat(6, 18)
-    unfolded = Divsqrt(fmt, stage_core=Divsqrt.CoreStages.FIRST_DIGIT, stage_output=3)
-    assert Divsqrt(fmt).timing.latency == 8 and unfolded.timing.latency == 12
+    unfolded: dict[str, Any] = {"stage_core": Divsqrt.CoreStages.FIRST_DIGIT, "stage_output": 3}
+    found = [Divsqrt(fmt, fast=fast, **knobs).timing.latency for fast in (False, True) for knobs in ({}, unfolded)]
+    assert found == [8, 12, 5, 9]
+    assert [Divsqrt(ZkfFormat(8, wman), fast=True).timing.latency for wman in (24, 25, 26)] == [7, 8, 8]
 
 
 def test_refusals() -> None:
+    first = Divsqrt.CoreStages.FIRST_DIGIT
     with pytest.raises(ValueError):
         Divsqrt(ZkfFormat(6, 18), mode=3)
+    with pytest.raises(ValueError, match=re.escape(f"stage_core={first}: WMAN=17 is odd; leave FIRST_DIGIT out")):
+        Divsqrt(ZkfFormat(6, 17), stage_core=first, fast=False)
     with pytest.raises(
-        ValueError, match=re.escape("stage_core=CoreStages.FIRST_DIGIT: WMAN=17 is odd; leave FIRST_DIGIT out")
+        ValueError, match=re.escape(f"stage_core={first}: WMAN=16 is one above a multiple of 3; leave FIRST_DIGIT out")
     ):
-        Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT)
+        Divsqrt(ZkfFormat(6, 16), stage_core=first, fast=True)
+    with pytest.raises(UnsupportedFormat, match="^fast: WMAN=8 is below 9; set fast=False$"):
+        Divsqrt(ZkfFormat(3, 8))
     with pytest.raises(UnsupportedFormat, match="^WMAN=4 is below 5$"):
-        Divsqrt(ZkfFormat(3, 4))
+        Divsqrt(ZkfFormat(3, 4), fast=False)
 
 
-# mode, wexp, wman, kind, stage_core, shard, shards: a shard holds 2**18 divisions at most.
+# mode, wexp, wman, kind, fast, stage_core, shard, shards: a shard holds 2**18 divisions at most.
 NONE = Divsqrt.CoreStages(0)
-DEEP: list[tuple[int, int, int, str | int, Divsqrt.CoreStages, int, int]] = (
-    [(mode, 4, 6, "every", NONE, shard, shards) for mode, shards in ((0, 4), (2, 4)) for shard in range(shards)]
-    + [(mode, 4, 7, "every", NONE, shard, 16) for mode in (0, 2) for shard in range(16)]
-    + [(mode, 5, m, "significands", sd, 0, 1) for mode in (0, 1, 2) for m in (8, 9, 10) for sd in decodes(m)]
-    + [(mode, w, m, "every", sd, 0, 1) for mode in (0, 1, 2) for w, m in ((3, 6), (4, 5)) for sd in decodes(m)]
-    + [
-        (0, w, m, kind, NONE, 0, 1)
-        for w, m, kind in ((3, 5, "every"), (2, 5, "every"), (6, 17, 512), (8, 23, 512), (7, 12, 512))
-    ]
-    + [(mode, w, m, 512, NONE, 0, 1) for mode in (1, 2) for w, m in ((6, 17), (8, 23))]
-    + [(1, 2, 5, "every", NONE, 0, 1)]
-    + [
-        (mode, w, m, count, NONE, 0, 1)
+DEEP: list[tuple[int, int, int, str | int, bool, Divsqrt.CoreStages, int, int]] = [
+    *[
+        (mode, 5, m, "significands", fast, sd, 0, 1)
+        for mode in (0, 2)
+        for fast in (False, True)
+        for m in (9, 10)
+        for sd in decodes(m, fast)
+    ],
+    *[
+        (1, 5, m, "significands", fast, sd, 0, 1)
+        for fast in (False, True)
+        for m in range(9, 17)
+        for sd in decodes(m, fast)
+    ],
+    *[
+        (1, w, m, "every", fast, NONE, 0, 1)
+        for fast in (False, True)
+        for w, m in ((2, 9), (4, 9), (4, 10), (4, 11), (4, 12))
+    ],
+    *[(mode, 2, 9, "every", True, NONE, shard, 16) for mode in (0, 2) for shard in range(16)],
+    *[(mode, 3, m, "every", False, sd, 0, 1) for mode in (0, 1, 2) for m in (5, 6) for sd in decodes(m, False)],
+    *[(mode, 4, m, "significands", False, sd, 0, 1) for mode in (0, 2) for m in (7, 8) for sd in decodes(m, False)],
+    *[
+        (mode, 5, 11, "significands", True, sd, shard, 4)
+        for mode in (0, 2)
+        for sd in decodes(11, True)
+        for shard in range(4)
+    ],
+    *[
+        (mode, w, m, 512, fast, NONE, 0, 1)
         for mode in (0, 1, 2)
+        for fast in (False, True)
+        for w, m in ((6, 17), (8, 23), (7, 12), (7, 13), (7, 14))
+    ],
+    *[
+        (mode, w, m, count, fast, NONE, 0, 1)
+        for mode in (0, 1, 2)
+        for fast in (False, True)
         for w, m, count in ((8, 48, 384), (7, 53, 384), (8, 36, 1024))
-    ]
-)
+    ],
+]
 
 
 @pytest.mark.deep
 @pytest.mark.parametrize("row", DEEP, ids=str)
-def test_deep(row: tuple[int, int, int, str | int, Divsqrt.CoreStages, int, int]) -> None:
-    mode, wexp, wman, kind, stage_core, shard, shards = row
-    run(wexp, wman, kind, mode, shard, shards, stage_core=stage_core)
+def test_deep(row: tuple[int, int, int, str | int, bool, Divsqrt.CoreStages, int, int]) -> None:
+    mode, wexp, wman, kind, fast, stage_core, shard, shards = row
+    run(wexp, wman, kind, mode, shard, shards, fast=fast, stage_core=stage_core)
 
 
 # Two knobs or more: each alone is a row of `test_formats` or `test_stages`.
 @pytest.mark.deep
 @pytest.mark.parametrize("mode", [0, 1, 2])
+@pytest.mark.parametrize("fast", [True, False])
 @pytest.mark.parametrize("stages", [stages for stages in range(8) if stages & (stages - 1)])
-def test_deep_stages(mode: int, stages: int) -> None:
+def test_deep_stages(mode: int, fast: bool, stages: int) -> None:
     values: dict[str, Any] = {"stage_input": 1, "stage_core": Divsqrt.CoreStages.FIRST_DIGIT, "stage_output": 1}
-    run(3, 6, "every", mode, **{name: value for bit, (name, value) in enumerate(values.items()) if (stages >> bit) & 1})
+    knobs = {name: value for bit, (name, value) in enumerate(values.items()) if (stages >> bit) & 1}
+    run(3, 12, 2048, mode, fast=fast, **knobs)

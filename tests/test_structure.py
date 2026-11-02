@@ -39,8 +39,8 @@ from zkf import (
 # one and a 3x3 one for a multiplier; a `k` narrower and wider than the exponent for the shift; for the adder a
 # normalizer of two and three levels, and an exponent too narrow to reach the aligner's last level; an integer
 # narrower and wider than the significand; a format that holds the other, and one narrower in either dimension;
-# an integer of one magnitude bit, narrower than the significand and wider; for the divider an even significand,
-# whose first digit folds into the decoding, an odd one, and one whose frame is wider than 32 bits; for a table
+# an integer of one magnitude bit, narrower than the significand and wider; for the divider each residue of the
+# significand's width by 3 and both parities, and one whose frame is wider than 32 bits; for a table
 # its degrees 2 to 5, and the narrowest and the widest exponent; for `cordic` each mode alone, an odd significand,
 # the widest format, and an exponent that a rotation alone takes.
 MODELS: list[tuple[type[Block], ZkfFormat, dict[str, object]]] = [
@@ -85,8 +85,9 @@ MODELS: list[tuple[type[Block], ZkfFormat, dict[str, object]]] = [
     (Fma, ZkfFormat(3, 4), {}),
     (Fma, ZkfFormat(6, 18), {}),
     (Fma, ZkfFormat(8, 36), {}),
-    (Divsqrt, ZkfFormat(3, 6), {}),
-    (Divsqrt, ZkfFormat(3, 5), {}),
+    (Divsqrt, ZkfFormat(3, 9), {}),
+    (Divsqrt, ZkfFormat(3, 10), {}),
+    (Divsqrt, ZkfFormat(3, 11), {}),
     (Divsqrt, ZkfFormat(6, 18), {}),
     (Divsqrt, ZkfFormat(8, 27), {}),
     (Divsqrt, ZkfFormat(11, 53), {}),

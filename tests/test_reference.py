@@ -253,7 +253,7 @@ def test_root_against_the_square_of_the_midpoint(fmt: ZkfFormat) -> None:
     cut to WMAN bits is rounded by comparing `4y` with `(2 * lo + 1)**2`, and not by the scaling and the guard of
     the reference, so that a mistake in those cannot pass.
     """
-    divsqrt = Divsqrt(fmt)
+    divsqrt = Divsqrt(fmt, fast=False)
     for bits in range(1 << fmt.wfull):
         z = Zkf(fmt, bits)
         found = divsqrt.evaluate(1, z, Zkf(fmt, 0))

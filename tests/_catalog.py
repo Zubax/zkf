@@ -93,16 +93,26 @@ CATALOG: dict[str, Block] = {
         Fma(F36, stage_output=1, stage_core_add=~Add.CoreStages(0), **_FMA36),
         # Without PACK nextpnr makes 97.1 to 103.7 MHz and Diamond 97.8.
         Fma(F36, stage_input=1, stage_core_add=~Add.CoreStages(0), **_FMA36),
-        Divsqrt(F18),
+        # Folded, nextpnr's placements make 99.4 to 106.3 MHz.
+        Divsqrt(F18, stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
         Divsqrt(F18, mode=0),
         Divsqrt(F18, mode=1),
-        # On speed grade 6 one of Diamond's placement cost tables makes 97.1 MHz, nextpnr 117.7, with or without an
-        # output stage.
-        _grade(Divsqrt(ZkfFormat(8, 27)), ecp5_grade=7),
-        # Folded into stage 0 beside the root, the divider's first digit makes 96.4 to 100.8 MHz on nextpnr's seeds.
-        _large(Divsqrt(F36, stage_core=Divsqrt.CoreStages.FIRST_DIGIT)),
-        _large(Divsqrt(F36, mode=0)),
-        Divsqrt(F36, mode=1),
+        Divsqrt(F18, fast=False),
+        # On speed grade 6 nextpnr's placements make 93.3 to 98.0 MHz, 98.8 to 105.9 with FIRST_DIGIT.
+        _large(_grade(Divsqrt(F24), ecp5_grade=7)),
+        # On speed grade 6 nextpnr's placements make 92.7 to 97.3 MHz, 95.8 to 105.4 with FIRST_DIGIT.
+        _large(_grade(Divsqrt(ZkfFormat(8, 27)), ecp5_grade=7)),
+        Divsqrt(ZkfFormat(8, 27), fast=False),
+        # On speed grade 6 nextpnr's placements make 91.8 to 97.6 MHz with FIRST_DIGIT.
+        _large(_grade(Divsqrt(F36), ecp5_grade=7)),
+        # Folded, nextpnr's placements make 99.9 to 107.3 MHz.
+        _large(Divsqrt(F36, stage_core=Divsqrt.CoreStages.FIRST_DIGIT, fast=False)),
+        # Folded, nextpnr's placements make 99.3 to 101.1 MHz.
+        _large(Divsqrt(F36, mode=0, stage_core=Divsqrt.CoreStages.FIRST_DIGIT)),
+        _large(Divsqrt(F36, mode=0, fast=False)),
+        # On speed grade 6 nextpnr's placements make 92.4 to 96.8 MHz, 89.6 to 100.6 with FIRST_DIGIT.
+        _large(_grade(Divsqrt(F36, mode=1), ecp5_grade=7)),
+        Divsqrt(F36, mode=1, fast=False),
         Cmp(F18),
         Cmp(F36),
         MulIlog2(F18, wk=7),

@@ -20,7 +20,8 @@ class Pack(wiring.Component):
     not correctly rounded. `wexp_unbiased` is the width of `exp_unbiased`: at least WEXP, plus one if biased.
     `stage_input` registers the inputs and `stage_output` the result. `classify_ahead` classifies the result ahead of
     `stage_input`'s register, which then holds the class and the exponent: only the rounding adder is left behind it,
-    with the significand masked ahead of it. It has no effect without that register.
+    with the significand masked ahead of it. It has no effect without that register. `late_significand`, with
+    `classify_ahead`: the significand and its tail come a cycle after the other inputs and skip the register.
     """
 
     in_valid: Signal
@@ -46,9 +47,14 @@ class Pack(wiring.Component):
         stage_input: int = 0,
         stage_output: int = 0,
         classify_ahead: bool = False,
+        late_significand: bool = False,
     ) -> None:
         self._fmt = fmt
         self._classify_ahead = classify_ahead
+        self._late_significand = late_significand
+        assert not late_significand or (
+            classify_ahead and stage_input
+        ), "late_significand needs classify_ahead and stage_input"
         self._wexp_unbiased = fmt.wexp + 2 if wexp_unbiased is None else wexp_unbiased
         self._exp_is_biased = exp_is_biased
         self._assume_no_overflow = assume_no_overflow
@@ -137,8 +143,9 @@ class Pack(wiring.Component):
             m.d.comb += keep.eq(finite & ~min_normal)
             exp_held = exponent("exp_held", None, exp_biased)
             sign, keep, exp_held = taken(sign & ~zero, "sign"), taken(keep, "keep"), taken(exp_held, "exp_held")
-            significand = taken(significand, "significand")
-            guard, round_bit, sticky = taken(guard, "guard"), taken(round_bit, "round"), taken(sticky, "sticky")
+            if not self._late_significand:
+                significand = taken(significand, "significand")
+                guard, round_bit, sticky = taken(guard, "guard"), taken(round_bit, "round"), taken(sticky, "sticky")
             increment = guard & (round_bit | sticky | significand[0]) & keep
             held = Signal(fmt.wfull, name="expsig_held")
             m.d.comb += held.eq(Cat(significand & keep.replicate(fmt.wman), exp_held))
