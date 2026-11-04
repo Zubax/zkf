@@ -22,8 +22,7 @@ KNOBS: Mapping[str, tuple[int, ...]] = {
 }
 BASE: Mapping[str, Mapping[str, int]] = {
     "cordic": {"stage_core_mul": 3},
-    "exp2": {"stage_core_kernel": 3},
-    "log2": {"stage_core_kernel": 3, "stage_core_mul": 3},
+    "log2": {"stage_core_mul": 3},
 }
 """What a sweep holds in place of a default, by operator: a product's count that its formats take at 18 bits."""
 

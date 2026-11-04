@@ -28,7 +28,7 @@ pytestmark = pytest.mark.accuracy
 # Every table, and binary64; a format of 24 bits at most is walked whole.
 FORMATS = [(6, 18), (8, 20), (8, 24), (8, 27), (8, 32), (8, 36), (8, 40), (8, 48), (8, 53), (11, 53)]
 # The cheapest to walk whole, ahead of those: the least exponents that each function takes, of `Exp2` from 3.
-NARROW = {"exp2": [(3, 16)], "log2": [(2, 16), (3, 16)]}
+NARROW = {"exp2": [(3, 10), (3, 16)], "log2": [(2, 10), (2, 16), (3, 16)]}
 DIRECTED = [(8, wman) for wman in (16, 18, 20, 24, 27, 32, 36, 40, 48, 53)] + [(11, 53)]
 SAMPLES = {"exp2": 300000, "log2": 500000}
 SHARD = 1 << 16
@@ -261,10 +261,12 @@ def test_faithful(unit: tuple[str, int, int, str, int, int]) -> None:
     fmt = ZkfFormat(wexp, wman)
     worst, wrong, differing, count, first = judged(function, fmt, inputs(function, fmt, kind, shard, shards))
     assert passes(worst, wrong, differing, count, kind), (worst, wrong, differing, count, first)
-    assert worst <= 0.5 + certified(table(function, wman, 18)) + 1e-9, worst
+    assert worst <= 0.5 + certified(table(function, wman, 18, True)) + 1e-9, worst
 
 
-@pytest.mark.parametrize("name, wexp", [(name, w) for name in INSTRUMENTS for w, _ in NARROW[name[:4]]], ids=str)
+@pytest.mark.parametrize(
+    "name, wexp", [(name, w) for name in INSTRUMENTS for w, m in NARROW[name[:4]] if m == 16], ids=str
+)
 def test_instruments_are_faithful(name: str, wexp: int, monkeypatch: pytest.MonkeyPatch) -> None:
     function, fmt, spec = name[:4], ZkfFormat(wexp, 16), instrument(name)
     bound = certified(spec)
@@ -274,7 +276,7 @@ def test_instruments_are_faithful(name: str, wexp: int, monkeypatch: pytest.Monk
 
 
 BUILDERS: Mapping[str, Callable[[], Spec]] = {name: partial(instrument, name) for name in INSTRUMENTS} | {
-    f"{f} at {w}": partial(table, f, w, m) for f, w, m in sorted(TABLES)
+    f"{f} at {w}{' fast' if fast else ''}": partial(table, f, w, m, fast) for f, w, m, fast in sorted(TABLES)
 }
 """Each instrument and table by name, built when called."""
 

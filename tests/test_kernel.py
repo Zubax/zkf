@@ -6,7 +6,7 @@ import pytest
 
 from _bench import Case, run_pipeline
 from _operands import SEED, random_bits
-from _trans import TABLES, every_row
+from _trans import INSTRUMENTS, TABLES, every_row, instrument
 from zkf import Exp2, Log2, ZkfFormat
 from zkf._trans import Kernel, kernel_counts, spec as table
 
@@ -30,8 +30,8 @@ def arguments(width: int, rw: int, count: int) -> list[int]:
     return out + [random_bits(width, rng) for _ in range(count)]
 
 
-def run(function: str, wman: int, stages: int, count: int = 400, wmultiplier: int = 18) -> None:
-    spec = table(function, wman, wmultiplier)
+def run(function: str, wman: int, stages: int, count: int = 400, wmultiplier: int = 18, fast: bool = False) -> None:
+    spec = table(function, wman, wmultiplier, fast)
     dut = Kernel(spec, wmultiplier=wmultiplier, stages=stages)
     rw, cf = spec.rw, spec.cf
     name, result, width = ("f", "s", cf) if function == "exp2" else ("frac", "c", wman - 1)
@@ -41,25 +41,33 @@ def run(function: str, wman: int, stages: int, count: int = 400, wmultiplier: in
     run_pipeline(dut, dut.latency, cases)
 
 
-@pytest.mark.parametrize("function, wman", [key[:2] for key in TABLES])
-def test_every_table(function: str, wman: int) -> None:
-    """At the least count and at the most, which cut every product as far as it goes."""
-    taken = kernel_counts(table(function, wman, 18), 18)
-    run(function, wman, taken.start, 200)
-    run(function, wman, taken.stop - 1, 200)
+@pytest.mark.parametrize("function, wman, fast", [(f, w, fast) for f, w, _, fast in TABLES])
+def test_every_table(function: str, wman: int, fast: bool) -> None:
+    """At every count, the most of which cuts every product as far as it goes."""
+    for stages in kernel_counts(table(function, wman, 18, fast), 18):
+        run(function, wman, stages, 200, fast=fast)
 
 
 # Every count at other widths: single multipliers at 24, from no register of the kernel on, and cut ones at 8 and 12.
 @pytest.mark.parametrize("wmultiplier", [8, 12, 24])
 @pytest.mark.parametrize("function", ["exp2", "log2"])
 def test_other_multipliers(function: str, wmultiplier: int) -> None:
-    for stages in kernel_counts(table(function, 18, wmultiplier), wmultiplier):
+    for stages in kernel_counts(table(function, 18, wmultiplier, False), wmultiplier):
         run(function, 18, stages, 200, wmultiplier)
 
 
-@pytest.mark.parametrize("function, wman", [key[:2] for key in TABLES])
-def test_every_row(function: str, wman: int) -> None:
-    spec = table(function, wman, 18)
+@pytest.mark.parametrize("name", INSTRUMENTS)
+def test_instruments(name: str) -> None:
+    """Every row of each structure that formats reach only where no test can enumerate, at its least count and most."""
+    spec, wmultiplier = instrument(name), INSTRUMENTS[name][1]
+    taken = kernel_counts(spec, wmultiplier)
+    for stages in (taken.start, taken.stop - 1):
+        every_row(spec, Kernel(spec, wmultiplier=wmultiplier, stages=stages))
+
+
+@pytest.mark.parametrize("function, wman, fast", [(f, w, fast) for f, w, _, fast in TABLES])
+def test_every_row(function: str, wman: int, fast: bool) -> None:
+    spec = table(function, wman, 18, fast)
     every_row(spec, Kernel(spec, wmultiplier=18, stages=kernel_counts(spec, 18).start))
 
 

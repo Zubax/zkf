@@ -14,7 +14,7 @@ import zkf._exp2
 import zkf._log2
 from zkf import Exp2, Log2, Zkf, ZkfFormat
 from zkf._pmul import counts
-from zkf._trans import _GUARD, Kernel, Spec, _generate, kernel_counts, spec as table
+from zkf._trans import _GUARD, Kernel, Spec, _generate, spec as table
 
 SHORT = {
     "si": "stage_input",
@@ -22,8 +22,9 @@ SHORT = {
     "sm": "stage_core_mul",
     "sc": "stage_core",
     "so": "stage_output",
+    "fa": "fast",
 }
-"""The stages as the rows name them."""
+"""The stages, and `fast`, as the rows name them."""
 
 
 def others(core: type[enum.Flag]) -> list[tuple[int, int, dict[str, Any]]]:
@@ -60,12 +61,12 @@ def staging(core: type[enum.Flag]) -> list[dict[str, Any]]:
 
 def build(function: str, fmt: ZkfFormat, wmultiplier: int = 18, **stages: Any) -> Exp2 | Log2:
     """
-    The model, its stages by their own names; the count of a product not given is the least that it takes, in the
-    table of the operator's module, which a test may replace.
+    The model, its stages by their own names; the count of the last product of `log2` not given is the least that it
+    takes, in the table of the operator's module, which a test may replace.
     """
     module = zkf._exp2 if function == "exp2" else zkf._log2
-    spec = module.table(function, fmt.wman, wmultiplier)
-    least = {"stage_core_kernel": kernel_counts(spec, wmultiplier).start}
+    spec = module.table(function, fmt.wman, wmultiplier, stages.get("fast", True))
+    least = {}
     if function == "log2":
         least["stage_core_mul"] = counts(*zkf._log2._last(spec, fmt), signed=False, wmultiplier=wmultiplier).start
     cls: Callable[..., Exp2 | Log2] = Exp2 if function == "exp2" else Log2
@@ -140,7 +141,7 @@ def seams(function: str, fmt: ZkfFormat) -> list[int]:
     of `x`; `log2` by the top bits of the significand, taken here in the binades on either side of 1 and one more
     on each side, with the square root of 2, where `|log2(m')|` crosses a half next to where re-centering starts.
     """
-    spec = table(function, fmt.wman, 18)
+    spec = table(function, fmt.wman, 18, True)
     if function == "exp2":
         steps = [Fraction(j, 1 << spec.k) - d for j in range(1, 1 << spec.k) for d in (0, 1)]
         return near(fmt, [fmt.encode(sign * step).bits for step in steps for sign in (1, -1)], 16)
@@ -179,25 +180,29 @@ def strata(function: str, fmt: ZkfFormat, span: int = 1 << 12) -> dict[str, list
     return {"edges": edges(fmt), "seam": seams(function, fmt), "near1": near_one(fmt, span)}
 
 
-# Those of 0.9.0, and others that it never had: other significands, degree 4 among them, and other multipliers.
-TABLES = [(function, wman, 18) for function in ("exp2", "log2") for wman in (16, 18, 24, 27, 32, 36, 48, 53)]
+# The compact ones at 18 bits and those of `fast`, and others: other significands, degree 4 among them, and other
+# multipliers, `fast`'s too.
+TABLES = [(function, wman, 18, False) for function in ("exp2", "log2") for wman in (16, 18, 24, 27, 32, 36, 48, 53)]
+TABLES += [(function, wman, 18, True) for function in ("exp2", "log2") for wman in (10, 18, 40, 53)]
 OTHERS = [
-    (function, wman, width)
+    (function, wman, width, False)
     for function in ("exp2", "log2")
     for wman, width in ((20, 18), (25, 17), (30, 24), (40, 18), (44, 27), (17, 8), (37, 25), (47, 18), (26, 12))
 ]
 # Where the search passes over a shape over the budget: the first segmentation, and a shortened wide product.
-OTHERS += [("log2", 36, 16), ("log2", 27, 16)]
+OTHERS += [("log2", 36, 16, False), ("log2", 27, 16, False)]
+OTHERS += [("exp2", 18, 17, True), ("log2", 44, 12, True), ("log2", 48, 23, True), ("exp2", 53, 25, True)]
 # A structure that the formats reach only at widths no test can enumerate, generated at WMAN 16: degree 3 with a
 # square of two multipliers, a shortened `c3` and a shortened wide product; degree 4, whose last pair is one
-# coefficient; degree 5.
-INSTRUMENTS: dict[str, tuple[str, int, dict[str, int]]] = {
+# coefficient; degree 5; degree 4 whose outer products take a narrow square.
+INSTRUMENTS: dict[str, tuple[str, int, dict[str, Any]]] = {
     "exp2 of degree 3": ("exp2", 11, {"d": 3, "k_base": 4}),
     "log2 of degree 3": ("log2", 12, {"d": 3, "k_base": 4}),
     "exp2 of degree 4": ("exp2", 18, {"d": 4, "k_base": 3}),
     "log2 of degree 4": ("log2", 18, {"d": 4, "k_base": 4}),
     "exp2 of degree 5": ("exp2", 18, {"d": 5, "k_base": 2}),
     "log2 of degree 5": ("log2", 18, {"d": 5, "k_base": 3}),
+    "exp2 of a narrow square": ("exp2", 18, {"d": 4, "k_base": 3, "cut": True}),
 }
 
 

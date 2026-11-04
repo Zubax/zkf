@@ -5,6 +5,7 @@ component that evaluates it. The tests certify the tables.
 
 import functools
 import threading
+from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
@@ -12,7 +13,7 @@ from math import ceil
 from typing import Any
 
 import mpmath
-from amaranth.hdl import Cat, Const, Module, Signal, Value
+from amaranth.hdl import Cat, Const, Module, Mux, Signal, Value
 from amaranth.lib import data, wiring
 from amaranth.lib.memory import Memory
 from amaranth.lib.wiring import In, Out
@@ -27,7 +28,16 @@ _ERR_GUARD = 8
 _GUARD = _ERR_GUARD + 4
 """Fraction bits of a coefficient below those of the significand."""
 _K_CAP = 11
-"""The most bits that index a segment. The degree follows from it, and the length of the chain from the degree."""
+"""
+The most bits that index a compact table's segment. The degree follows from it, and the length of the chain from the
+degree.
+"""
+_K_FAST = 11
+"""
+The most bits that index a segment of `fast`'s table: four times the compact one's rows at most. 4096 rows would save
+about a fifth more kernel cycles over WMAN 10 to 53 for twice the extra ROM, but cuts Diamond's margin at e6m18 to under
+1%, and at e8m45 drops nextpnr's argument into the table's address to 88 MHz.
+"""
 _K_BASE = 9
 """The fewest bits that index a segment: one more doubles the table and takes a bit off every operand above `c0`."""
 _SQUARE_GUARD = 3
@@ -41,7 +51,9 @@ _fitting.prec = 280
 
 
 def degree(wman: int) -> int:
-    """The degree of a segment's polynomial: `WMAN + _ERR_GUARD` bits at the narrowest segments, of `_K_CAP` bits."""
+    """
+    The degree of a compact table's polynomial: `WMAN + _ERR_GUARD` bits at the narrowest segments, of `_K_CAP` bits.
+    """
     return ceil((wman + _ERR_GUARD) / _K_CAP) - 1
 
 
@@ -50,9 +62,9 @@ class Spec:
     """
     The table of `function` at one WMAN, and the arithmetic that evaluates it. The polynomial of a segment,
     `c0 +- c1*wn + c2*wn**2 +- ...` in `wn = w / 2**rw` at the scale `2**-cf`, is taken as `c0 +- c1*wn` beside the
-    pairs `c[2i] +- c[2i+1]*wn` chained by `wn**2`, which is formed once. Every product takes a fixed number of operand
-    bits and is floored; the constants that center those floors, and the half ULP of `exp2`, are part of `c0`. The odd
-    coefficients of `log2` subtract: a table holds magnitudes.
+    pairs `c[2i] +- c[2i+1]*wn` chained by `wn**2`, or by a square of fewer bits above `p2` (`tn`); degree 1 has no
+    chain. Every product takes a fixed number of operand bits and is floored; the constants that center those floors,
+    and the half ULP of `exp2`, are part of `c0`. The odd coefficients of `log2` subtract: a table holds magnitudes.
     """
 
     function: str
@@ -72,14 +84,22 @@ class Spec:
     tc: int = 0
     """Degree 2: the bits of `w` below `t[0]`, which multiply `c1 >> sc`: the wide product is then one multiplier's."""
     sc: int = 0
-    z3: int = 0
-    """Degree 3: low bits that `c3` lacks, all zero, so that `c3*wn` is one multiplier wide."""
+    z: tuple[int, ...] = ()
+    """
+    Of each coefficient from `c0`, the low bits that it lacks, all zero, so that its product spans a multiple of the
+    multipliers' width.
+    """
     th: int = 0
     """
     Degree 3, a square wider than a multiplier: its top `th` bits are squared and multiplied by the rest, the square of
     the rest is left out, and the sum carries `sg` bits below those taken.
     """
     sg: int = 0
+    tn: int = 0
+    """
+    Degree 4 and up: the bits of `w` squared apart for the chain's products above `p2`, which take the top of that
+    square instead of the full one; zero where they take the full one's.
+    """
     thr: int = 0
     """`log2`: the first segment whose significand is re-centered."""
     coeffs: tuple[tuple[int, ...], ...] = ()
@@ -92,14 +112,6 @@ class Spec:
     def _polynomial(self, row: Sequence[int], w: int) -> int:
         """The polynomial of the coefficients `row` at `w`, bit for bit what the hardware gives."""
         rw, t, q, t2 = self.rw, self.t, self.q, self.t2
-        q2 = max(q)
-        wt = w >> (rw - t2)
-        if self.th:
-            tl, base = t2 - self.th, 2 * t2 - q2 - self.sg
-            wh, wl = wt >> tl, wt & ((1 << tl) - 1)
-            w2 = (((wh * wh) >> (base - 2 * tl)) + ((wh * wl) >> (base - tl - 1))) >> self.sg
-        else:
-            w2 = (wt * wt) >> (2 * t2 - q2)
         sign = -1 if self.function == "log2" else 1
 
         def odd(i: int) -> int:
@@ -108,22 +120,33 @@ class Spec:
         linear = odd(0)
         if self.tc:
             linear += ((row[1] >> self.sc) * (w & ((1 << self.tc) - 1))) >> (rw - self.sc)
-        m = self.d // 2
+        if self.d == 1:
+            return row[0] + sign * linear
+        q2 = max(q)
+        wt = w >> (rw - t2)
+        if self.th:
+            tl, base = t2 - self.th, 2 * t2 - q2 - self.sg
+            wh, wl = wt >> tl, wt & ((1 << tl) - 1)
+            w2 = (((wh * wh) >> (base - 2 * tl)) + ((wh * wl) >> (base - tl - 1))) >> self.sg
+        else:
+            w2 = (wt * wt) >> (2 * t2 - q2)
+        m, tn = self.d // 2, self.tn
         value = row[2 * m] + (sign * odd(m) if 2 * m + 1 <= self.d else 0)
         for i in range(m - 1, 0, -1):
-            value = row[2 * i] + sign * odd(i) + ((value * (w2 >> (q2 - q[i]))) >> q[i])
+            taken = ((w >> (rw - tn)) ** 2) >> (2 * tn - q[i]) if tn else w2 >> (q2 - q[i])
+            value = row[2 * i] + sign * odd(i) + ((value * taken) >> q[i])
         return row[0] + sign * linear + ((value * w2) >> q2)
 
 
-def spec(function: str, wman: int, wmultiplier: int) -> Spec:
+def spec(function: str, wman: int, wmultiplier: int, fast: bool) -> Spec:
     """
-    The table of `function` at a significand of `wman` bits, 16 to 53, for multipliers of `wmultiplier` bits,
-    generated once.
+    The table of `function` at a significand of `wman` bits, 10 to 53, for multipliers of `wmultiplier` bits,
+    generated once: `_shortest`'s if `fast`, else the compact one.
     """
-    if not 16 <= wman <= 53:
-        raise UnsupportedFormat(f"no {function} table for WMAN={wman}: it is generated for 16 to 53")
+    if not 10 <= wman <= 53:
+        raise UnsupportedFormat(f"no {function} table for WMAN={wman}: it is generated for 10 to 53")
     with _GENERATING:  # the fit has one context, and a flow compiles its specs from threads
-        return _generated(function, wman, wmultiplier)
+        return _generated(function, wman, wmultiplier, fast)
 
 
 def pack_fixed(fmt: ZkfFormat, sign: int, exp: int, v: int, point: int) -> Zkf:
@@ -138,9 +161,8 @@ def pack_fixed(fmt: ZkfFormat, sign: int, exp: int, v: int, point: int) -> Zkf:
 
 
 def kernel_counts(spec: Spec, wmultiplier: int) -> range:
-    """The counts that `Kernel` takes: from the least that every product takes, up to the most positions of one."""
-    least = max(counts(a, b, signed=False, wmultiplier=wmultiplier).start for a, b in _sizes(spec).values())
-    return range(least, max(_caps(spec, wmultiplier).values()) + 1)
+    """The counts that `Kernel` takes: from none, up to the most positions of one product."""
+    return range(max(_caps(spec, wmultiplier).values()) + 1)
 
 
 def kernel_check(stages: int, spec: Spec, wmultiplier: int) -> None:
@@ -169,10 +191,10 @@ class Kernel(wiring.Component):
     scale, `f` being the fraction re-centered where `rc`, which is combinational from the argument.
 
     The table is addressed by the combinational argument, and the first register is its own, `w` beside it; `depth`
-    more follow, and the last sum is combinational. `stages` is the count of every product (see `zkf._pmul.Pmul`), each
-    capped at its own positions, those of one multiplier at its output and operands; each product builds its own
-    capture. `c[2i+1]*w` of one multiplier has its output after its pair's sum. `rom_attrs` goes on the table,
-    `mul_attrs` on the products' captures.
+    more follow, the terms of the sum added as they are formed, and the last sum is combinational. `stages` is the
+    count of every product, as `Exp2.stage_core_kernel`; each product builds its own capture. `c[2i+1]*w` of one
+    multiplier has its output after its pair's sum. `rom_attrs` goes on the table, `mul_attrs` on the products'
+    captures.
     """
 
     in_valid: Signal
@@ -214,7 +236,7 @@ class Kernel(wiring.Component):
         spec, exp2, at = self._spec, self._spec.function == "exp2", self._schedule
         d, k, rw, t, t2, q = spec.d, spec.k, spec.rw, spec.t, spec.t2, spec.q
         th, sg, tc, sc = spec.th, spec.sg, spec.tc, spec.sc
-        rows, half, total = spec.coeffs, d // 2, at.total
+        rows, half = spec.coeffs, d // 2
         cw, fields = _widths(spec)
 
         def product(name: str, a: Value, b: Value, stages: int | None = None) -> Value:
@@ -251,10 +273,10 @@ class Kernel(wiring.Component):
         m.d.sync += w.eq(argument[:rw])
         c = [Cat(read.data.c0, Const(1, 1))] + [read.data[f"c{j}"] for j in range(1, d + 1)]
 
-        # c0 +- c1*w, the wide product, held for the chain.
-        out_valid, c0 = pipe(m, "c0_d", valid, cw[0], c[0], total)
-        m.d.comb += self.out_valid.eq(out_valid)
-        p1 = delay(m, "p1_d", cw[1], product("p1", c[1], w[rw - t[0] :])[t[0] :], total - at.ready["p1"])
+        # The terms of the sum after c0 by when each is formed, each with whether it is subtracted: c1*w, the wide
+        # product, first.
+        terms: dict[int, list[tuple[bool, Value]]] = defaultdict(list)
+        terms[at.ready["p1"]].append((not exp2, product("p1", c[1], w[rw - t[0] :])[t[0] - (cw[1] - fields[1]) :]))
 
         # The pairs c[2i] +- c[2i+1]*w above the wide one, each held for its turn.
         pair_total = _pairs(spec.function, d, rows)
@@ -280,34 +302,58 @@ class Kernel(wiring.Component):
             first = (even + term if exp2 else even - term)[: pair_bits[i]]
             pair[i] = delay(m, f"pair{i}_", pair_bits[i], first, at.turn[i] - formed)
 
-        # w**2: of two products where its operand is wider than a multiplier, the low part's own square left out.
-        ws = w[rw - t2 :]
-        if th:
-            tl, base = t2 - th, 2 * t2 - q[0] - sg
-            high, cross = product("sq_hh", ws[tl:], ws[tl:]), product("sq_hl", ws[tl:], ws[:tl])
-            square = (high[base - 2 * tl :] + cross[base - tl - 1 :])[sg : q[0] + sg]
-        else:
-            square = product("sq", ws, ws)[2 * t2 - q[0] :]
-        square = delay(m, "sq_d", q[0], square, at.turn[half] - at.ready["sq"])
+        if half:
+            # w**2: of two products where its operand is wider than a multiplier, the low part's own square left out.
+            ws = w[rw - t2 :]
+            if th:
+                tl, base = t2 - th, 2 * t2 - q[0] - sg
+                high, cross = product("sq_hh", ws[tl:], ws[tl:]), product("sq_hl", ws[tl:], ws[:tl])
+                square = (high[base - 2 * tl :] + cross[base - tl - 1 :])[sg : q[0] + sg]
+            else:
+                square = product("sq", ws, ws)[2 * t2 - q[0] :]
+            squares = {"sq": (square, at.ready["sq"])}
+            if spec.tn:
+                # The top of a square of fewer bits, for the products above p2.
+                wn, top = w[rw - spec.tn :], max(q[1:])
+                squares["sqn"] = (product("sqn", wn, wn)[2 * spec.tn - top :], at.ready["sqn"])
 
-        # The chain: a product with the square takes the pair above, its sum with the pair below feeds the next.
-        value = pair[half]
-        for i in range(half - 1, 0, -1):
-            taken = product(f"p{2 * (i + 1)}", value, square[q[0] - q[i] :])[q[i] :]
-            value = (pair[i] + taken)[: chain_bits[i]]
-            square = delay(m, f"sq_{i}_", q[0], square, at.turn[i] - at.turn[i + 1])
-        last = delay(m, "p2_d", chain_bits[1], product("p2", value, square)[q[0] :], total - at.ready["p2"])
-        chain: Value = last
+            # The chain: a product with a square takes the pair above, its sum with the pair below feeds the next.
+            value, since = pair[half], at.turn[half]
+            for i in range(half - 1, -1, -1):
+                begin, name = at.begin[i], "sqn" if i and spec.tn else "sq"
+                value = delay(m, f"chain{i}_", len(value), value, begin - since)
+                taken_square, formed = squares[name]
+                taken_square = delay(m, f"{name}{i}_", len(taken_square), taken_square, begin - formed)
+                squares[name] = taken_square, begin
+                if not i:
+                    terms[at.ready["p2"]].append((False, product("p2", value, taken_square)[q[0] :]))
+                    break
+                taken = product(f"p{2 * (i + 1)}", value, taken_square[len(taken_square) - q[i] :])[q[i] :]
+                taken = delay(m, f"taken{i}_", len(taken), taken, at.turn[i] - begin - at.stages[f"p{2 * (i + 1)}"])
+                value, since = (pair[i] + taken)[: chain_bits[i]], at.turn[i]
         if tc:
             # The argument bits below the wide product's operand times the top of c1: the rest of c1*w.
             assert d == 2 and exp2, "log2's argument fits one multiplier at degree 2"
-            rest = cw[1] + tc - rw
-            low = delay(m, "pl_d", rest, product("pl", c[1][sc:], w[:tc])[rw - sc :], total - at.ready["pl"])
-            chain = (last + low)[: max(cw[2], rest) + 1]
-        if exp2:
-            m.d.comb += self.s.eq(c0 + p1 + chain)
-        else:
-            m.d.comb += self.c.eq(c0 - p1 + chain)
+            terms[at.ready["pl"]].append((False, product("pl", c[1][sc:], w[:tc])[rw - sc :]))
+
+        out = self.s if exp2 else self.c
+        out_valid, partial, since = valid, c[0], 0
+        for time, group in sorted(terms.items()):
+            out_valid, partial = pipe(m, f"sum{time}_", out_valid, len(partial), partial, time - since)
+            if time == max(terms) and len(group) == 1:
+                # The last term meets only the sum's low bits, whose carry or borrow selects the high bits or their
+                # step, formed beside it.
+                [(subtracted, term)] = group
+                n = len(term)
+                low = partial[:n] - term if subtracted else partial[:n] + term
+                high = partial[n : len(out)]
+                partial = Cat(low[:n], Mux(low[n], high - 1 if subtracted else high + 1, high))[: len(out)]
+            else:
+                for subtracted, term in group:
+                    partial = (partial - term if subtracted else partial + term)[: len(out)]
+            since = time
+        m.d.comb += self.out_valid.eq(out_valid)
+        m.d.comb += out.eq(partial)
         return m
 
 
@@ -318,8 +364,9 @@ def _arith_range(spec: Spec, row: Sequence[int]) -> tuple[Fraction, Fraction]:
     than one for its floor.
     """
     rw, d, t, q, t2 = spec.rw, spec.d, spec.t, spec.q, spec.t2
-    sub, q2 = spec.function == "log2", max(q)
-    if not (0 < t2 <= rw and all(0 < x <= rw for x in t) and all(0 < x <= q2 for x in q) and q2 <= 2 * t2):
+    sub, q2 = spec.function == "log2", max(q, default=0)
+    square = 0 < t2 <= rw and all(0 < x <= q2 for x in q) and q2 <= 2 * t2
+    if not (all(0 < x <= rw for x in t) and (d == 1 or square)):
         raise ValueError("operand widths out of range")
     lsb = Fraction(1, 1 << rw)
     # wn**2 - w2 / 2**q2 is in [0, d2]: the squared operand is short by under 2**-t2, the square is floored.
@@ -347,6 +394,8 @@ def _arith_range(spec: Spec, row: Sequence[int]) -> tuple[Fraction, Fraction]:
         linear = 2 + ((1 << sc) - 1) * ((1 << tc) - 1) * lsb
     zero = Fraction(0)
     lo, hi = (-linear, zero) if sub else (zero, linear)
+    if d == 1:
+        return lo, hi
     # Pairs chained by wn**2: V*W - floor(v*w) = (V - v)*W + v*(W - w) + a fraction, W in [0, 1), v in [0, vmax].
     m = d // 2
     chain_lo, chain_hi, vmax = zero, zero, Fraction(row[2 * m])
@@ -356,9 +405,14 @@ def _arith_range(spec: Spec, row: Sequence[int]) -> tuple[Fraction, Fraction]:
     for i in range(m, 0, -1):
         if sub and 2 * i + 1 <= d and not row[2 * i] > row[2 * i + 1]:
             raise ValueError("a pair may go non-positive")
+    tn = spec.tn
+    if tn and not (d >= 4 and all(q[i] <= 2 * tn for i in range(1, m)) and tn <= rw):
+        raise ValueError("narrow square fields")
     for i in range(m - 1, 0, -1):
         pair_lo, pair_hi = (-odd(i), zero) if sub else (zero, odd(i))
-        chain_hi = pair_hi + max(chain_hi, zero) + vmax * (d2 + Fraction(1, 1 << q[i])) + 1
+        # The square that the product takes is short of wn**2 by its operand's dropped bits and its floor.
+        taken = 2 * (Fraction(1, 1 << tn) - lsb) + Fraction(1, 1 << q[i]) if tn else d2 + Fraction(1, 1 << q[i])
+        chain_hi = pair_hi + max(chain_hi, zero) + vmax * taken + 1
         chain_lo = pair_lo + min(chain_lo, zero)
         vmax += row[2 * i] + (0 if sub else row[2 * i + 1])
     return lo + min(chain_lo, zero), hi + max(chain_hi, zero) + vmax * d2 + 1
@@ -385,17 +439,17 @@ def _fit(function: str, k: int, d: int, cf: int, thr: int, segment: int) -> list
         asc=True,
     )
     out = [int(_fitting.nint(c * (1 << cf))) for c in fitted]
-    # The coefficients of exp2 are positive; those of log2 alternate from a positive one.
-    assert all((c > 0) != (function == "log2" and j % 2) for j, c in enumerate(out)), f"segment {segment}: {out}"
+    # The coefficients of exp2 are positive; those of log2 alternate from a positive one; a high one may round to zero.
+    assert all(not c or (c > 0) != (function == "log2" and j % 2) for j, c in enumerate(out)), f"{segment}: {out}"
     return [abs(c) for c in out]
 
 
-def _estimate(spec: Spec, raw: list[list[int]]) -> tuple[float, tuple[tuple[int, ...], ...]]:
+def _estimate(spec: Spec, raw: list[list[int]], segments: Sequence[int]) -> tuple[float, tuple[tuple[int, ...], ...]]:
     """
-    The share of the budget that the worst error of the helper is estimated to take, and the coefficients with the
-    constants folded into `c0`: the half ULP of `exp2`, and the center of the span of the floors. The estimate is the
-    error of the fit at its equioscillation points plus half that span, which is the certificate's bound of the
-    arithmetic.
+    The share of the budget that the worst error of the helper is estimated to take over the `segments` whose
+    coefficients `raw` holds, and those coefficients with the constants folded into `c0`: the half ULP of `exp2`, and
+    the center of the span of the floors. The estimate is the error of the fit at its equioscillation points plus half
+    that span, which is the certificate's bound of the arithmetic.
     """
     exp2 = spec.function == "exp2"
     budget = _fitting.mpf(2) ** -(spec.wman + _ERR_GUARD)
@@ -403,7 +457,7 @@ def _estimate(spec: Spec, raw: list[list[int]]) -> tuple[float, tuple[tuple[int,
     probes = [(1 - _fitting.cos(_fitting.pi * i / (spec.d + 1))) / 2 for i in range(spec.d + 2)]
     worst = _fitting.mpf(0)
     rows = []
-    for segment, row in enumerate(raw):
+    for segment, row in zip(segments, raw):
         lo, hi = _arith_range(spec, row)
         if exp2:
             hi += Fraction(7, 10) * 2  # the reduced argument is low by up to 2**-cf: ln 2 * 2**f < 1.4 of an LSB
@@ -414,6 +468,16 @@ def _estimate(spec: Spec, raw: list[list[int]]) -> tuple[float, tuple[tuple[int,
         half = (hi - lo) / 2
         worst = max(worst, (fit + (_fitting.mpf(half.numerator) / half.denominator + 1) / scale) / min(true) / budget)
     return float(worst), tuple(rows)
+
+
+def _ends(function: str, k: int, thr: int) -> list[int]:
+    """
+    The segments where each coefficient is widest and the error largest: those of `exp2` grow with the segment, those
+    of `log2` peak at its first and where re-centering starts.
+    """
+    n = 1 << k
+    ends = {0, 1, n - 2, n - 1} if function == "exp2" else {0, 1, thr - 1, thr, thr + 1, n - 1}
+    return sorted(segment for segment in ends if 0 <= segment < n)
 
 
 def _pairs(function: str, d: int, rows: Sequence[Sequence[int]]) -> list[int]:
@@ -429,21 +493,42 @@ def _chain_bits(pairs: list[int]) -> list[int]:
     return [0] + [sum(pairs[i:]).bit_length() for i in range(1, len(pairs))] + [0]
 
 
-def _generate(function: str, wman: int, wmultiplier: int, *, d: int | None = None, k_base: int = _K_BASE) -> Spec:
+def _generate(
+    function: str,
+    wman: int,
+    wmultiplier: int,
+    *,
+    d: int | None = None,
+    k_base: int = _K_BASE,
+    k_cap: int = _K_CAP,
+    cut: bool = False,
+    probe: bool = False,
+) -> Spec:
     """
-    The table with the fewest segments, from `2**k_base` up, whose operands fit multipliers of `wmultiplier` bits and
-    whose estimated error fits the budget. Up to degree 3 the operands of the products are cut or fitted to that width
-    where the budget allows. `d` and `k_base` are given only to reach, at a width that can be enumerated, a structure
-    that the formats reach at widths that cannot.
+    The table of degree `d` (the compact one's by default) with the fewest segments, from `2**k_base` up to `2**k_cap`,
+    whose operands fit multipliers of `wmultiplier` bits and whose estimated error fits the budget. The operands of the
+    products are cut or fitted to that width where the budget allows; with `cut`, also degree 1's and the narrow square.
+    A `probe` fits only the segments that bound the widths and the estimate, for `_shortest` to rank tables by.
     """
     cf, narrow = wman + _GUARD, wmultiplier
     d = d or degree(wman)
     width = cf if function == "exp2" else wman - 1
-    for k in range(min(k_base, width - 1), _K_CAP + 1):
+
+    def fitted(width: int) -> int:
+        """The width, or the multiple of the multipliers' below it where it passes that by a few bits."""
+        short = narrow * (ceil(width / narrow) - 1)
+        return short if short and width - short <= 3 else width
+
+    for k in range(min(k_base, width - 1), min(k_cap, width - 1) + 1):
         rw = width - k
         # The segment boundary nearest sqrt(2) - 1.
         thr = int(_fitting.nint((_fitting.sqrt(2) - 1) * (1 << k))) if function == "log2" else 0
-        raw = [_fit(function, k, d, cf, thr, segment) for segment in range(1 << k)]
+        # A probe fits only the segments where each coefficient peaks and the error is largest, those of the ends and
+        # of re-centering: its widths are the full fit's and its estimate a bound below.
+        segments = _ends(function, k, thr) if probe else range(1 << k)
+        raw = [_fit(function, k, d, cf, thr, segment) for segment in segments]
+        if not all(row[j] for row in raw for j in range(1, d + 1)):  # a zero: the degree is too high for the segments
+            continue
         cw = [max(row[j] for row in raw).bit_length() for j in range(d + 1)]
         chain = _chain_bits(_pairs(function, d, raw))
         # Each product keeps the operand bits that hold its error to about an LSB of the result's scale.
@@ -451,7 +536,16 @@ def _generate(function: str, wman: int, wmultiplier: int, *, d: int | None = Non
         t2 = min(rw, chain[1])
         q = tuple(min(2 * t2, chain[i + 1]) for i in range(d // 2))
         spec = Spec(function, wman, k, rw, cf, d, tuple(t), t2, q, thr=thr)
-        if d == 2:
+        if d == 1 and cut:
+            # c1*w past a multiple of the multipliers by a few bits on either side: c1 gives up its low bits, w its own,
+            # if the budget allows.
+            z1, t0 = cw[1] - fitted(cw[1]), fitted(rw)
+            rounded = [[row[0], ((row[1] + ((1 << z1) >> 1)) >> z1) << z1] for row in raw]
+            shorter = replace(spec, z=(0, z1), t=(t0,))
+            fits = max(row[1] for row in rounded).bit_length() == cw[1] and z1 <= t0
+            if (z1 or t0 < rw) and fits and _estimate(shorter, rounded, segments)[0] <= _SELECT:
+                spec, raw = shorter, rounded
+        elif d == 2:
             if max(t2, cw[2], q[0]) > narrow:
                 continue
             if rw > narrow:
@@ -464,7 +558,7 @@ def _generate(function: str, wman: int, wmultiplier: int, *, d: int | None = Non
             z3 = max(0, cw[3] - narrow)
             for row in raw:
                 row[3] = ((row[3] + ((1 << z3) >> 1)) >> z3) << z3
-            spec = replace(spec, z3=z3, t=(rw, min(rw, narrow)))
+            spec = replace(spec, z=(0, 0, 0, z3), t=(rw, min(rw, narrow)))
             if z3 > spec.t[1]:  # c3 keeps no bit that its product takes
                 continue
             if t2 > narrow:
@@ -473,27 +567,84 @@ def _generate(function: str, wman: int, wmultiplier: int, *, d: int | None = Non
                 if t2 > 2 * narrow or 2 * t2 - q[0] - _SQUARE_GUARD < 2 * (t2 - narrow):
                     continue
             # A few argument bits fewer in the wide product can save a multiplier, if the budget allows it.
-            short = narrow * (ceil(rw / narrow) - 1)
-            if 0 < rw - short <= 3:
-                shorter = replace(spec, t=(short, spec.t[1]))
-                if _estimate(shorter, raw)[0] <= _SELECT:
-                    spec = shorter
-        share, coeffs = _estimate(spec, raw)
+            shorter = replace(spec, t=(fitted(rw), spec.t[1]))
+            if shorter != spec and _estimate(shorter, raw, segments)[0] <= _SELECT:
+                spec = shorter
+        elif d >= 4:
+            # The square's operand and the wide product's argument give up the few bits past a multiple of the
+            # multipliers, each where the budget allows; with `cut`, the products above p2 take a square of fewer bits.
+            def tried(shorter: Spec) -> Spec:
+                return shorter if shorter != spec and _estimate(shorter, raw, segments)[0] <= _SELECT else spec
+
+            spec = tried(replace(spec, t2=fitted(t2), q=tuple(min(2 * fitted(t2), x) for x in q)))
+            spec = tried(replace(spec, t=(fitted(rw), *spec.t[1:])))
+            tn = min(max(spec.q[1:]), narrow)
+            if cut and tn < spec.t2 and max(spec.q[1:]) <= 2 * tn:
+                spec = tried(replace(spec, tn=tn))
+        share, coeffs = _estimate(spec, raw, segments)
         if share > _SELECT:
+            continue
+        if not all(row[0] >> cf == 1 for row in coeffs):  # c0, with its leading one, leaves [2**cf, 2**(cf + 1))
             continue
         spec = replace(spec, coeffs=coeffs)
         # What the kernel relies on structurally; the certificate proves the numeric ranges.
-        assert all(row[0] >> cf == 1 for row in coeffs), f"{function} at {wman}: c0 outside [2**cf, 2**(cf + 1))"
         assert function == "exp2" or 0 < thr < 1 << k, "log2: a re-centered fraction is nonzero"
         return spec
     raise UnsupportedFormat(
-        f"no {function} table of {_K_CAP} bits of segment or fewer fits WMAN={wman} on {wmultiplier}-bit multipliers"
+        f"no {function} table of {k_cap} bits of segment or fewer fits WMAN={wman} on {wmultiplier}-bit multipliers"
     )
 
 
 @functools.cache
-def _generated(function: str, wman: int, wmultiplier: int) -> Spec:
-    return _generate(function, wman, wmultiplier)
+def _generated(function: str, wman: int, wmultiplier: int, fast: bool) -> Spec:
+    if not fast:
+        return _generate(function, wman, wmultiplier)
+    return _shortest(_generated(function, wman, wmultiplier, False), wmultiplier)
+
+
+def _shortest(compact: Spec, wmultiplier: int) -> Spec:
+    """
+    Of the tables of `2**_K_FAST` segments or fewer that make a kernel shorter at count 3 than the compact one, that of
+    the least depth at count 3, then at count 2, then bits, then multipliers; or the compact one. Every degree up to the
+    compact one's, at every segmentation, with its operands cut to the multipliers or not, is probed; the full fits
+    follow the probes' order until the best fitted ranks no worse than the next probe, which ranks no worse than its
+    full fit.
+    """
+    function, wman = compact.function, compact.wman
+    width = compact.cf if function == "exp2" else wman - 1
+
+    def rank(spec: Spec) -> tuple[int, int, int, int]:
+        products = (slices(*size, signed=False, wmultiplier=wmultiplier) for size in _sizes(spec).values())
+        depth = _schedule(spec, wmultiplier, 3).total
+        return depth, _schedule(spec, wmultiplier, 2).total, _rom_bits(spec), sum(a * b for a, b in products)
+
+    def table(d: int, k: int, cut: bool, probe: bool) -> Spec | None:
+        try:
+            return _generate(function, wman, wmultiplier, d=d, k_base=k, k_cap=k, cut=cut, probe=probe)
+        except UnsupportedFormat:
+            return None
+
+    shortest = rank(compact)[0]
+    ranked = []
+    for d in range(1, compact.d + 1):
+        for k in range(min(_K_BASE, width - 1), min(_K_FAST, width - 1) + 1):
+            for cut in (False, True) if d == 1 or d >= 4 else (False,):
+                probed = table(d, k, cut, True)
+                if probed is not None and rank(probed)[0] < shortest:
+                    ranked.append((rank(probed), d, k, cut))
+    best: tuple[tuple[int, int, int, int], Spec] | None = None
+    for predicted, d, k, cut in sorted(ranked):
+        if best is not None and best[0] <= predicted:
+            break
+        found = table(d, k, cut, False)
+        if found is not None and rank(found)[0] < shortest and (best is None or rank(found) < best[0]):
+            best = rank(found), found
+    return compact if best is None else best[1]
+
+
+def _rom_bits(spec: Spec) -> int:
+    """The bits of the kernel's table."""
+    return (1 << spec.k) * sum(_widths(spec)[1])
 
 
 _GENERATING = threading.Lock()
@@ -502,10 +653,11 @@ _GENERATING = threading.Lock()
 def _widths(spec: Spec) -> tuple[list[int], list[int]]:
     """
     Of each coefficient, the low degree first: its width, and that in the table, where `c0` lacks its leading one,
-    which is constant, and a degree-3 `c3` its low zeros.
+    which is constant, and the others their zeros of `z`.
     """
     d, cw = spec.d, [max(row[j] for row in spec.coeffs).bit_length() for j in range(spec.d + 1)]
-    return cw, [cw[0] - 1] + [cw[j] - (spec.z3 if d == 3 and j == 3 else 0) for j in range(1, d + 1)]
+    z = spec.z + (0,) * (d + 1 - len(spec.z))
+    return cw, [cw[0] - 1] + [cw[j] - z[j] for j in range(1, d + 1)]
 
 
 def _sizes(spec: Spec) -> dict[str, tuple[int, int]]:
@@ -513,9 +665,16 @@ def _sizes(spec: Spec) -> dict[str, tuple[int, int]]:
     d, t, half = spec.d, spec.t, spec.d // 2
     cw, fields = _widths(spec)
     chain = _chain_bits(_pairs(spec.function, d, spec.coeffs))
-    sizes = {"p1": (cw[1], t[0])} | ({"pl": (cw[1] - spec.sc, spec.tc)} if spec.tc else {})
+    sizes = {"p1": (fields[1], t[0])} | ({"pl": (cw[1] - spec.sc, spec.tc)} if spec.tc else {})
     sizes |= {f"p{2 * i + 1}": (fields[2 * i + 1], t[i]) for i in range(1, half + 1) if 2 * i + 1 <= d}
-    sizes |= {"sq_hh": (spec.th, spec.th), "sq_hl": (spec.th, spec.t2 - spec.th)} if spec.th else {"sq": (spec.t2,) * 2}
+    if not half:
+        return sizes
+    if spec.th:
+        sizes |= {"sq_hh": (spec.th, spec.th), "sq_hl": (spec.th, spec.t2 - spec.th)}
+    else:
+        sizes["sq"] = (spec.t2, spec.t2)
+    if spec.tn:
+        sizes |= {"sqn": (spec.tn,) * 2}
     return sizes | {f"p{2 * (i + 1)}": (chain[i + 1], spec.q[i]) for i in range(half)}
 
 
@@ -532,34 +691,44 @@ def _caps(spec: Spec, wmultiplier: int) -> dict[str, int]:
 class _Schedule:
     """
     The kernel's products in stages after the table's register: the count of each, by name; the odd ones whose output
-    follows the pair's sum; when the result of each is formed (`sq` the square's); when pair `i` joins the chain, the
-    top one at its start; the total.
+    follows the pair's sum; when the result of each is formed (`sq` the square's, `sqn` the narrow one's); when pair
+    `i` joins the chain, the top one at its start; when the chain's product below pair `i + 1` takes its operands; the
+    total.
     """
 
     stages: dict[str, int]
     post: frozenset[str]
     ready: dict[str, int]
     turn: dict[int, int]
+    begin: dict[int, int]
     total: int
 
 
 def _schedule(spec: Spec, wmultiplier: int, stages: int) -> _Schedule:
     d, half, caps = spec.d, spec.d // 2, _caps(spec, wmultiplier)
-    n = {name: min(stages, cap) for name, cap in caps.items()}
+    least = {name: counts(a, b, signed=False, wmultiplier=wmultiplier).start for name, (a, b) in _sizes(spec).items()}
+    n = {name: min(max(stages, least[name]), cap) for name, cap in caps.items()}
     odd = [f"p{2 * i + 1}" for i in range(1, half + 1) if 2 * i + 1 <= d]
     post = frozenset(name for name in odd if caps[name] == 2)
-    squares = [name for name in caps if name.startswith("sq")]
-    assert len({n[name] for name in squares}) == 1, "the square's products are of one size"
-    square = n[squares[0]]
     ready = {name: n[name] for name in caps if name in ("p1", "pl", *odd)}
-    ready |= {name: max(0, n[name] - 1) for name in post} | {"sq": square}
-    # The chain starts once the square and every pair are formed, that of a `post` product in its register.
-    feed = max([ready["sq"], *(n[name] for name in odd)])
-    turn, start = {half: feed}, feed
-    for i in range(half - 1, -1, -1):
-        start += n[f"p{2 * (i + 1)}"]
-        if i:
-            turn[i] = start
-    ready["p2"] = start
+    ready |= {name: max(0, n[name] - 1) for name in post}
+    turn: dict[int, int] = {}
+    begin: dict[int, int] = {}
+    if half:
+        squares = [name for name in caps if name in ("sq", "sq_hh", "sq_hl")]
+        assert len({n[name] for name in squares}) == 1, "the square's products are of one size"
+        ready["sq"] = n[squares[0]]
+        ready["sqn"] = n["sqn"] if spec.tn else ready["sq"]
+        # Pair i is formed at its product's count, that of a `post` product in its register; the chain starts once its
+        # top pair is, each product takes its operands once the pair above and its square are, and each pair joins
+        # once both it and the product above are formed.
+        formed = {i: n.get(f"p{2 * i + 1}", 0) for i in range(1, half + 1)}
+        turn = {half: formed[half]}
+        for i in range(half - 1, -1, -1):
+            begin[i] = max(turn[i + 1], ready["sqn" if i else "sq"])
+            done = begin[i] + n[f"p{2 * (i + 1)}"]
+            if i:
+                turn[i] = max(done, formed[i])
+        ready["p2"] = done
     total = max(ready[name] for name in ("p1", "pl", "p2") if name in ready)
-    return _Schedule(n, post, ready, turn, total)
+    return _Schedule(n, post, ready, turn, begin, total)

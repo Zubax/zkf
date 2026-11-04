@@ -317,8 +317,8 @@ def test_a_float_of_another_format_is_refused() -> None:
     """As any operand, in any mode, also where the mode does not read it; that of `Resize` is of its input format."""
     fmt, other = ZkfFormat(6, 18), ZkfFormat(6, 17)
     exp2, log2, cordic = (
-        Exp2(fmt, stage_core_kernel=3, wmultiplier=18),
-        Log2(fmt, stage_core_kernel=3, stage_core_mul=3, wmultiplier=18),
+        Exp2(fmt, wmultiplier=18),
+        Log2(fmt, stage_core_mul=3, wmultiplier=18),
         Cordic(fmt, stage_core_mul=3, wmultiplier=18),
     )
     divsqrt, mul_ilog2, rint = Divsqrt(fmt), MulIlog2(fmt), Rint(fmt)

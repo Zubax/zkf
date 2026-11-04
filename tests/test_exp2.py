@@ -24,17 +24,19 @@ def test_formats(row: tuple[int, int, str | int]) -> None:
 
 @pytest.mark.parametrize("shard", range(2))
 def test_every(shard: int) -> None:
-    run("exp2", 3, 16, "every", shard, 2)
+    """The compact table of degree 2; `fast`'s of degree 1 at the floor."""
+    run("exp2", 3, 16, "every", shard, 2, fa=False)
+    if not shard:
+        run("exp2", 3, 10, "every")
 
 
 @pytest.mark.parametrize("stages", staging(CoreStages), ids=str)
 def test_stages(stages: dict[str, Any]) -> None:
     """Stages change no result: the format that `test_every` walks whole is sampled here."""
-    run("exp2", 3, 16, 4096, **stages)
+    run("exp2", 3, 16, 4096, fa=False, **stages)
 
 
-# Every count of the kernel at degree 3, whose square takes two multipliers, and the core beside it; the least is the
-# catalog's.
+# The kernel at degree 3, whose square takes two multipliers, at its top count, and the core beside it.
 @pytest.mark.parametrize("stages", [{"sk": 4, "sc": CoreStages.SUM}, {"sk": 4, "sc": ~CoreStages(0)}], ids=str)
 def test_degree_3(stages: dict[str, Any]) -> None:
     run("exp2", 8, 36, 256, **stages)
@@ -46,9 +48,9 @@ def test_generated_for_the_format(row: tuple[int, int, dict[str, Any]]) -> None:
 
 
 def test_other_degrees() -> None:
-    run("exp2", 8, 27, 256, sk=3)
-    run("exp2", 8, 48, 256, sk=4)
-    run("exp2", 11, 53, 256, sk=5)
+    run("exp2", 8, 27, 256, sk=3, fa=False)
+    run("exp2", 8, 48, 256, sk=4, fa=False)
+    run("exp2", 11, 53, 256, sk=4, fa=False)
 
 
 @pytest.mark.parametrize("model", [pytest.param(m, id=n) for n, m in CATALOG.items() if isinstance(m, Exp2)])
@@ -66,26 +68,21 @@ def test_timing() -> None:
     a cycle.
     """
     fmt = ZkfFormat(6, 18)
-    assert [Exp2(fmt, wmultiplier=24, stage_core_kernel=k).timing.latency for k in range(3)] == [1, 3, 5]
-    assert [Exp2(fmt, wmultiplier=18, stage_core_kernel=k).timing.latency for k in (2, 3)] == [5, 5]
-    assert [build("exp2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in (3, 4)] == [6, 6]
-    assert [build("exp2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in CoreStages] == [7, 7]
+    assert [Exp2(fmt, wmultiplier=24, stage_core_kernel=k, fast=False).timing.latency for k in range(3)] == [1, 3, 5]
+    assert [Exp2(fmt, wmultiplier=18, stage_core_kernel=k, fast=False).timing.latency for k in range(4)] == [3, 3, 5, 5]
+    assert [Exp2(fmt, wmultiplier=18, stage_core_kernel=k).timing.latency for k in range(3)] == [1, 2, 3]  # degree 1
+    assert [build("exp2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in range(5)] == [4, 4, 5, 6, 6]
+    assert [build("exp2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in CoreStages] == [5, 5]
     ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~CoreStages(0), "stage_output": 3}
-    assert build("exp2", ZkfFormat(8, 36), **ends).timing.latency == 13
+    assert build("exp2", ZkfFormat(8, 36), **ends).timing.latency == 11
 
 
 def test_refusals() -> None:
     fmt = ZkfFormat(6, 18)
-    with pytest.raises(ValueError, match="stage_core_kernel=0: set 2..3 for the exp2 kernel"):
-        Exp2(fmt, wmultiplier=18)  # c1*w takes two multipliers
-    for knobs in (
-        {"stage_core_kernel": 1},
-        {"stage_core_kernel": 4},
-    ):
-        with pytest.raises(ValueError):
-            build("exp2", fmt, **knobs)
-    with pytest.raises(ValueError, match="set 3..4"):
-        build("exp2", ZkfFormat(8, 36), stage_core_kernel=2)  # c1*w is a grid of 3x2
+    with pytest.raises(ValueError, match="stage_core_kernel=3: set 0..2 for the exp2 kernel"):
+        Exp2(fmt, wmultiplier=18, stage_core_kernel=3)
+    with pytest.raises(ValueError, match="set 0..4"):
+        build("exp2", ZkfFormat(8, 36), stage_core_kernel=5)
     with pytest.raises(UnsupportedFormat, match="^WEXP=2 is below 3$"):
         Exp2(ZkfFormat(2, 16), wmultiplier=18)
 
@@ -101,8 +98,8 @@ EACH: tuple[dict[str, Any], ...] = (
     {"sk": 3, "sc": CoreStages.SUM},
 )
 DEEP: list[Row] = []
-DEEP += [(3, 16, "every", shard, 2, stages) for shard in range(2) for stages in EACH[1:]]  # bare, it is `test_every`
-DEEP += [(w, m, 512 if m > 16 else 128, 0, 1, stages) for w, m in ((8, 27), (8, 32), (14, 16)) for stages in EACH]
+DEEP += [(3, 16, "every", shard, 2, {"fa": False} | stages) for shard in range(2) for stages in EACH[1:]]
+DEEP += [(w, m, 512 if m > 16 else 128, 0, 1, {"fa": False} | s) for w, m in ((8, 27), (8, 32), (14, 16)) for s in EACH]
 DEEP += [(8, 36, 512, 0, 1, {"sk": 4})]  # 3 is the catalog's
 DEEP += [
     (w, m, "strata", 0, 1, {})

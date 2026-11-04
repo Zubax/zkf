@@ -22,9 +22,9 @@ class Exp2(Operator):
     of its neighbors are faithful.
 
     `x` is split into an integer `i` and `f` in [0, 1), to within an LSB. A piecewise-polynomial kernel gives `2**f` in
-    [1, 2): the top bits of `f` select a segment's coefficients from a table, and a polynomial of degree 2 to 5, by
-    WMAN, is evaluated in the rest. The kernel adds half an ULP, so that its truncation is the rounded significand; `i`
-    is the exponent, or `i + 1` where the significand rounds up to 2.
+    [1, 2): the top bits of `f` select a segment's coefficients from a table, and a polynomial of degree 1 to 5, by
+    WMAN, the multipliers and `fast`, is evaluated in the rest. The kernel adds half an ULP, so that its truncation is
+    the rounded significand; `i` is the exponent, or `i + 1` where the significand rounds up to 2.
     """
 
     class CoreStages(enum.Flag):
@@ -39,14 +39,19 @@ class Exp2(Operator):
     stage_input: int = 0
     stage_core_kernel: int = 0
     """
-    Of every product of the kernel, as `Mul`'s `stage_core_mul`, each capped at its own positions, those of one
-    multiplier at its output and operands.
+    Of every product of the kernel, as `Mul`'s `stage_core_mul`, each raised to the least that it takes and capped at
+    its own positions, those of one multiplier at its output and operands.
     """
     stage_core: CoreStages = CoreStages(0)
     """See `Exp2.CoreStages`."""
     stage_output: int = 0
     wmultiplier: int
     """As `Mul`'s; the table is generated for it."""
+    fast: bool = True
+    """
+    The table of the shortest kernel of 2048 segments or fewer, the fewest bits among those as short; off takes the
+    compact one, of the degree that WMAN alone sets.
+    """
     rom_attrs: Attrs | None = field(default=None, compare=False)
     """
     Synthesis attributes of the table's memory, such as `{"rom_style": "block"}`; those of several tools can be mixed.
@@ -64,11 +69,13 @@ class Exp2(Operator):
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
         if self.fmt.wexp < 3:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is below 3")
-        kernel_check(self.stage_core_kernel, table("exp2", self.fmt.wman, self.wmultiplier), self.wmultiplier)
+        spec = table("exp2", self.fmt.wman, self.wmultiplier, self.fast)
+        kernel_check(self.stage_core_kernel, spec, self.wmultiplier)
 
     @property
     def timing(self) -> Timing:
-        kernel = kernel_depth(table("exp2", self.fmt.wman, self.wmultiplier), self.wmultiplier, self.stage_core_kernel)
+        spec = table("exp2", self.fmt.wman, self.wmultiplier, self.fast)
+        kernel = kernel_depth(spec, self.wmultiplier, self.stage_core_kernel)
         return Timing(self.stage_input + 1 + kernel + len(self.stage_core) + self.stage_output, 1)
 
     @property
@@ -101,7 +108,7 @@ class Exp2(Operator):
         if e >= fmt.wexp - 1:
             return fmt.inf() if not x.negative else Zkf(fmt, 0)
 
-        spec = table("exp2", fmt.wman, self.wmultiplier)
+        spec = table("exp2", fmt.wman, self.wmultiplier, self.fast)
         cf = ff = spec.cf  # fraction bits of the kernel and of the reduced argument
         sig = x.significand()
         shift = e - fmt.wfrac + ff
@@ -125,7 +132,7 @@ class _Exp2(wiring.Component):
     y: FloatView
 
     def __init__(self, model: Exp2) -> None:
-        self._model, self._spec = model, table("exp2", model.fmt.wman, model.wmultiplier)
+        self._model, self._spec = model, table("exp2", model.fmt.wman, model.wmultiplier, model.fast)
         super().__init__(model.signature)
 
     def elaborate(self, platform: object) -> Module:

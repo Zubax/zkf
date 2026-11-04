@@ -13,24 +13,26 @@ from zkf._trans import Kernel, Spec, _arith_range, kernel_counts, spec as table
 
 
 @pytest.mark.parametrize("key", TABLES + OTHERS, ids=str)
-def test_certificate(key: tuple[str, int, int]) -> None:
+def test_certificate(key: tuple[str, int, int, bool]) -> None:
     spec = table(*key)
     certify(spec)
 
 
 @pytest.mark.deep
-@pytest.mark.parametrize("wman", range(16, 54))
+@pytest.mark.parametrize("fast", [False, True])
+@pytest.mark.parametrize("wman", range(10, 54))
 @pytest.mark.parametrize("function", ["exp2", "log2"])
-def test_every_width(function: str, wman: int) -> None:
+def test_every_width(function: str, wman: int, fast: bool) -> None:
     """
-    The tables at every width from 8 to 64 that generation accepts and at which neither operand of `c1*w` is wider
-    than four multipliers: each distinct one certified, the kernel at each width on every row with its products cut as
-    far as they go, and the operator whole at the narrowest width, at 18 and at 24, with every register of its core.
+    The tables at every width from 8 to 64 that generation accepts (`fast`'s, at the native widths) and at which
+    neither operand of `c1*w` is wider than four multipliers: each distinct one certified, the kernel at each width on
+    every row with its products cut as far as they go, and the operator whole at the narrowest width, at 18 and at 24,
+    with every register of its core.
     """
     found: dict[int, Spec] = {}
-    for width in range(8, 65):
+    for width in range(8, 65) if not fast else (16, 18, 24, 27):
         try:
-            spec = table(function, wman, width)
+            spec = table(function, wman, width, fast)
         except UnsupportedFormat:
             continue
         if max(max(row[1] for row in spec.coeffs).bit_length(), spec.t[0]) <= 4 * width:
@@ -41,7 +43,7 @@ def test_every_width(function: str, wman: int) -> None:
         every_row(spec, Kernel(spec, wmultiplier=width, stages=kernel_counts(spec, width).stop - 1))
     every = ~(Exp2 if function == "exp2" else Log2).CoreStages(0)
     for width in sorted({min(found), 18, 24}):
-        simulate(build(function, ZkfFormat(8, wman), width, stage_core=every), 1000)
+        simulate(build(function, ZkfFormat(8, wman), width, stage_core=every, fast=fast), 1000)
 
 
 def test_what_has_no_table_is_refused() -> None:
@@ -50,7 +52,7 @@ def test_what_has_no_table_is_refused() -> None:
     26 a square, and at 36 the cubic coefficient, is wider than two of them at every one.
     """
     for operator, wman, wmultiplier in (
-        (Exp2, 15, 18),
+        (Exp2, 9, 18),
         (Log2, 54, 18),
         (Exp2, 20, 8),
         (Log2, 20, 8),
@@ -69,10 +71,11 @@ def test_the_arithmetic_bound_holds_the_kernel() -> None:
     rng = random.Random(1)
     kinds: dict[str, int] = {}
     while sum(kinds.values()) < 1500:
-        function, d, rw = rng.choice(["exp2", "log2"]), rng.choice([2, 2, 3, 3, 3, 4, 5]), rng.randrange(3, 10)
-        t2 = rng.randrange(1, rw + 1)
+        function, d, rw = rng.choice(["exp2", "log2"]), rng.choice([1, 2, 2, 3, 3, 3, 4, 5]), rng.randrange(3, 10)
+        t2 = rng.randrange(1, rw + 1) if d > 1 else 0
         q = [rng.randrange(1, 2 * t2 + 1) for _ in range(d // 2)]
-        q[0] = max(q)
+        if q:
+            q[0] = max(q)
         t = tuple(rng.randrange(1, rw + 1) for _ in range((d + 1) // 2))
         widths = sorted((rng.randrange(2, 22) for _ in range(d + 1)), reverse=True)
         row = [rng.getrandbits(width) | (1 << (width - 1)) for width in widths]
@@ -85,6 +88,8 @@ def test_the_arithmetic_bound_holds_the_kernel() -> None:
         if d == 3 and t2 >= 2 and rng.random() < 0.7:
             th, sg = rng.randrange((t2 + 1) // 2, t2), rng.randrange(1, 4)
             spec, kind = replace(spec, th=th, sg=sg, q=(max(1, min(q[0], 2 * th - sg)),)), kind + ", two-tile square"
+        if d >= 4 and rng.random() < 0.5:
+            spec, kind = replace(spec, tn=rng.randrange((max(q[1:]) + 1) // 2, rw + 1)), kind + ", narrow square"
         try:
             lo, hi = _arith_range(spec, row)
         except ValueError:
@@ -94,4 +99,4 @@ def test_the_arithmetic_bound_holds_the_kernel() -> None:
             wn = Fraction(w, 1 << rw)
             exact = sum((-c if function == "log2" and j % 2 else c) * wn**j for j, c in enumerate(row))
             assert lo <= exact - spec._polynomial(row, w) <= hi, (spec, row, w)
-    assert len(kinds) == 6 and min(kinds.values()) > 40, kinds
+    assert len(kinds) == 9 and min(kinds.values()) > 40, kinds

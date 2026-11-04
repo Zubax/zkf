@@ -63,6 +63,8 @@ class Log2(Operator):
     stage_output: int = 0
     wmultiplier: int
     """As `Exp2`'s."""
+    fast: bool = True
+    """As `Exp2`'s."""
     rom_attrs: Attrs | None = field(default=None, compare=False)
     """As that of `Exp2`."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
@@ -78,13 +80,14 @@ class Log2(Operator):
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
         if self.fmt.wexp > self.fmt.wman + 1:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is above WMAN + 1")
-        spec = table("log2", self.fmt.wman, self.wmultiplier)
+        spec = table("log2", self.fmt.wman, self.wmultiplier, self.fast)
         kernel_check(self.stage_core_kernel, spec, self.wmultiplier)
         check("stage_core_mul", self.stage_core_mul, *_last(spec, self.fmt), signed=False, wmultiplier=self.wmultiplier)
 
     @property
     def timing(self) -> Timing:
-        kernel = kernel_depth(table("log2", self.fmt.wman, self.wmultiplier), self.wmultiplier, self.stage_core_kernel)
+        spec = table("log2", self.fmt.wman, self.wmultiplier, self.fast)
+        kernel = kernel_depth(spec, self.wmultiplier, self.stage_core_kernel)
         inside = 1 + kernel + self.stage_core_mul + len(self.stage_core)
         return Timing(self.stage_input + inside + self.stage_output, 1)
 
@@ -119,7 +122,7 @@ class Log2(Operator):
         if x.negative:
             return Log2Result(fmt.inf(1), True, False)
 
-        spec = table("log2", fmt.wman, self.wmultiplier)
+        spec = table("log2", fmt.wman, self.wmultiplier, self.fast)
         # x = m' * 2**e with the significand re-centered around 1 (see `Log2`), f = m' - 1, log2(m') = f * C(f).
         cf, wfrac, wexp = spec.cf, fmt.wfrac, fmt.wexp
         rc = int(x.frac >> spec.rw >= spec.thr)
@@ -166,7 +169,7 @@ class _Log2(wiring.Component):
     pole: Signal
 
     def __init__(self, model: Log2) -> None:
-        self._model, self._spec = model, table("log2", model.fmt.wman, model.wmultiplier)
+        self._model, self._spec = model, table("log2", model.fmt.wman, model.wmultiplier, model.fast)
         super().__init__(model.signature)
 
     def elaborate(self, platform: object) -> Module:
@@ -466,14 +469,16 @@ class _Pack(wiring.Component):
         m.d.comb += payload.eq(early)
         q = delay(m, "side", side, payload, self._stage)
 
-        # |e| with a half ULP at each rounding position.
-        placed = Cat(Const(0, ws - wexp), q.eal)
+        # |e| with a half ULP at each rounding position, which lies below it.
+        assert wgb + 1 < ws - wexp
         aligned = [Signal(ws, name="al_lo"), Signal(ws, name="al_hi")]
-        m.d.comb += [a.eq(placed + Cat(Const(0, wgb + k), ~q.exact[k])) for k, a in enumerate(aligned)]
+        for k, a in enumerate(aligned):
+            m.d.comb += a.eq(Cat(Const(0, wgb + k), ~q.exact[k], Const(0, ws - wexp - wgb - k - 1), q.eal))
         sub = Signal(name="sub_q")
         m.d.comb += sub.eq(q.sub)
         low, high = Signal(ws, name="s_l"), Signal(ws, name="s_h")
-        m.d.comb += [s.eq(Mux(sub, (a - self.prod)[:ws], (a + self.prod)[:ws])) for s, a in zip((low, high), aligned)]
+        # |e| - prod as |e| + ~prod + 1, the 1 in the bit 0 of |e|, which is zero.
+        m.d.comb += [s.eq(Cat(sub, a[1:]) + (self.prod ^ sub.replicate(ws))) for s, a in zip((low, high), aligned)]
         chosen = data.StructLayout(
             {"sb": self._sideband, "lo": record, "hi": record, "cy": record, "f_lo": wfrac, "f_hi": wfrac}
             | {"is_hi": 1, "carry": 1}

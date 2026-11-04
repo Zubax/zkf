@@ -10,7 +10,7 @@ CoreStages = Log2.CoreStages
 
 # wexp, wman, kind: every table of a degree.
 FORMATS: list[tuple[int, int, str | int]] = [
-    (2, 16, "every"),
+    (2, 10, "every"),
     (6, 16, 512),
     (8, 24, 1024),
     (8, 32, 768),
@@ -23,10 +23,15 @@ def test_formats(row: tuple[int, int, str | int]) -> None:
     run("log2", *row)
 
 
+def test_every_compact() -> None:
+    """The compact table of degree 2, which `fast` passes over at WMAN 16."""
+    run("log2", 2, 16, "every", fa=False)
+
+
 @pytest.mark.parametrize("stages", [*staging(CoreStages), {"sm": 3}], ids=str)
 def test_stages(stages: dict[str, Any]) -> None:
     """Stages change no result: the format that `test_formats` walks whole is sampled here."""
-    run("log2", 2, 16, 4096, **stages)
+    run("log2", 2, 16, 4096, fa=False, **stages)
 
 
 # The last product's count apart from the kernel's, and the side path laid out by the kernel's stages: none, two, three.
@@ -36,10 +41,10 @@ def test_stages(stages: dict[str, Any]) -> None:
     ids=str,
 )
 def test_last_product(stages: dict[str, Any]) -> None:
-    run("log2", 6, 16, 256, **stages)
+    run("log2", 6, 16, 256, fa=False, **stages)
 
 
-# Every count of the kernel at degree 3, whose square takes two multipliers, and the rest beside it.
+# The kernel at degree 3, whose square takes two multipliers, and the rest beside it.
 @pytest.mark.parametrize(
     "stages", [{"sk": 3}, {"sk": 4, "sm": 4, "sc": CoreStages.ALIGN}, {"sk": 4, "sc": ~CoreStages(0)}], ids=str
 )
@@ -53,9 +58,9 @@ def test_generated_for_the_format(row: tuple[int, int, dict[str, Any]]) -> None:
 
 
 def test_other_degrees() -> None:
-    run("log2", 8, 27, 256, sk=3, sm=4)
-    run("log2", 8, 48, 256, sk=4, sm=4)
-    run("log2", 11, 53, 256, sk=4)
+    run("log2", 8, 27, 256, sk=3, sm=4, fa=False)
+    run("log2", 8, 48, 256, sk=4, sm=4, fa=False)
+    run("log2", 11, 53, 256, sk=4, fa=False)
 
 
 @pytest.mark.parametrize("model", [pytest.param(m, id=n) for n, m in CATALOG.items() if isinstance(m, Log2)])
@@ -69,23 +74,24 @@ def test_strata() -> None:
 
 def test_timing() -> None:
     fmt = ZkfFormat(6, 18)
-    assert build("log2", fmt, 24, stage_core_kernel=0).timing.latency == 3  # a kernel of single multipliers
-    assert build("log2", fmt, stage_core_kernel=2, stage_core_mul=2).timing.latency == 7
-    assert build("log2", fmt, stage_core_kernel=3, stage_core_mul=3).timing.latency == 8
-    assert [build("log2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in (3, 4)] == [9, 9]
-    assert [build("log2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in CoreStages] == [10, 10]
+    assert build("log2", fmt, 24, stage_core_kernel=0, fast=False).timing.latency == 3  # of single multipliers
+    assert build("log2", fmt, stage_core_mul=2, fast=False).timing.latency == 5  # c1*w takes two multipliers
+    assert build("log2", fmt, stage_core_kernel=2, stage_core_mul=2, fast=False).timing.latency == 7
+    assert build("log2", fmt, stage_core_kernel=3, stage_core_mul=3, fast=False).timing.latency == 8
+    assert build("log2", fmt, stage_core_kernel=2, stage_core_mul=2).timing.latency == 5  # degree 1
+    assert [build("log2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in range(5)] == [7, 7, 8, 9, 9]
+    assert [build("log2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in CoreStages] == [8, 8]
     ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~CoreStages(0), "stage_output": 3}
-    assert build("log2", ZkfFormat(8, 36), **ends).timing.latency == 16
+    assert build("log2", ZkfFormat(8, 36), **ends).timing.latency == 14
 
 
 def test_refusals() -> None:
     fmt = ZkfFormat(6, 18)
-    with pytest.raises(ValueError, match="stage_core_kernel=0: set 2..3 for the log2 kernel"):
-        Log2(fmt, wmultiplier=18, stage_core_mul=2)
+    with pytest.raises(ValueError, match="stage_core_kernel=3: set 0..2 for the log2 kernel"):
+        Log2(fmt, wmultiplier=18, stage_core_kernel=3, stage_core_mul=2)
     with pytest.raises(ValueError, match="stage_core_mul=0: set 2..3 on 18-bit multipliers"):
-        Log2(fmt, wmultiplier=18, stage_core_kernel=2)
+        Log2(fmt, wmultiplier=18)
     for knobs in (
-        {"stage_core_kernel": 4},
         {"stage_core_mul": 1},
         {"stage_core_mul": 4},
     ):
@@ -107,9 +113,9 @@ EACH: tuple[dict[str, Any], ...] = (
 )
 type Row = tuple[int, int, str | int, int, int, dict[str, Any]]
 DEEP: list[Row] = []
-DEEP += [(2, 16, "every", 0, 1, stages) for stages in EACH[1:]]  # bare, it is a row of `test_formats`
-DEEP += [(3, 16, "every", shard, 2, stages) for shard in (0, 1) for stages in EACH]
-DEEP += [(w, m, 512 if m > 16 else 128, 0, 1, stages) for w, m in ((8, 27), (8, 32), (14, 16)) for stages in EACH]
+DEEP += [(2, 16, "every", 0, 1, {"fa": False} | stages) for stages in EACH[1:]]  # bare, it is `test_every_compact`
+DEEP += [(3, 16, "every", shard, 2, {"fa": False} | stages) for shard in (0, 1) for stages in EACH]
+DEEP += [(w, m, 512 if m > 16 else 128, 0, 1, {"fa": False} | s) for w, m in ((8, 27), (8, 32), (14, 16)) for s in EACH]
 DEEP += [
     (w, m, "strata", 0, 1, {})
     for w, m in ((8, 16), (8, 18), (8, 24), (8, 27), (8, 32), (8, 36), (8, 48), (8, 53), (11, 53))

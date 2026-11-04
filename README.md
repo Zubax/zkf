@@ -223,8 +223,8 @@ of certain basic operators.
 The exp2 and log2 transcendentals deliver faithful rounding: every finite result is one of the two representable
 values bracketing the exact result.
 
-A result differs from round-to-nearest only near a midpoint between adjacent representable values; the measured rate
-is near `10^-4`. `zkf.Cordic` carries the same faithful-rounding contract.
+A result differs from round-to-nearest only near a midpoint between adjacent representable values.
+`zkf.Cordic` carries the same faithful-rounding contract.
 
 <img src="docs/zkf_transcendental_accuracy.svg">
 
@@ -296,13 +296,6 @@ Roughly ordered by severity.
   Formats with such narrow significands are rarely used in practice and supporting them is not worth the effort.
 
 - Add Altera Quartus Lite to the vendor synthesis tool set to ensure we don't overfit for AMD & Lattice.
-
-- Transcendental operator refinements (`exp2`, `log2`):
-  - The kernels of WMAN 44 to 53 can start their chain a cycle earlier (measured bit-identical at the catalog's widths);
-    no spec that wide is timed yet.
-  - Table generation uses the multiplier width up to degree 3 only (WMAN up to 36); we assume that no operand is wider
-    than four multipliers. Shortening an operand to a multiple of the width where it passes one by up to three bits
-    saves 4 to 8% of LUTs and 3 to 5 DSP48E1 on Spartan-7 at WMAN 44 and 53, and changes some tables of degree 3.
 
 - Pre-tuned stage sets per operator and format, measured per flow and chip and ordered by latency, so that a user takes
   the first that closes; or an API that takes the clock and the speed grade and picks one (preferred).

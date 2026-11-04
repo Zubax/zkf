@@ -151,8 +151,8 @@ def test_multiplier_width_is_required(cls: type[Operator]) -> None:
         Mul: {"stage_core_mul": 3},
         Fma: {"stage_core_mul": 3},
         Cordic: {"stage_core_mul": 3},
-        Exp2: {"stage_core_kernel": 3},
-        Log2: {"stage_core_kernel": 3, "stage_core_mul": 3},
+        Exp2: {},
+        Log2: {"stage_core_mul": 3},
     }[cls]
 
     def build(*args: Any, **knobs: Any) -> Operator:
@@ -189,10 +189,10 @@ def test_refusals() -> None:
         lambda: Mul(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=2),
         lambda: Fma(F36, wmultiplier=18, stage_core_mul=1),
         lambda: Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT, fast=False),
-        lambda: Exp2(F18, wmultiplier=18),
-        lambda: Exp2(F36, wmultiplier=18, stage_core_kernel=2),
+        lambda: Exp2(F18, wmultiplier=18, stage_core_kernel=4),
+        lambda: Exp2(F36, wmultiplier=18, stage_core_kernel=5),
         lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, mode=0, stage_core=Cordic.CoreStages.TAKEN),
-        lambda: Log2(F18, wmultiplier=18, stage_core_kernel=2),
+        lambda: Log2(F18, wmultiplier=18),
         lambda: Pipe(w=0),
     )
     for build in knobs:
@@ -200,7 +200,7 @@ def test_refusals() -> None:
             build()
         assert not isinstance(refusal.value, UnsupportedFormat)
     formats: tuple[Callable[[], Operator], ...] = (
-        lambda: Exp2(ZkfFormat(6, 15), wmultiplier=18),
+        lambda: Exp2(ZkfFormat(6, 9), wmultiplier=18),
         lambda: Log2(ZkfFormat(20, 18), wmultiplier=18),
         lambda: Cordic(ZkfFormat(4, 18), wmultiplier=18, stage_core_mul=3, mode=1),
         lambda: MulIlog2(F18, wk=0),

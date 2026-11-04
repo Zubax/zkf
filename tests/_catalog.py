@@ -136,31 +136,15 @@ CATALOG: dict[str, Block] = {
         # Unstaged, the discard mask into the rounding decision makes 74.1 and 59.5 MHz on Diamond.
         Rint(F18, stage_core=Rint.CoreStages.MASK),
         Rint(F36, wint=44, stage_core=Rint.CoreStages.MASK),
-        # Without SUM Diamond makes 98.2 MHz, at stage_core_kernel=2 Vivado 150.04, under a 0.5% margin.
-        Exp2(F18, stage_core_kernel=3, stage_core=Exp2.CoreStages.SUM, wmultiplier=18),
-        # Without ALIGN Diamond makes 87.3 to 94.4 MHz.
-        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
-        Log2(
-            F18, stage_core_kernel=2, stage_core_mul=2, stage_core=Log2.CoreStages.ALIGN, stage_output=1, wmultiplier=18
-        ),
-        # Without SUM Diamond makes 78.2 MHz, at stage_core_kernel=2 Vivado 149.1.
-        Exp2(F24, stage_core_kernel=3, stage_core=Exp2.CoreStages.SUM, wmultiplier=18),
-        # Without stage_output=1 one of nextpnr's seeds makes 99.8 MHz, in the rounding into the result; without ALIGN
-        # Diamond makes 97.0 MHz, at stage_core_kernel=2 Vivado 149.1.
-        Log2(
-            F24, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, stage_output=1, wmultiplier=18
-        ),
-        # Without SUM Diamond makes 81.0 MHz.
-        Exp2(F36, stage_core_kernel=3, stage_core=Exp2.CoreStages.SUM, wmultiplier=18),
-        # Without SELECT one of nextpnr's seeds makes 99.5 MHz, from the packer's side inputs into the result, and
-        # stage_output=1 in its place 98.8, Diamond 97.7; without ALIGN Diamond makes 76.5 to 84.8.
-        Log2(
-            F36,
-            stage_core_kernel=3,
-            stage_core_mul=3,
-            stage_core=Log2.CoreStages.ALIGN | Log2.CoreStages.SELECT,
-            wmultiplier=18,
-        ),
+        Exp2(F18, stage_core_kernel=2, wmultiplier=18),
+        Log2(F18, stage_core_kernel=2, stage_core_mul=2, wmultiplier=18),
+        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_output=1, wmultiplier=18),
+        # At stage_core_kernel=2, which leaves the tiles of the products' grids unregistered, Vivado misses by 0.042 ns.
+        Exp2(F24, stage_core_kernel=3, wmultiplier=18),
+        Log2(F24, stage_core_kernel=3, stage_core_mul=3, wmultiplier=18),
+        Exp2(F36, stage_core_kernel=3, wmultiplier=18),
+        # Without ALIGN Vivado misses by 0.634 ns, in the shift into the last product.
+        Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
         # Without PACK nextpnr's seeds make 86.5 to 90.1 MHz, from the normalizer's count into the result; without
         # FOLDED nextpnr's seeds make 99.4 to 103.2 and Vivado misses by 0.031 ns, from the reduced coordinate into the
         # engine.
