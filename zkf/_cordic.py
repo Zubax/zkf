@@ -15,7 +15,7 @@ from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
 from ._fixed_to_float import FixedToFloat, fixed_to_float_reference
-from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, pipe, sext, zext
+from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, add_carry, bundle, pipe, sext, zext
 from ._pmul import Pmul, check, slices
 from ._txn import Txn
 from ._divsqrt import DivideStep8, DivsqrtStep
@@ -1574,7 +1574,7 @@ class _Seed(wiring.Component):
 
 def _step(a: Value, b: Value, subtract: Value) -> Value:
     """`a - b` or `a + b` on one carry chain, wrapped to the width of `a`; `b` is unsigned and as wide."""
-    return (a.as_unsigned() + (b ^ subtract.replicate(len(b))) + subtract)[: len(a)].as_signed()
+    return add_carry(a.as_unsigned(), b ^ subtract.replicate(len(b)), subtract)[: len(a)].as_signed()
 
 
 class _Engine(wiring.Component):
@@ -1680,7 +1680,7 @@ class _Engine(wiring.Component):
         sub_z = Signal(name="sub_z")
         m.d.comb += sub_z.eq(~neg)
         x_now = Signal(signed(wx), name="x_now")
-        m.d.comb += x_now.eq(xr + d + d_carry)
+        m.d.comb += x_now.eq(add_carry(xr.as_unsigned(), d, d_carry))
         index = Signal(wi, name="index")
         m.d.comb += index.eq(Mux(run, i_next, seed))
         kept = Signal(wx, name="kept", reset_less=True)
@@ -1696,7 +1696,7 @@ class _Engine(wiring.Component):
         u_by = Signal(signed(wu), name="u_by")
         m.d.comb += u_by.eq(Mux(run, cleared.as_signed() ^ neg.replicate(wx).as_signed(), y_add))
         u_next = Signal(signed(wu), name="u_next")
-        m.d.comb += u_next.eq((u_in + u_by + (run & neg)) << 1)
+        m.d.comb += u_next.eq(add_carry(u_in.as_unsigned(), u_by.as_unsigned(), run & neg) << 1)
         with m.If(run | self.start):
             m.d.sync += u.eq(u_next)
         with m.If(run):

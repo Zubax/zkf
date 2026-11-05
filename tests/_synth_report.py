@@ -8,6 +8,7 @@ from html import escape
 from pathlib import Path
 
 import _diamond
+import _quartus
 import _vivado
 import _yosys
 from _catalog import CATALOG
@@ -38,6 +39,15 @@ numbers, but the DUT latency column excludes the harness: it is the latency that
 helper and parent resource counts are not additive.</p>"""
 
 YOSYS_LINKS = (("nextpnr", "nextpnr_log"), ("Yosys", "yosys_log"), ("JSON", "nextpnr_json"))
+VIVADO = """<p>Flow: Vivado synthesis, placement and routing out of context for {part}, or another speed grade where the
+row says so, at {freq:g} MHz, once.</p>"""
+VIVADO_LINKS = (("Vivado", "vivado_log"), ("timing", "timing_report"))
+
+QUARTUS = """<p>Flow: Quartus Prime Lite synthesis, fitting and timing analysis with its default settings, once, out of
+context (every pin of the harness but the clock is virtual) for {part}, or another speed grade where the row says so,
+at {freq:g} MHz. The slacks are the worst over every corner that the timing analysis models.</p>"""
+QUARTUS_LINKS = (("synthesis", "map_report"), ("fit", "fit_report"), ("timing", "timing_report"))
+
 YOSYS_DETAILS = (
     ("Worst Slack", "slack"),
     ("Utilization", "utilization"),
@@ -127,10 +137,8 @@ reported f max is the post-route, register-to-register limit.</p>""",
         YOSYS_DETAILS,
     ),
     "vivado_artix7": Table(
-        "Kulibin Float Vivado Synthesis Report",
-        f"""<p>Flow: Vivado synthesis, placement and routing out of context for
-{_vivado.PART.format(grade=Design.artix7_grade)}, or another speed grade where the row says so, at
-{_vivado.FREQ_MHZ:g} MHz, once.</p>""",
+        "Kulibin Float Vivado Synthesis Report (Artix-7)",
+        VIVADO.format(part=_vivado.ARTIX7.template.format(grade=Design.artix7_grade), freq=_vivado.ARTIX7.freq_mhz),
         (
             ("Part", "part", None),
             ("Slack", "slack", None),
@@ -139,7 +147,55 @@ reported f max is the post-route, register-to-register limit.</p>""",
             ("DSP48E1", "dsp", None),
             ("Block RAM", "bram", None),
         ),
-        (("Vivado", "vivado_log"), ("timing", "timing_report")),
+        VIVADO_LINKS,
+        (),
+    ),
+    "vivado_zynquplus": Table(
+        "Kulibin Float Vivado Synthesis Report (Zynq UltraScale+)",
+        VIVADO.format(
+            part=_vivado.ZYNQUPLUS.template.format(grade=Design.zynquplus_grade), freq=_vivado.ZYNQUPLUS.freq_mhz
+        ),
+        (
+            ("Part", "part", None),
+            ("Slack", "slack", None),
+            ("LUT", "lut", None),
+            ("FF", "ff", None),
+            ("DSP48E2", "dsp", None),
+            ("Block RAM", "bram", None),
+        ),
+        VIVADO_LINKS,
+        (),
+    ),
+    "quartus_cyclone4": Table(
+        "Kulibin Float Quartus Synthesis Report (Cyclone IV E)",
+        QUARTUS.format(part=_quartus.CYCLONE4.template.format(grade=Design.cyclone4_grade), freq=FREQ_MHZ),
+        (
+            ("Part", "part", None),
+            ("Slack", "slack", None),
+            ("Hold slack", "hold_slack", None),
+            ("LE", "le", None),
+            ("Registers", "registers", None),
+            ("9-bit multipliers", "multipliers", None),
+            ("M9K", "m9k", None),
+            ("Memory bits", "memory_bits", None),
+        ),
+        QUARTUS_LINKS,
+        (),
+    ),
+    "quartus_cyclone5": Table(
+        "Kulibin Float Quartus Synthesis Report (Cyclone V)",
+        QUARTUS.format(part=_quartus.CYCLONE5.template.format(grade=Design.cyclone5_grade), freq=FREQ_MHZ),
+        (
+            ("Part", "part", None),
+            ("Slack", "slack", None),
+            ("Hold slack", "hold_slack", None),
+            ("ALM", "alm", None),
+            ("Registers", "registers", None),
+            ("DSP blocks", "dsp", None),
+            ("M10K", "m10k", None),
+            ("Memory bits", "memory_bits", None),
+        ),
+        QUARTUS_LINKS,
         (),
     ),
 }

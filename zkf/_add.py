@@ -6,7 +6,7 @@ from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
-from ._block import FloatLayout, FloatView, Operator, Timing, bundle, delay, ge, pipe, sext
+from ._block import FloatLayout, FloatView, Operator, Timing, add_carry, bundle, delay, ge, pipe, sext
 from ._pack import Pack
 from ._shift import Normshift, RshiftSticky
 from ._value import Zkf, ZkfFormat
@@ -170,7 +170,7 @@ class AddCore(wiring.Component):
         # survives.
         differ = Signal(name="differ")
         m.d.comb += differ.eq(~s1.same_sign)
-        raw = Cat(Const(0, 3), s1.larger, Const(0, 1)) + Cat(s1_small, differ) + differ
+        raw = add_carry(Cat(Const(0, 3), s1.larger, Const(0, 1)), Cat(s1_small, differ), differ)
 
         # The raw result. A sum leads at bit `w - 1` or carries into bit `w`; a difference never carries, and is
         # normalized, with the sum on the normalizer's sideband.

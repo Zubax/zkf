@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import _diamond
+import _quartus
 import _vivado
 import _yosys
 from _catalog import CATALOG, ECP5_LARGE, GRADES
@@ -20,7 +21,10 @@ FLOWS: dict[str, tuple[tuple[str, ...], Callable[[Design, Path], Row], Callable[
     "yosys_ecp5": (_yosys.ECP5.tools, partial(_yosys.synthesize, _yosys.ECP5), _yosys.ECP5.part),
     "diamond_ecp5": (_diamond.TOOLS, _diamond.synthesize, _diamond.part),
     "yosys_spartan": (_yosys.SPARTAN.tools, partial(_yosys.synthesize, _yosys.SPARTAN), _yosys.SPARTAN.part),
-    "vivado_artix7": (_vivado.TOOLS, _vivado.synthesize, _vivado.part),
+    "vivado_artix7": (_vivado.TOOLS, partial(_vivado.synthesize, _vivado.ARTIX7), _vivado.ARTIX7.part),
+    "vivado_zynquplus": (_vivado.TOOLS, partial(_vivado.synthesize, _vivado.ZYNQUPLUS), _vivado.ZYNQUPLUS.part),
+    "quartus_cyclone4": (_quartus.TOOLS, partial(_quartus.synthesize, _quartus.CYCLONE4), _quartus.CYCLONE4.part),
+    "quartus_cyclone5": (_quartus.TOOLS, partial(_quartus.synthesize, _quartus.CYCLONE5), _quartus.CYCLONE5.part),
 }
 """The tools of a flow, all found on the path, what runs it on a spec in a directory, and the device it places it on."""
 
@@ -34,7 +38,8 @@ def test_synth(
     """
     The flow, run once, closes timing on the spec: on Yosys every clock meets its target in the report of nextpnr, or
     else in its log, and with neither the spec misses; on Diamond and on Vivado there is no setup or hold error and
-    every net is routed. The row goes to the reports, that of a tool that failed with what failed.
+    every net is routed; on Quartus no setup or hold slack is negative in any corner. The row goes to the reports, that
+    of a tool that failed with what failed.
     """
     named = request.config.getoption("synth_flows")
     if named and flow not in named:

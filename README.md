@@ -307,8 +307,6 @@ Common non-IEEE formats:
 
 Roughly ordered by severity.
 
-- Add Altera Quartus Lite to the vendor synthesis tool set to ensure we don't overfit for AMD & Lattice.
-
 - Pre-tuned stage sets per operator and format, measured per flow and chip and ordered by latency, so that a user takes
   the first that closes; or an API that takes the clock and the speed grade and picks one (preferred).
   Each set is judged by its worst placement; a timing model would not do, as the binding paths are often mostly routing.

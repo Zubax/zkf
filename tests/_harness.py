@@ -6,7 +6,7 @@ to a flip-flop and none is lost to an unconstrained pin. The registers are count
 import dataclasses
 import shlex
 import subprocess
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -19,7 +19,7 @@ type Row = dict[str, str]
 """What a flow found of a spec, as its report shows it."""
 
 FREQ_MHZ = 100.0
-"""The clock that every flow is constrained to."""
+"""The clock every flow but Vivado's is constrained to; its targets set their own."""
 
 HANDSHAKE = ("in_valid", "in_ready", "out_valid", "out_ready")
 KEEP = '(* keep = "true", syn_preserve = "true" *)'
@@ -135,6 +135,12 @@ class Design:
     """The speed grade, by the ECP5 flows."""
     artix7_grade: int = 1
     """The speed grade, by the Artix-7 flow."""
+    zynquplus_grade: int = 1
+    """The speed grade, by the Zynq UltraScale+ flow."""
+    cyclone4_grade: int = 8
+    """The speed grade, by the Cyclone IV E flow."""
+    cyclone5_grade: int = 8
+    """The speed grade, by the Cyclone V flow."""
 
     @property
     def top(self) -> str:
@@ -173,6 +179,18 @@ class Design:
         text = harness(self.top, model.name, pins, clocked=model.clocked, unused=ties)
         sources.harness.write_text(text)
         return sources
+
+
+@dataclass(frozen=True)
+class Device:
+    """The device of a vendor's flow."""
+
+    template: str
+    """The part, its speed grade left as `{grade}`."""
+    grade: Callable[[Design], int]
+
+    def part(self, design: Design) -> str:
+        return self.template.format(grade=self.grade(design))
 
 
 def run(command: Sequence[str | Path], log: Path, timeout: float | None = None) -> None:

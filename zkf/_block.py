@@ -226,6 +226,11 @@ def ge(left: Value, right: Value) -> Value:
     return ~(left - right)[-1]
 
 
+def add_carry(a: Value, b: Value, carry: Value) -> Value:
+    """`a + b + carry`, unsigned, as wide as `a + b`, the carry entering below both, which Quartus maps faster."""
+    return (Cat(carry, a) + Cat(carry, b))[1:]
+
+
 def bundle(layout: data.StructLayout, **fields: ValueLike) -> data.View:
     """A view of `layout` built from its fields by name, each as wide as its member."""
     assert all(len(Value.cast(fields[name])) == Shape.cast(shape).width for name, shape in layout.members.items())

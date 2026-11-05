@@ -57,17 +57,18 @@ CATALOG: dict[str, Block] = {
         Mul(F18, stage_core_mul=1, wmultiplier=18),
         Mul(F18, stage_core_mul=2, wmultiplier=18),
         Mul(F18, stage_core_mul=1, stage_output=1, wmultiplier=18),
-        # At 2 Vivado sums the DSP tiles' products in fabric in their cycle: 122.1 to 148.3 MHz.
+        # At 2 Vivado on Artix-7 sums the DSP tiles' products in fabric in their cycle: 122.1 to 148.3 MHz.
         Mul(F36, stage_core_mul=3, stage_output=1, wmultiplier=18),
         Mul(F36, stage_core_mul=3, wmultiplier=18),
         Mul(F36, stage_input=1, stage_core_mul=3, wmultiplier=18),
         Mul(ZkfFormat(8, 25), stage_core_mul=3, wmultiplier=18),
-        # Without ALIGN Diamond makes 97.2 MHz, in the alignment; without OPERANDS Yosys makes 74.8.
+        # Without ALIGN Diamond's placements make 98.2 to 105.6 MHz, from the operands through the alignment into the
+        # sum; without OPERANDS nextpnr's seeds make 73.1 to 75.9.
         Add(
             F18,
             stage_core=Add.CoreStages.OPERANDS | Add.CoreStages.ALIGN | Add.CoreStages.SUM | Add.CoreStages.NORMALIZE,
         ),
-        # Without NORMALIZED nextpnr makes 93.5 to 97.6 MHz.
+        # Without NORMALIZED nextpnr's seeds make 94.7 to 97.7 MHz.
         Add(
             F36,
             stage_core=Add.CoreStages.OPERANDS
@@ -76,8 +77,9 @@ CATALOG: dict[str, Block] = {
             | Add.CoreStages.NORMALIZE
             | Add.CoreStages.NORMALIZED,
         ),
-        # Without PACK nextpnr makes 92.1 to 96.0 MHz and Diamond 95.0, from the normalizer's count through the rounding
-        # into the result; without SUM nextpnr's seeds make 97.0 to 99.0, from the sum into the count.
+        # Without PACK nextpnr's seeds make 89.9 to 94.1 MHz and Diamond's placements 90.5 to 98.6, from the
+        # normalizer's count through the rounding into the result; without SUM nextpnr's seeds make 98.8 to 110.8, from
+        # the sum into the count.
         Fma(
             F18,
             stage_core_mul=1,
@@ -89,9 +91,9 @@ CATALOG: dict[str, Block] = {
             | Add.CoreStages.PACK,
             wmultiplier=18,
         ),
-        # Without PACK nextpnr's seeds make 96.5 to 100.8 MHz.
+        # Without PACK nextpnr's seeds make 92.5 to 107.8 MHz.
         Fma(F36, stage_output=1, stage_core_add=~Add.CoreStages(0), **_FMA36),
-        # Without PACK nextpnr makes 97.1 to 103.7 MHz and Diamond 97.8.
+        # Without PACK nextpnr's seeds make 99.3 to 106.4 MHz and Diamond's placements 99.2 to 112.9.
         Fma(F36, stage_input=1, stage_core_add=~Add.CoreStages(0), **_FMA36),
         # Folded, nextpnr's placements make 99.4 to 106.3 MHz.
         Divsqrt(F18, stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
@@ -100,15 +102,19 @@ CATALOG: dict[str, Block] = {
         Divsqrt(F18, fast=False),
         # On speed grade 6 nextpnr's placements make 93.3 to 98.0 MHz, 98.8 to 105.9 with FIRST_DIGIT.
         _large(_grade(Divsqrt(F24), ecp5_grade=7)),
-        # On speed grade 6 nextpnr's placements make 92.7 to 97.3 MHz, 95.8 to 105.4 with FIRST_DIGIT.
-        _large(_grade(Divsqrt(ZkfFormat(8, 27)), ecp5_grade=7)),
+        # On speed grade 6 nextpnr's placements make 95.8 to 105.4 MHz, 92.7 to 97.3 without FIRST_DIGIT; without it
+        # Quartus makes 97.6 on Cyclone IV E C8, from a digit into the exponent's delay line, which it puts in block
+        # RAM.
+        _large(_grade(Divsqrt(ZkfFormat(8, 27), stage_core=Divsqrt.CoreStages.FIRST_DIGIT), ecp5_grade=7)),
         Divsqrt(ZkfFormat(8, 27), fast=False),
-        # On speed grade 6 nextpnr's placements make 91.8 to 97.6 MHz with FIRST_DIGIT.
-        _large(_grade(Divsqrt(F36), ecp5_grade=7)),
+        # On speed grade 6 nextpnr's placements make 91.8 to 97.6 MHz with FIRST_DIGIT; on Cyclone IV E C8 Quartus makes
+        # 94.5, in the digits' loop, 96.0 with FIRST_DIGIT.
+        _large(_grade(Divsqrt(F36), ecp5_grade=7, cyclone4_grade=7)),
         # Folded, nextpnr's placements make 99.9 to 107.3 MHz.
         _large(Divsqrt(F36, stage_core=Divsqrt.CoreStages.FIRST_DIGIT, fast=False)),
-        # Folded, nextpnr's placements make 99.3 to 101.1 MHz.
-        _large(Divsqrt(F36, mode=0, stage_core=Divsqrt.CoreStages.FIRST_DIGIT)),
+        # Folded, nextpnr's placements make 99.3 to 101.1 MHz; on Cyclone IV E C8 Quartus makes 99.4, in the digits'
+        # loop.
+        _large(_grade(Divsqrt(F36, mode=0, stage_core=Divsqrt.CoreStages.FIRST_DIGIT), cyclone4_grade=7)),
         _large(Divsqrt(F36, mode=0, fast=False)),
         # On speed grade 6 nextpnr's placements make 92.4 to 96.8 MHz, 89.6 to 100.6 with FIRST_DIGIT.
         _large(_grade(Divsqrt(F36, mode=1), ecp5_grade=7)),
@@ -135,18 +141,20 @@ CATALOG: dict[str, Block] = {
         Resize(F36, fmt_in=ZkfFormat(6, 18)),
         # Unstaged, the discard mask into the rounding decision makes 74.1 and 59.5 MHz on Diamond.
         Rint(F18, stage_core=Rint.CoreStages.MASK),
-        Rint(F36, wint=44, stage_core=Rint.CoreStages.MASK),
+        # On Cyclone IV E C8 Quartus makes 95.7 MHz, from the mask into the integer.
+        _grade(Rint(F36, wint=44, stage_core=Rint.CoreStages.MASK), cyclone4_grade=7),
         Exp2(F18, stage_core_kernel=2, wmultiplier=18),
         Log2(F18, stage_core_kernel=2, stage_core_mul=2, wmultiplier=18),
         Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_output=1, wmultiplier=18),
-        # At stage_core_kernel=2, which leaves the tiles of the products' grids unregistered, Vivado misses by 0.042 ns.
+        # At stage_core_kernel=2, which leaves the tiles of the products' grids unregistered, Vivado on Artix-7 misses
+        # by 0.042 ns.
         Exp2(F24, stage_core_kernel=3, wmultiplier=18),
         Log2(F24, stage_core_kernel=3, stage_core_mul=3, wmultiplier=18),
         Exp2(F36, stage_core_kernel=3, wmultiplier=18),
-        # Without ALIGN Vivado misses by 0.634 ns, in the shift into the last product.
+        # Without ALIGN Vivado on Artix-7 misses by 0.634 ns, in the shift into the last product.
         Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
-        # Without PACK nextpnr's seeds make 84.0 to 88.9 MHz, from the normalizer's count into the result; without
-        # FOLDED nextpnr's seeds make 97.4 to 104.4, from the reduced coordinate into the engine.
+        # Without PACK nextpnr's seeds make 81.6 to 87.5 MHz, from the normalizer's count into the result; without
+        # FOLDED nextpnr's seeds make 99.7 to 103.5, from the reduced coordinate into the engine.
         Cordic(
             F18,
             mode=0,
@@ -155,36 +163,43 @@ CATALOG: dict[str, Block] = {
             rotation_seed=0,
             wmultiplier=18,
         ),
-        # At stage_core_mul=2 nextpnr's seeds make 88.5 to 92.4 MHz, in the length's product.
+        # At stage_core_mul=2 nextpnr's seeds make 89.7 to 93.0 MHz, in the length's product.
         Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-        # Grade 7 is closed too, but thinly: Diamond makes 102.0 to 108.7 MHz there, from the engine's adds of an
-        # iteration, and nextpnr's seeds 102.8 to 110.1, from the sine's sum into the normalizer; without the attribute
-        # Diamond puts the tables in block RAM and makes 94.0 to 104.0, from their reads.
+        # Without NORMALIZE_INPUT Vivado on Artix-7 -1 misses by 0.093 ns, from the sine's sum into the normalizer.
+        # Grade 7 is closed too, but thinly: Diamond makes 100.8 to 110.4 MHz there, from the engine's adds of an
+        # iteration, and nextpnr's seeds 104.3 to 114.5; without the attribute Diamond puts the tables in block RAM and
+        # makes 97.4 to 105.5, from their reads; on Cyclone IV E C8 Quartus makes 95.5, from the engine's adds.
         _large(
             _grade(
                 Cordic(
                     F36,
                     mode=0,
                     stage_core_mul=4,
-                    stage_core=_CORDIC_ROTATION,
+                    stage_core=_CORDIC_ROTATION | Cordic.CoreStages.NORMALIZE_INPUT,
                     wmultiplier=18,
                     rom_attrs={"syn_romstyle": "logic"},
                 ),
                 ecp5_grade=8,
+                cyclone4_grade=7,
             )
         ),
-        # On speed grade 6 Diamond makes 87.0 to 95.3 MHz, from the division's loop and the engine's angle into `z`, and
-        # nextpnr's seeds 95.1 to 103.7, from the engine's `x` into the divisor's multiples at the load.
+        # On speed grade 6 Diamond makes 94.3 to 97.3 MHz, from the engine's angles in block RAM into `z`, and nextpnr's
+        # seeds 97.4 to 103.2, from the division's loop; on Artix-7 -1 Vivado misses by 0.221 ns, from the engine's `x`
+        # into `u`, no register helping; on Cyclone IV E C8 Quartus makes 88.6, from the angles in block RAM into `z`.
         _large(
             _grade(
                 Cordic(F36, mode=1, stage_core_mul=4, stage_core=_CORDIC_VECTORING, wmultiplier=18),
                 ecp5_grade=7,
+                artix7_grade=2,
+                cyclone4_grade=7,
             )
         ),
-        # On speed grade 7 Diamond makes 93.6 to 98.1 MHz, from the engine's adds of an iteration, and nextpnr's seeds
-        # 92.1 to 96.5, from the sine's sum into the normalizer; on Artix-7 -1 Vivado misses by 0.178 ns, in the
-        # division's loop, no register helping; on grade 8 without the attribute Diamond puts the tables in block RAM
-        # and makes 91.1 to 100.0, from their reads.
+        # On speed grade 7 Diamond makes 99.2 to 101.3 MHz, from the engine's adds of an iteration and from the reduced
+        # coordinate into the fold, and nextpnr's seeds 89.3 to 98.1, from the sine's sum into the normalizer; on
+        # Artix-7 -1 Vivado misses by 0.123 ns, in the division's loop, no register helping; on grade 8 without the
+        # attribute Diamond puts the tables in block RAM and makes 94.8 to 100.2, from their reads. On Cyclone IV E
+        # Quartus makes 87.2 on C8 and 94.1 on C7, from the engine's adds, and on Cyclone V C8 88.2, from the mode into
+        # the normalizer's count, 94.6 with NORMALIZE_INPUT and 95.8 with ROUNDED.
         _large(
             _grade(
                 Cordic(
@@ -202,6 +217,8 @@ CATALOG: dict[str, Block] = {
                 ),
                 ecp5_grade=8,
                 artix7_grade=2,
+                cyclone4_grade=6,
+                cyclone5_grade=7,
             )
         ),
     )
