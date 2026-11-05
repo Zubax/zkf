@@ -75,9 +75,13 @@ def synth_vendor(session: nox.Session) -> None:
     session.install("-e", ".[test]")
     names = ("diamond_ecp5", "vivado_artix7", "vivado_zynquplus", "quartus_cyclone4", "quartus_cyclone5")
     flows = tuple(option for name in names for option in ("--synth-flows", name))
+    # A worker's place and route takes up to 5 GB, Vivado's on the UltraScale+; more than the memory holds get killed.
+    with open("/proc/meminfo") as meminfo:
+        available_kib = next(int(line.split()[1]) for line in meminfo if line.startswith("MemAvailable:"))
+    workers = ("-n", str(max(1, min(int(PYTEST_DIST[1]), available_kib // (6 << 20)))), "--dist", "worksteal")
     # The catalog closes on the texts that Amaranth's own Yosys prints; another Yosys prints others, placed otherwise.
     env = {"AMARANTH_USE_YOSYS": "builtin"}
-    session.run("python", "-m", "pytest", "-m", "synth", *flows, *PYTEST_DIST, *session.posargs, env=env)
+    session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers, *session.posargs, env=env)
 
 
 @nox.session
