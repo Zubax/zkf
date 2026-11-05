@@ -10,7 +10,7 @@ from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe
-from ._trans import Kernel, kernel_check, kernel_depth, pack_fixed, spec as table
+from ._trans import Kernel, Spec, kernel_check, kernel_depth, pack_fixed, spec as table
 from ._value import UnsupportedFormat, Zkf, ZkfFormat, context
 
 
@@ -69,13 +69,11 @@ class Exp2(Operator):
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
         if self.fmt.wexp < 3:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is below 3")
-        spec = table("exp2", self.fmt.wman, self.wmultiplier, self.fast)
-        kernel_check(self.stage_core_kernel, spec, self.wmultiplier)
+        kernel_check(self.stage_core_kernel, self._spec, self.wmultiplier)
 
     @property
     def timing(self) -> Timing:
-        spec = table("exp2", self.fmt.wman, self.wmultiplier, self.fast)
-        kernel = kernel_depth(spec, self.wmultiplier, self.stage_core_kernel)
+        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel)
         return Timing(self.stage_input + 1 + kernel + len(self.stage_core) + self.stage_output, 1)
 
     @property
@@ -108,7 +106,7 @@ class Exp2(Operator):
         if e >= fmt.wexp - 1:
             return fmt.inf() if not x.negative else Zkf(fmt, 0)
 
-        spec = table("exp2", fmt.wman, self.wmultiplier, self.fast)
+        spec = self._spec
         cf = ff = spec.cf  # fraction bits of the kernel and of the reduced argument
         sig = x.significand()
         shift = e - fmt.wfrac + ff
@@ -124,6 +122,10 @@ class Exp2(Operator):
         v = 1 << (cf + 1) if s >> (cf + 1) else max(s - (1 << (cf - fmt.wman)), 1 << cf)
         return pack_fixed(fmt, 0, i, v, cf)
 
+    @property
+    def _spec(self) -> Spec:
+        return table("exp2", self.fmt.wman, self.wmultiplier, self.fast)
+
 
 class _Exp2(wiring.Component):
     in_valid: Signal
@@ -132,7 +134,7 @@ class _Exp2(wiring.Component):
     y: FloatView
 
     def __init__(self, model: Exp2) -> None:
-        self._model, self._spec = model, table("exp2", model.fmt.wman, model.wmultiplier, model.fast)
+        self._model, self._spec = model, model._spec
         super().__init__(model.signature)
 
     def elaborate(self, platform: object) -> Module:
@@ -156,9 +158,9 @@ class _Exp2(wiring.Component):
         given = bundle(argument, f=reduce.f, side=reduced)
         f_valid, r = pipe(m, "reduce", valid, argument, given, int(Exp2.CoreStages.REDUCE in core))
         m.d.comb += kernel.in_valid.eq(f_valid)
-        m.d.comb += kernel.f.eq(r.f)
+        m.d.comb += kernel.x.eq(r.f)
         total = data.StructLayout({"s": spec.cf + 2, "side": side})
-        given = bundle(total, s=kernel.s, side=delay(m, "side", side, r.side, kernel.latency))
+        given = bundle(total, s=kernel.y, side=delay(m, "side", side, r.side, kernel.latency))
         s_valid, q = pipe(m, "sum", kernel.out_valid, total, given, int(Exp2.CoreStages.SUM in core))
         m.submodules.pack = pack = _Pack(fmt, spec.cf)
         m.d.comb += pack.sign.eq(q.side.sign)

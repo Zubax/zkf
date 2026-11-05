@@ -33,11 +33,9 @@ def arguments(width: int, rw: int, count: int) -> list[int]:
 def run(function: str, wman: int, stages: int, count: int = 400, wmultiplier: int = 18, fast: bool = False) -> None:
     spec = table(function, wman, wmultiplier, fast)
     dut = Kernel(spec, wmultiplier=wmultiplier, stages=stages)
-    rw, cf = spec.rw, spec.cf
-    name, result, width = ("f", "s", cf) if function == "exp2" else ("frac", "c", wman - 1)
     cases = []
-    for argument in arguments(width, rw, count):
-        cases.append(Case({name: argument}, {result: spec.at(argument)}))
+    for argument in arguments(spec.k + spec.rw, spec.rw, count):
+        cases.append(Case({"x": argument}, {"y": spec.at(argument)}))
     run_pipeline(dut, dut.latency, cases)
 
 

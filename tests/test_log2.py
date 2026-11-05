@@ -8,7 +8,7 @@ from zkf import Log2, ZkfFormat
 
 CoreStages = Log2.CoreStages
 
-# wexp, wman, kind: every table of a degree.
+# wexp, wman, kind: every table of a degree, the floor walked whole.
 FORMATS: list[tuple[int, int, str | int]] = [
     (2, 10, "every"),
     (6, 16, 512),
@@ -30,7 +30,7 @@ def test_every_compact() -> None:
 
 @pytest.mark.parametrize("stages", [*staging(CoreStages), {"sm": 3}], ids=str)
 def test_stages(stages: dict[str, Any]) -> None:
-    """Stages change no result: the format that `test_formats` walks whole is sampled here."""
+    """Stages change no result: the format that `test_every_compact` walks whole is sampled here."""
     run("log2", 2, 16, 4096, fa=False, **stages)
 
 

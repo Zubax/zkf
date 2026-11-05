@@ -41,7 +41,7 @@ from zkf import (
 # narrower and wider than the significand; a format that holds the other, and one narrower in either dimension;
 # an integer of one magnitude bit, narrower than the significand and wider; for the divider each residue of the
 # significand's width by 3 and both parities, and one whose frame is wider than 32 bits; for a table
-# its degrees 2 to 5, and the narrowest and the widest exponent; for `cordic` each mode alone, an odd significand,
+# its degrees 1 to 5, and the narrowest and the widest exponent; for `cordic` each mode alone, an odd significand,
 # the widest format, and an exponent that a rotation alone takes.
 MODELS: list[tuple[type[Block], ZkfFormat, dict[str, object]]] = [
     (Pipe, ZkfFormat(3, 5), {}),

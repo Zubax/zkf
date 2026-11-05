@@ -48,13 +48,7 @@ _SELECT = 0.9
 # A context of its own, whose precision decides the coefficients: the caller's is neither read nor changed.
 _fitting = mpmath.mp.clone()
 _fitting.prec = 280
-
-
-def degree(wman: int) -> int:
-    """
-    The degree of a compact table's polynomial: `WMAN + _ERR_GUARD` bits at the narrowest segments, of `_K_CAP` bits.
-    """
-    return ceil((wman + _ERR_GUARD) / _K_CAP) - 1
+_GENERATING = threading.Lock()
 
 
 @dataclass(frozen=True)
@@ -182,13 +176,10 @@ def kernel_depth(spec: Spec, wmultiplier: int, stages: int) -> int:
 
 class Kernel(wiring.Component):
     """
-    The table and the polynomial: the top `k` bits of the argument select a row of coefficients, and the rest, `w`, is
-    the variable. The arithmetic is that of `Spec.at`: `c0 +- c1*w` beside the chain
-    `w**2 * (c2 +- c3*w + w**2 * (c4 +- c5*w))`, one shape at every degree.
-
-    For `exp2` the argument is `f` and the result `s = 2**f` at the scale `2**-cf` with half an ULP of the significand
-    added, in `[1, 4)`. For `log2` the argument is the fraction of `x`, the result `c = C(f) = log2(1 + f) / f` at that
-    scale, `f` being the fraction re-centered where `rc`, which is combinational from the argument.
+    `y = spec.at(x)`, the table and the polynomial: the top `k` bits of the argument `x` select a row of coefficients,
+    and the rest, `w`, is the variable. For `exp2` `x` is `f` and `y = 2**f` at the scale `2**-cf` with half an ULP of
+    the significand added, in `[1, 4)`. For `log2` `x` is the fraction of the operand and `y = C(f) = log2(1 + f) / f`
+    at that scale, `f` being the fraction re-centered from the segment `thr` up.
 
     The table is addressed by the combinational argument, and the first register is its own, `w` beside it; `depth`
     more follow, the terms of the sum added as they are formed, and the last sum is combinational. `stages` is the
@@ -198,7 +189,9 @@ class Kernel(wiring.Component):
     """
 
     in_valid: Signal
+    x: Signal
     out_valid: Signal
+    y: Signal
 
     def __init__(
         self,
@@ -214,18 +207,8 @@ class Kernel(wiring.Component):
         self.depth = self._schedule.total
         self._rom_attrs = rom_attrs or {}
         self._mul_attrs = mul_attrs or {}
-        cf = spec.cf
-        if spec.function == "exp2":
-            members = {"in_valid": In(1), "f": In(cf), "out_valid": Out(1), "s": Out(cf + 2)}
-        else:
-            members = {
-                "in_valid": In(1),
-                "frac": In(spec.wman - 1),
-                "rc": Out(1),
-                "out_valid": Out(1),
-                "c": Out(cf + 1),
-            }
-        super().__init__(members)
+        wy = spec.cf + (2 if spec.function == "exp2" else 1)
+        super().__init__({"in_valid": In(1), "x": In(spec.k + spec.rw), "out_valid": Out(1), "y": Out(wy)})
 
     @property
     def latency(self) -> int:
@@ -261,16 +244,12 @@ class Kernel(wiring.Component):
             for row in rows
         ]
         m.submodules.rom = rom = Memory(shape=layout, depth=1 << k, init=table, attrs=dict(self._rom_attrs))
-        argument = self.f if exp2 else self.frac
-        segment = argument[rw : rw + k]
         read = rom.read_port()
-        m.d.comb += read.addr.eq(segment)
-        if not exp2:
-            m.d.comb += self.rc.eq(segment >= spec.thr)
+        m.d.comb += read.addr.eq(self.x[rw:])
         valid = Signal(name="v_r")
         m.d.sync += valid.eq(self.in_valid)
         w = Signal(rw, name="w_r", reset_less=True)
-        m.d.sync += w.eq(argument[:rw])
+        m.d.sync += w.eq(self.x[:rw])
         c = [Cat(read.data.c0, Const(1, 1))] + [read.data[f"c{j}"] for j in range(1, d + 1)]
 
         # The terms of the sum after c0 by when each is formed, each with whether it is subtracted: c1*w, the wide
@@ -336,7 +315,6 @@ class Kernel(wiring.Component):
             assert d == 2 and exp2, "log2's argument fits one multiplier at degree 2"
             terms[at.ready["pl"]].append((False, product("pl", c[1][sc:], w[:tc])[rw - sc :]))
 
-        out = self.s if exp2 else self.c
         out_valid, partial, since = valid, c[0], 0
         for time, group in sorted(terms.items()):
             out_valid, partial = pipe(m, f"sum{time}_", out_valid, len(partial), partial, time - since)
@@ -346,14 +324,14 @@ class Kernel(wiring.Component):
                 [(subtracted, term)] = group
                 n = len(term)
                 low = partial[:n] - term if subtracted else partial[:n] + term
-                high = partial[n : len(out)]
-                partial = Cat(low[:n], Mux(low[n], high - 1 if subtracted else high + 1, high))[: len(out)]
+                high = partial[n : len(self.y)]
+                partial = Cat(low[:n], Mux(low[n], high - 1 if subtracted else high + 1, high))[: len(self.y)]
             else:
                 for subtracted, term in group:
-                    partial = (partial - term if subtracted else partial + term)[: len(out)]
+                    partial = (partial - term if subtracted else partial + term)[: len(self.y)]
             since = time
         m.d.comb += self.out_valid.eq(out_valid)
-        m.d.comb += out.eq(partial)
+        m.d.comb += self.y.eq(partial)
         return m
 
 
@@ -493,6 +471,13 @@ def _chain_bits(pairs: list[int]) -> list[int]:
     return [0] + [sum(pairs[i:]).bit_length() for i in range(1, len(pairs))] + [0]
 
 
+def _degree(wman: int) -> int:
+    """
+    The degree of a compact table's polynomial: `WMAN + _ERR_GUARD` bits at the narrowest segments, of `_K_CAP` bits.
+    """
+    return ceil((wman + _ERR_GUARD) / _K_CAP) - 1
+
+
 def _generate(
     function: str,
     wman: int,
@@ -511,7 +496,7 @@ def _generate(
     A `probe` fits only the segments that bound the widths and the estimate, for `_shortest` to rank tables by.
     """
     cf, narrow = wman + _GUARD, wmultiplier
-    d = d or degree(wman)
+    d = d or _degree(wman)
     width = cf if function == "exp2" else wman - 1
 
     def fitted(width: int) -> int:
@@ -536,6 +521,10 @@ def _generate(
         t2 = min(rw, chain[1])
         q = tuple(min(2 * t2, chain[i + 1]) for i in range(d // 2))
         spec = Spec(function, wman, k, rw, cf, d, tuple(t), t2, q, thr=thr)
+
+        def tried(shorter: Spec) -> Spec:
+            return shorter if shorter != spec and _estimate(shorter, raw, segments)[0] <= _SELECT else spec
+
         if d == 1 and cut:
             # c1*w past a multiple of the multipliers by a few bits on either side: c1 gives up its low bits, w its own,
             # if the budget allows.
@@ -567,15 +556,10 @@ def _generate(
                 if t2 > 2 * narrow or 2 * t2 - q[0] - _SQUARE_GUARD < 2 * (t2 - narrow):
                     continue
             # A few argument bits fewer in the wide product can save a multiplier, if the budget allows it.
-            shorter = replace(spec, t=(fitted(rw), spec.t[1]))
-            if shorter != spec and _estimate(shorter, raw, segments)[0] <= _SELECT:
-                spec = shorter
+            spec = tried(replace(spec, t=(fitted(rw), spec.t[1])))
         elif d >= 4:
             # The square's operand and the wide product's argument give up the few bits past a multiple of the
             # multipliers, each where the budget allows; with `cut`, the products above p2 take a square of fewer bits.
-            def tried(shorter: Spec) -> Spec:
-                return shorter if shorter != spec and _estimate(shorter, raw, segments)[0] <= _SELECT else spec
-
             spec = tried(replace(spec, t2=fitted(t2), q=tuple(min(2 * fitted(t2), x) for x in q)))
             spec = tried(replace(spec, t=(fitted(rw), *spec.t[1:])))
             tn = min(max(spec.q[1:]), narrow)
@@ -645,9 +629,6 @@ def _shortest(compact: Spec, wmultiplier: int) -> Spec:
 def _rom_bits(spec: Spec) -> int:
     """The bits of the kernel's table."""
     return (1 << spec.k) * sum(_widths(spec)[1])
-
-
-_GENERATING = threading.Lock()
 
 
 def _widths(spec: Spec) -> tuple[list[int], list[int]]:

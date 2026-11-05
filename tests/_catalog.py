@@ -29,7 +29,7 @@ from zkf import (
 F18, F24, F36 = ZkfFormat(6, 18), ZkfFormat(8, 24), ZkfFormat(8, 36)
 _FMA36: dict[str, Any] = dict(stage_core_mul=3, wmultiplier=18)
 _CORDIC_SHARED = Cordic.CoreStages.NORMALIZE | Cordic.CoreStages.PACK
-_CORDIC_ROTATION = _CORDIC_SHARED | Cordic.CoreStages.REDUCED | Cordic.CoreStages.CORRECTIONS
+_CORDIC_ROTATION = _CORDIC_SHARED | Cordic.CoreStages.REDUCED | Cordic.CoreStages.FOLDED
 _CORDIC_VECTORING = _CORDIC_SHARED | Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.ANGLE
 _LARGE: list[str] = []
 _GRADES: dict[str, dict[str, int]] = {}
@@ -145,14 +145,13 @@ CATALOG: dict[str, Block] = {
         Exp2(F36, stage_core_kernel=3, wmultiplier=18),
         # Without ALIGN Vivado misses by 0.634 ns, in the shift into the last product.
         Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
-        # Without PACK nextpnr's seeds make 86.5 to 90.1 MHz, from the normalizer's count into the result; without
-        # FOLDED nextpnr's seeds make 99.4 to 103.2 and Vivado misses by 0.031 ns, from the reduced coordinate into the
-        # engine.
+        # Without PACK nextpnr's seeds make 84.0 to 88.9 MHz, from the normalizer's count into the result; without
+        # FOLDED nextpnr's seeds make 97.4 to 104.4, from the reduced coordinate into the engine.
         Cordic(
             F18,
             mode=0,
             stage_core_mul=3,
-            stage_core=_CORDIC_ROTATION | Cordic.CoreStages.FOLDED,
+            stage_core=_CORDIC_ROTATION,
             rotation_seed=0,
             wmultiplier=18,
         ),
@@ -167,7 +166,7 @@ CATALOG: dict[str, Block] = {
                     F36,
                     mode=0,
                     stage_core_mul=4,
-                    stage_core=(_CORDIC_ROTATION | Cordic.CoreStages.FOLDED) & ~Cordic.CoreStages.CORRECTIONS,
+                    stage_core=_CORDIC_ROTATION,
                     wmultiplier=18,
                     rom_attrs={"syn_romstyle": "logic"},
                 ),

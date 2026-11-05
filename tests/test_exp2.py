@@ -8,8 +8,9 @@ from zkf import Exp2, UnsupportedFormat, ZkfFormat
 
 CoreStages = Exp2.CoreStages
 
-# wexp, wman, kind: every table of a degree.
+# wexp, wman, kind: every table of a degree, the floor walked whole.
 FORMATS: list[tuple[int, int, str | int]] = [
+    (3, 10, "every"),
     (6, 16, 512),
     (8, 24, 1024),
     (8, 32, 768),
@@ -24,10 +25,8 @@ def test_formats(row: tuple[int, int, str | int]) -> None:
 
 @pytest.mark.parametrize("shard", range(2))
 def test_every(shard: int) -> None:
-    """The compact table of degree 2; `fast`'s of degree 1 at the floor."""
+    """The compact table of degree 2."""
     run("exp2", 3, 16, "every", shard, 2, fa=False)
-    if not shard:
-        run("exp2", 3, 10, "every")
 
 
 @pytest.mark.parametrize("stages", staging(CoreStages), ids=str)

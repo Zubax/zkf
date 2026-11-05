@@ -108,7 +108,7 @@ class Pack(wiring.Component):
         exp_ext = Signal(wext, name="exp_biased_ext")
         m.d.comb += exp_ext.eq(biased)
         exp_biased, underflow = exp_ext[:wexp], exp_ext[-1]
-        high = exp_ext[wexp : self._wexp_unbiased].any() if self._wexp_unbiased > wexp else Const(0, 1)
+        high = exp_ext[wexp : self._wexp_unbiased].any()
         above = ~underflow & (high | exp_biased.all())
         overflow = Const(0, 1) if self._assume_no_overflow else above
         at_max = Signal(name="exp_at_max")

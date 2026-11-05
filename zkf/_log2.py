@@ -80,14 +80,13 @@ class Log2(Operator):
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
         if self.fmt.wexp > self.fmt.wman + 1:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is above WMAN + 1")
-        spec = table("log2", self.fmt.wman, self.wmultiplier, self.fast)
+        spec = self._spec
         kernel_check(self.stage_core_kernel, spec, self.wmultiplier)
         check("stage_core_mul", self.stage_core_mul, *_last(spec, self.fmt), signed=False, wmultiplier=self.wmultiplier)
 
     @property
     def timing(self) -> Timing:
-        spec = table("log2", self.fmt.wman, self.wmultiplier, self.fast)
-        kernel = kernel_depth(spec, self.wmultiplier, self.stage_core_kernel)
+        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel)
         inside = 1 + kernel + self.stage_core_mul + len(self.stage_core)
         return Timing(self.stage_input + inside + self.stage_output, 1)
 
@@ -122,7 +121,7 @@ class Log2(Operator):
         if x.negative:
             return Log2Result(fmt.inf(1), True, False)
 
-        spec = table("log2", fmt.wman, self.wmultiplier, self.fast)
+        spec = self._spec
         # x = m' * 2**e with the significand re-centered around 1 (see `Log2`), f = m' - 1, log2(m') = f * C(f).
         cf, wfrac, wexp = spec.cf, fmt.wfrac, fmt.wexp
         rc = int(x.frac >> spec.rw >= spec.thr)
@@ -146,18 +145,29 @@ class Log2(Operator):
             else:
                 p = abs(e).bit_length() - 1
             operand, shift, e_al, at, e_hi = fmag, rc + p + 1, abs(e), fb - p, p
-        # The sum keeps _GB bits below the lower of the two rounding positions; every bit of |e| is above them.
-        low = cf + _G2 - 2 - _GB
+        low = _cut(spec)
         prod = (operand * ((c << (_G2 + 1)) >> shift)) >> low
         e_al, fb = e_al << (at - low), fb - low
         v = (e_al - prod) if sub else (e_al + prod)
         assert 1 << (fb - 1) <= v <= 1 << (fb + 1), "log2 leading-one prediction"
         return Log2Result(pack_fixed(fmt, sign, e_hi, v, fb), False, False)
 
+    @property
+    def _spec(self) -> Spec:
+        return table("log2", self.fmt.wman, self.wmultiplier, self.fast)
+
 
 def _last(spec: Spec, fmt: ZkfFormat) -> tuple[int, int]:
     """The operand widths of the last product: the fraction, and the kernel's result shifted."""
     return fmt.wfrac, spec.cf + _G2 + 2
+
+
+def _cut(spec: Spec) -> int:
+    """
+    The lowest bit of the last product that the sum keeps: `_GB` bits below the lower of the two rounding positions,
+    every bit of `|e|` being above them.
+    """
+    return spec.cf + _G2 - 2 - _GB
 
 
 class _Log2(wiring.Component):
@@ -169,7 +179,7 @@ class _Log2(wiring.Component):
     pole: Signal
 
     def __init__(self, model: Log2) -> None:
-        self._model, self._spec = model, table("log2", model.fmt.wman, model.wmultiplier, model.fast)
+        self._model, self._spec = model, model._spec
         super().__init__(model.signature)
 
     def elaborate(self, platform: object) -> Module:
@@ -187,13 +197,15 @@ class _Log2(wiring.Component):
             mul_attrs=model.mul_attrs,
         )
         m.d.comb += kernel.in_valid.eq(valid)
-        m.d.comb += kernel.frac.eq(x.frac)
+        m.d.comb += kernel.x.eq(x.frac)
 
         # The side path, as deep as the kernel: the raw fields, held beside the table's register so that only `rc` has
         # logic ahead of it; then the decoding, over the stages that the kernel leaves it; last the normalizer's.
         decode_stage, hold = int(kernel.depth >= 3), int(kernel.depth >= 2)
         raw = data.StructLayout({"x": f, "rc": 1})
-        taken = bundle(raw, x=x, rc=kernel.rc)
+        rc = Signal(name="rc")
+        m.d.comb += rc.eq(x.frac[spec.rw :] >= spec.thr)
+        taken = bundle(raw, x=x, rc=rc)
         s_valid, a = pipe(m, "raw", valid, raw, taken, kernel.depth - decode_stage - hold)
         m.submodules.decode = decode = _Decode(fmt, decode_stage)
         m.d.comb += decode.in_valid.eq(s_valid)
@@ -201,17 +213,15 @@ class _Log2(wiring.Component):
         m.d.comb += decode.sign.eq(a.x.sign)
         m.d.comb += decode.exp.eq(a.x.exp)
         m.d.comb += decode.frac.eq(a.x.frac)
-        names = ("pole", "domain_error", "is_inf", "one", "neg", "sub", "rc_q", "ezero", "emag", "p1", "sh", "fmag")
-        decoded = data.StructLayout({name: len(getattr(decode, name)) for name in names})
-        fields = {name: getattr(decode, name) for name in names}
-        m_valid, d = pipe(m, "decoded", decode.out_valid, decoded, bundle(decoded, **fields), hold)
+        decoded = decode.layout
+        m_valid, d = pipe(m, "decoded", decode.out_valid, decoded, decode.out, hold)
 
         # `|f|` is normalized for `e = 0`; `|e|` is shifted so that the predicted leading one of the result lands on its
         # bit `wexp - 2`.
         m.submodules.normalize = normalize = Normshift(wfrac, stage_wide=1, sideband=decoded)
         up = Signal(len(d.p1), name="up")
         m.d.comb += up.eq(Const(wexp - 1, len(d.p1)) - d.p1)
-        placed = {name: d[name] for name in names} | {"emag": (d.emag << up)[:wexp]}
+        placed = {name: d[name] for name in decoded.members} | {"emag": (d.emag << up)[:wexp]}
         m.d.comb += normalize.in_valid.eq(m_valid)
         m.d.comb += normalize.x.eq(d.fmag)
         m.d.comb += normalize.sb_in.eq(bundle(decoded, **placed))
@@ -219,7 +229,7 @@ class _Log2(wiring.Component):
         kept = data.StructLayout({name: shape for name, shape in decoded.members.items() if name != "fmag"})
         aligned = data.StructLayout({"side": kept, "lz": len(normalize.count), "operand": wfrac, "c": spec.cf + 1})
         side = bundle(kept, **{name: n[name] for name in kept.members})
-        ready = bundle(aligned, side=side, lz=normalize.count, operand=Mux(n.ezero, normalize.y, n.fmag), c=kernel.c)
+        ready = bundle(aligned, side=side, lz=normalize.count, operand=Mux(n.ezero, normalize.y, n.fmag), c=kernel.y)
         payload = Signal(aligned, name="ready")
         m.d.comb += payload.eq(ready)
         a_valid, q = pipe(m, "align", kernel.out_valid, aligned, payload, int(Log2.CoreStages.ALIGN in core))
@@ -245,7 +255,7 @@ class _Log2(wiring.Component):
         m.d.comb += pack.rc.eq(q.side.rc_q)
         m.d.comb += pack.sb_in.eq(bundle(flags, pole=q.side.pole, domain_error=q.side.domain_error))
         m.d.comb += pack.in_valid.eq(final.out_valid)
-        m.d.comb += pack.prod.eq(final.p[spec.cf + _G2 - 2 - _GB :])
+        m.d.comb += pack.prod.eq(final.p[_cut(spec) :])
         result = data.StructLayout({"y": f, "pole": 1, "domain_error": 1})
         given = bundle(result, y=pack.y, pole=pack.sb_out.pole, domain_error=pack.sb_out.domain_error)
         out_valid, r = pipe(m, "out", pack.out_valid, result, given, model.stage_output)
@@ -270,6 +280,7 @@ class _Decode(wiring.Component):
     `sub`: `e` and `f` differ in sign, so that the result is `|e| - l`. `neg` is the sign of the result. `one`: `x = 1`,
     which gives +0. `is_inf`: the result is an infinity, `x` being zero (`pole`), negative (`domain_error`) or +inf.
     `stage=1` puts a register between `e` and `|f|` and what is derived from them; `rc_q` is `rc` beside the outputs.
+    They are the fields of `out`, of the shape `layout`.
     """
 
     in_valid: Signal
@@ -278,31 +289,22 @@ class _Decode(wiring.Component):
     exp: Signal
     frac: Signal
     out_valid: Signal
-    fmag: Signal
-    sh: Signal
-    p1: Signal
-    emag: Signal
-    ezero: Signal
-    rc_q: Signal
-    sub: Signal
-    neg: Signal
-    one: Signal
-    is_inf: Signal
-    domain_error: Signal
-    pole: Signal
+    out: Signal
 
     def __init__(self, fmt: ZkfFormat, stage: int) -> None:
         self._fmt, self._stage = fmt, stage
         wp = ceil_log2(fmt.wexp + 1)
+        flags = ("pole", "domain_error", "is_inf", "one", "neg", "sub", "rc_q", "ezero")
+        self.layout = data.StructLayout(
+            {name: 1 for name in flags} | {"emag": fmt.wexp, "p1": wp, "sh": wp, "fmag": fmt.wfrac}
+        )
         taken = {"in_valid": In(1), "rc": In(1), "sign": In(1), "exp": In(fmt.wexp), "frac": In(fmt.wfrac)}
-        given = {"out_valid": Out(1), "fmag": Out(fmt.wfrac), "sh": Out(wp), "p1": Out(wp), "emag": Out(fmt.wexp)}
-        flags = ("ezero", "rc_q", "sub", "neg", "one", "is_inf", "domain_error", "pole")
-        super().__init__(taken | given | {name: Out(1) for name in flags})
+        super().__init__(taken | {"out_valid": Out(1), "out": Out(self.layout)})
 
     def elaborate(self, platform: object) -> Module:
         m = Module()
         fmt, wexp, wfrac = self._fmt, self._fmt.wexp, self._fmt.wfrac
-        wp = len(self.p1)
+        wp, out = len(self.out.p1), self.out
         bias = Signal(wexp + 1, name="bias")
         m.d.comb += bias.eq(Mux(self.rc, Const(fmt.bias - 1, wexp + 1), Const(fmt.bias, wexp + 1)))
         above = Signal(wexp + 1, name="e_p")
@@ -352,23 +354,23 @@ class _Decode(wiring.Component):
         with m.Else():
             m.d.comb += p1.eq(leading)
         with m.If(is_inf):
-            m.d.comb += self.neg.eq(pole | sign)
+            m.d.comb += out.neg.eq(pole | sign)
         with m.Elif(ezero):
-            m.d.comb += self.neg.eq(rc)
+            m.d.comb += out.neg.eq(rc)
         with m.Else():
-            m.d.comb += self.neg.eq(e_neg)
+            m.d.comb += out.neg.eq(e_neg)
         m.d.comb += self.out_valid.eq(valid)
-        m.d.comb += self.fmag.eq(q.fmag)
-        m.d.comb += self.sh.eq(Mux(ezero, Const(1, wp), (p1 + rc)[:wp]))
-        m.d.comb += self.p1.eq(p1)
-        m.d.comb += self.emag.eq(q.emag)
-        m.d.comb += self.ezero.eq(ezero)
-        m.d.comb += self.rc_q.eq(rc)
-        m.d.comb += self.sub.eq(sub)
-        m.d.comb += self.one.eq(ezero & f_zero)
-        m.d.comb += self.is_inf.eq(is_inf)
-        m.d.comb += self.domain_error.eq(sign & ~pole)
-        m.d.comb += self.pole.eq(pole)
+        m.d.comb += out.fmag.eq(q.fmag)
+        m.d.comb += out.sh.eq(Mux(ezero, Const(1, wp), (p1 + rc)[:wp]))
+        m.d.comb += out.p1.eq(p1)
+        m.d.comb += out.emag.eq(q.emag)
+        m.d.comb += out.ezero.eq(ezero)
+        m.d.comb += out.rc_q.eq(rc)
+        m.d.comb += out.sub.eq(sub)
+        m.d.comb += out.one.eq(ezero & f_zero)
+        m.d.comb += out.is_inf.eq(is_inf)
+        m.d.comb += out.domain_error.eq(sign & ~pole)
+        m.d.comb += out.pole.eq(pole)
         return m
 
 

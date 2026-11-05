@@ -233,6 +233,15 @@ unreasonable, check the synthesis settings first, and if necessary give `rom_att
 
 ## Sizing the exponent and the significand (wexp/wman)
 
+The library is mostly focused on formats with wman≥7 (that is, at least 8 significand bits including the hidden one),
+which covers all commonly encountered standard float formats.
+Narrower wman is supported where logic generalizes to narrower widths without special-casing (e.g., in simple algebra).
+Certain complex operators may require a larger minimal width where special efforts are required to support narrow
+formats (e.g., CORDIC).
+To support narrow formats, the optimal solution could be to introduce alternative operator implementations
+instead of extending the existing ones; the reason is that narrow formats could be more efficiently implemented via
+precomputed lookup tables rather than deriving the answer through live computation.
+
 wexp can be chosen freely within an operator's limits, while wman is sensitive to the chip's DSP capabilities and thus
 requires careful selection to achieve best resource utilization.
 
@@ -279,7 +288,7 @@ Using binary32-compatible exponent wexp=8, 44 bits total (5.5 bytes):
     max        = 0xFFFFFFFF_F0000000_00000000_00000000    ≈ 3.403e+38
     ε          = 1/34359738368                            ≈ 2.910e-11
 
-### IEEE 754-like
+### IEEE 754-like and other standard float formats
 
 ZKF offers limited compatibility with IEEE 754 so while it can match the bit layout,
 not all states are mappable between the formats.
@@ -288,12 +297,15 @@ not all states are mappable between the formats.
 - wexp=8  wman=24: IEEE 754 binary32-like
 - wexp=11 wman=53: IEEE 754 binary64-like
 
+Common non-IEEE formats:
+
+- wexp=7  wman=17: AMD/ATI fp24-like
+- wexp=8  wman=8:  bfloat16-like
+- wexp=8  wman=11: NVIDIA TF32-like (19 bits)
+
 ## TODO
 
 Roughly ordered by severity.
-
-- Audit all opererators for special cases or other complexities introduced to handle narrow formats with wman<~10 bits.
-  Formats with such narrow significands are rarely used in practice and supporting them is not worth the effort.
 
 - Add Altera Quartus Lite to the vendor synthesis tool set to ensure we don't overfit for AMD & Lattice.
 

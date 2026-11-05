@@ -261,7 +261,7 @@ def test_faithful(unit: tuple[str, int, int, str, int, int]) -> None:
     fmt = ZkfFormat(wexp, wman)
     worst, wrong, differing, count, first = judged(function, fmt, inputs(function, fmt, kind, shard, shards))
     assert passes(worst, wrong, differing, count, kind), (worst, wrong, differing, count, first)
-    assert worst <= 0.5 + certified(table(function, wman, 18, True)) + 1e-9, worst
+    assert worst <= 0.5 + certified(build(function, fmt)._spec) + 1e-9, worst
 
 
 @pytest.mark.parametrize(
@@ -271,6 +271,7 @@ def test_instruments_are_faithful(name: str, wexp: int, monkeypatch: pytest.Monk
     function, fmt, spec = name[:4], ZkfFormat(wexp, 16), instrument(name)
     bound = certified(spec)
     monkeypatch.setattr(zkf._exp2 if function == "exp2" else zkf._log2, "table", lambda *key: spec)
+    assert build(function, fmt)._spec is spec
     worst, wrong, differing, count, first = judged(function, fmt, range(1 << fmt.wfull))
     assert passes(worst, wrong, differing, count, "every") and worst <= 0.5 + bound + 1e-9, (worst, wrong, first)
 

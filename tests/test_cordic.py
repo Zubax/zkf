@@ -50,9 +50,16 @@ VECTORINGS = [(6, 18, 1536), (8, 24, 1024), (8, 36, 768), (11, 53, 384), (5, 16,
 # the seeds off and in part, of the modes that rotate. The product from its one register at a width where it is one
 # multiplier to the pairs of rows of a grid on narrower multipliers, all the registers of the rest (one by one in the
 # deep tier), without `fast` (one packer, the division at radix 4), and a product as long as the iterations that the
-# seed leaves.
+# seed leaves; the catalog's rotation at 6/18 with CORRECTIONS, which no spec of the catalog takes.
 KNOBS: list[dict[str, Any]] = [
     {"wexp": 6, "wman": 18},
+    {
+        "wexp": 6,
+        "wman": 18,
+        "sc": SHARED | CoreStages.REDUCED | CoreStages.FOLDED | CoreStages.CORRECTIONS,
+        "rs": 0,
+        "mode": 0,
+    },
     *({"rs": rs, "mode": mode} for rs in (0, 1) for mode in (0, 2)),
     {"sm": 6, "wm": 9, "mode": 2},
     {"si": 1, "mode": 2},

@@ -14,7 +14,7 @@ import zkf._exp2
 import zkf._log2
 from zkf import Exp2, Log2, Zkf, ZkfFormat
 from zkf._pmul import counts
-from zkf._trans import _GUARD, Kernel, Spec, _generate, spec as table
+from zkf._trans import _GUARD, Kernel, Spec, _generate
 
 SHORT = {
     "si": "stage_input",
@@ -141,7 +141,7 @@ def seams(function: str, fmt: ZkfFormat) -> list[int]:
     of `x`; `log2` by the top bits of the significand, taken here in the binades on either side of 1 and one more
     on each side, with the square root of 2, where `|log2(m')|` crosses a half next to where re-centering starts.
     """
-    spec = table(function, fmt.wman, 18, True)
+    spec = build(function, fmt)._spec
     if function == "exp2":
         steps = [Fraction(j, 1 << spec.k) - d for j in range(1, 1 << spec.k) for d in (0, 1)]
         return near(fmt, [fmt.encode(sign * step).bits for step in steps for sign in (1, -1)], 16)
@@ -213,11 +213,9 @@ def instrument(name: str) -> Spec:
 
 def every_row(spec: Spec, dut: Kernel) -> None:
     """The kernel of the table against its reference at both ends of every row and inside it."""
-    function = spec.function
     rw, rng = spec.rw, np.random.default_rng(SEED)
-    name, result = ("f", "s") if function == "exp2" else ("frac", "c")
     cases = []
     for segment, row in enumerate(spec.coeffs):
         for low in (0, ((1 << rw) - 1), random_bits(rw, rng)):
-            cases.append(Case({name: (segment << rw) | low}, {result: spec._polynomial(row, low)}))
+            cases.append(Case({"x": (segment << rw) | low}, {"y": spec._polynomial(row, low)}))
     run_pipeline(dut, dut.latency, cases)
