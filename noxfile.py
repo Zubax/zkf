@@ -47,14 +47,14 @@ def tests(session: nox.Session) -> None:
     session.install("-e", ".[test]")
     coverage = ("--cov", "--cov-report=term-missing:skip-covered", "--cov-report=html:build/coverage")
     with watched(session):
-        session.run("python", "-m", "pytest", *workers(1.5), *(session.posargs or coverage))
+        session.run("python", "-m", "pytest", *workers(gib=1.5), *(session.posargs or coverage))
 
 
 @nox.session(default=False)
 def deep(session: nox.Session) -> None:
     session.install("-e", ".[test]")
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "deep", *workers(2), *session.posargs)
+        session.run("python", "-m", "pytest", "-m", "deep", *workers(gib=2), *session.posargs)
 
 
 @nox.session
@@ -62,7 +62,7 @@ def accuracy(session: nox.Session) -> None:
     """`exp2`, `log2` and `cordic` against mpmath."""
     session.install("-e", ".[test]")
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "accuracy", *workers(1.5), *session.posargs)
+        session.run("python", "-m", "pytest", "-m", "accuracy", *workers(gib=1.5), *session.posargs)
 
 
 @nox.session
@@ -71,7 +71,7 @@ def synth(session: nox.Session) -> None:
     session.install("-e", ".[test]")
     flows = ("--synth-flows", "yosys_ecp5")
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(1), *session.posargs)
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(gib=1), *session.posargs)
 
 
 @nox.session
@@ -81,7 +81,7 @@ def synth_vivado(session: nox.Session) -> None:
     # The catalog closes on the texts that Amaranth's own Yosys prints; another Yosys prints others, placed otherwise.
     env = {"AMARANTH_USE_YOSYS": "builtin"}
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(2.7), *session.posargs, env=env)
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(gib=2.7), *session.posargs, env=env)
 
 
 @nox.session
@@ -90,7 +90,7 @@ def synth_diamond(session: nox.Session) -> None:
     flows = ("--synth-flows", "diamond_ecp5")
     env = {"AMARANTH_USE_YOSYS": "builtin"}
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(1), *session.posargs, env=env)
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(gib=1), *session.posargs, env=env)
 
 
 @nox.session
@@ -99,7 +99,7 @@ def synth_quartus(session: nox.Session) -> None:
     flows = ("--synth-flows", "quartus_cyclone4", "--synth-flows", "quartus_cyclone5")
     env = {"AMARANTH_USE_YOSYS": "builtin"}
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(1.5), *session.posargs, env=env)
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(gib=1.5), *session.posargs, env=env)
 
 
 @nox.session
@@ -121,7 +121,7 @@ def meminfo(key: str) -> int:
         return next(int(line.split()[1]) << 10 for line in table if line.startswith(f"{key}:"))
 
 
-def workers(gib: float) -> tuple[str, ...]:
+def workers(*, gib: float) -> tuple[str, ...]:
     """
     The workers of pytest-xdist that take `gib` GiB each: as many as the available memory holds, one CPU spared, and
     at least two.

@@ -110,9 +110,7 @@ jobs:
 
   synth_quartus:
     name: synth_quartus
-    # After Diamond, so that the three runners take the tests, Vivado and Diamond, and Vivado, the longest, never queues.
-    needs: synth_diamond
-    if: ${{ !cancelled() && needs.synth_diamond.result != 'skipped' }}
+    if: *run_ci
     runs-on: [self-hosted, ci-runner]
     container: *mega_toolchain_container
     steps:
