@@ -12,8 +12,10 @@ on:
       - '.github/workflows/release.yml'
   pull_request:
     paths-ignore: *docs_only
+  # Runs the deep tiers alone.
+  workflow_dispatch:
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ !contains(github.event.head_commit.message, '#yolo') }}
 env:
   # Every test by name with its outcome, and why each skipped one was skipped.
@@ -22,10 +24,12 @@ env:
 jobs:
   tests:
     name: tests
-    # Skipped by `#yolo` in the head commit message, and for a same-repo PR, which its head commit's push run covers.
+    # Skipped by `#yolo` in the head commit message, for a same-repo PR, which its head commit's push run covers, and
+    # for a manual run.
     if: &run_ci >-
       !contains(github.event.head_commit.message, '#yolo') &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
+      (github.event_name == 'push' ||
+      github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: [self-hosted, ci-runner]
     container: &mega_toolchain_container
       image: containers.zubax.com/zubax-fpga-toolchain-mega:latest
@@ -43,7 +47,7 @@ jobs:
 
   deep:
     name: deep
-    if: &run_deep contains(github.event.head_commit.message, '#ci-deep')
+    if: &run_deep contains(github.event.head_commit.message, '#ci-deep') || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, ci-runner]
     container: *mega_toolchain_container
     steps:
