@@ -16,40 +16,6 @@ nox.options.reuse_existing_virtualenvs = True
 BLACK_TARGETS = ("zkf", "tests", "noxfile.py")
 
 
-def meminfo(key: str) -> int:
-    """A figure of `/proc/meminfo`, in bytes."""
-    with open("/proc/meminfo") as table:
-        return next(int(line.split()[1]) << 10 for line in table if line.startswith(f"{key}:"))
-
-
-def workers(gib: float) -> tuple[str, ...]:
-    """
-    The workers of pytest-xdist that take `gib` GiB each: as many as the available memory holds, two CPUs spared, and
-    at least two.
-    """
-    count = min((os.process_cpu_count() or 2) - 2, int(meminfo("MemAvailable") // (gib * 2**30)))
-    return "-n", str(max(2, count)), "--dist", "worksteal"
-
-
-@contextmanager
-def watched(session: nox.Session) -> Iterator[None]:
-    """Logs the most memory that the machine had in use while the block ran, sampled each second."""
-    total, peak, done = meminfo("MemTotal"), [0], threading.Event()
-
-    def sample() -> None:
-        while not done.wait(1):
-            peak[0] = max(peak[0], total - meminfo("MemAvailable"))
-
-    thread = threading.Thread(target=sample, daemon=True)
-    thread.start()
-    try:
-        yield
-    finally:
-        done.set()
-        thread.join()
-        session.log(f"memory in use at most: {peak[0] / 2**30:.1f} GiB of {total / 2**30:.1f}, {peak[0] / total:.0%}")
-
-
 @nox.session(python=False, default=False)
 def clean(session):
     pats = [
@@ -108,29 +74,32 @@ def synth(session: nox.Session) -> None:
         session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(1), *session.posargs)
 
 
-def vendor(session: nox.Session, flows: tuple[str, ...], gib: float) -> None:
-    """The specs of the catalog through the `flows` of a vendor, each once; the reports go to `build/synth/`."""
+@nox.session
+def synth_vivado(session: nox.Session) -> None:
     session.install("-e", ".[test]")
-    options = tuple(option for flow in flows for option in ("--synth-flows", flow))
+    flows = ("--synth-flows", "vivado_artix7", "--synth-flows", "vivado_zynquplus")
     # The catalog closes on the texts that Amaranth's own Yosys prints; another Yosys prints others, placed otherwise.
     env = {"AMARANTH_USE_YOSYS": "builtin"}
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "synth", *options, *workers(gib), *session.posargs, env=env)
-
-
-@nox.session
-def synth_vivado(session: nox.Session) -> None:
-    vendor(session, ("vivado_artix7", "vivado_zynquplus"), 2.7)
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(2.7), *session.posargs, env=env)
 
 
 @nox.session
 def synth_diamond(session: nox.Session) -> None:
-    vendor(session, ("diamond_ecp5",), 1)
+    session.install("-e", ".[test]")
+    flows = ("--synth-flows", "diamond_ecp5")
+    env = {"AMARANTH_USE_YOSYS": "builtin"}
+    with watched(session):
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(1), *session.posargs, env=env)
 
 
 @nox.session
 def synth_quartus(session: nox.Session) -> None:
-    vendor(session, ("quartus_cyclone4", "quartus_cyclone5"), 1.5)
+    session.install("-e", ".[test]")
+    flows = ("--synth-flows", "quartus_cyclone4", "--synth-flows", "quartus_cyclone5")
+    env = {"AMARANTH_USE_YOSYS": "builtin"}
+    with watched(session):
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(1.5), *session.posargs, env=env)
 
 
 @nox.session
@@ -144,3 +113,37 @@ def black(session: nox.Session) -> None:
     session.install("black~=26.5")
     default = ("--check", *BLACK_TARGETS)
     session.run("python", "-m", "black", *(session.posargs or default))
+
+
+def meminfo(key: str) -> int:
+    """A figure of `/proc/meminfo`, in bytes."""
+    with open("/proc/meminfo") as table:
+        return next(int(line.split()[1]) << 10 for line in table if line.startswith(f"{key}:"))
+
+
+def workers(gib: float) -> tuple[str, ...]:
+    """
+    The workers of pytest-xdist that take `gib` GiB each: as many as the available memory holds, one CPU spared, and
+    at least two.
+    """
+    count = min((os.process_cpu_count() or 2) - 1, int(meminfo("MemAvailable") // (gib * 2**30)))
+    return "-n", str(max(2, count)), "--dist", "worksteal"
+
+
+@contextmanager
+def watched(session: nox.Session) -> Iterator[None]:
+    """Logs the most memory that the machine had in use while the block ran, sampled each second."""
+    total, peak, done = meminfo("MemTotal"), [0], threading.Event()
+
+    def sample() -> None:
+        while not done.wait(1):
+            peak[0] = max(peak[0], total - meminfo("MemAvailable"))
+
+    thread = threading.Thread(target=sample, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        done.set()
+        thread.join()
+        session.log(f"memory in use at most: {peak[0] / 2**30:.1f} GiB of {total / 2**30:.1f}, {peak[0] / total:.0%}")
