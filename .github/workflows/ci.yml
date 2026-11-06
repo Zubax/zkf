@@ -76,8 +76,8 @@ jobs:
         uses: actions/upload-artifact@v7
         with: { name: synth-artifacts, path: build, if-no-files-found: ignore }
 
-  synth_vendor:
-    name: synth_vendor
+  synth_vivado:
+    name: synth_vivado
     if: *run_ci
     runs-on: [self-hosted, ci-runner]
     container: *mega_toolchain_container
@@ -90,7 +90,33 @@ jobs:
           echo 'module warm; endmodule' > /tmp/warm.v
           echo 'read_verilog /tmp/warm.v' > /tmp/warm.tcl
           vivado -mode batch -nojournal -nolog -source /tmp/warm.tcl
-      - run: nox -s synth_vendor
+      - run: nox -s synth_vivado
       - if: always()
         uses: actions/upload-artifact@v7
-        with: { name: synth_vendor-artifacts, path: build, if-no-files-found: ignore }
+        with: { name: synth_vivado-artifacts, path: build, if-no-files-found: ignore }
+
+  synth_diamond:
+    name: synth_diamond
+    if: *run_ci
+    runs-on: [self-hosted, ci-runner]
+    container: *mega_toolchain_container
+    steps:
+      - *checkout_step
+      - *python_cache_step
+      - run: nox -s synth_diamond
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with: { name: synth_diamond-artifacts, path: build, if-no-files-found: ignore }
+
+  synth_quartus:
+    name: synth_quartus
+    if: *run_ci
+    runs-on: [self-hosted, ci-runner]
+    container: *mega_toolchain_container
+    steps:
+      - *checkout_step
+      - *python_cache_step
+      - run: nox -s synth_quartus
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with: { name: synth_quartus-artifacts, path: build, if-no-files-found: ignore }

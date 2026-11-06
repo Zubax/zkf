@@ -108,16 +108,29 @@ def synth(session: nox.Session) -> None:
         session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(1), *session.posargs)
 
 
-@nox.session
-def synth_vendor(session: nox.Session) -> None:
-    """The specs of the catalog through the flows of the vendors, each once; the reports go to `build/synth/`."""
+def vendor(session: nox.Session, flows: tuple[str, ...], gib: float) -> None:
+    """The specs of the catalog through the `flows` of a vendor, each once; the reports go to `build/synth/`."""
     session.install("-e", ".[test]")
-    names = ("diamond_ecp5", "vivado_artix7", "vivado_zynquplus", "quartus_cyclone4", "quartus_cyclone5")
-    flows = tuple(option for name in names for option in ("--synth-flows", name))
+    options = tuple(option for flow in flows for option in ("--synth-flows", flow))
     # The catalog closes on the texts that Amaranth's own Yosys prints; another Yosys prints others, placed otherwise.
     env = {"AMARANTH_USE_YOSYS": "builtin"}
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(2.8), *session.posargs, env=env)
+        session.run("python", "-m", "pytest", "-m", "synth", *options, *workers(gib), *session.posargs, env=env)
+
+
+@nox.session
+def synth_vivado(session: nox.Session) -> None:
+    vendor(session, ("vivado_artix7", "vivado_zynquplus"), 2.7)
+
+
+@nox.session
+def synth_diamond(session: nox.Session) -> None:
+    vendor(session, ("diamond_ecp5",), 1)
+
+
+@nox.session
+def synth_quartus(session: nox.Session) -> None:
+    vendor(session, ("quartus_cyclone4", "quartus_cyclone5"), 1.5)
 
 
 @nox.session

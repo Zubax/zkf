@@ -303,10 +303,8 @@ def table(spec: Table, rows: Sequence[Row]) -> str:
 
 
 def write(rows: Mapping[str, Sequence[Row]], directory: Path) -> None:
-    """The reports of the rows of a session, by flow, each table in the order of the catalog; none of another."""
+    """The report of each flow that a session ran, of its rows in the order of the catalog."""
     order = list(CATALOG)
-    for flow in TABLES:
-        (directory / flow / "index.html").unlink(missing_ok=True)
     for flow, found in rows.items():
         (directory / flow).mkdir(parents=True, exist_ok=True)
         ordered = sorted(found, key=lambda row: order.index(row["name"]))

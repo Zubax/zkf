@@ -20,7 +20,9 @@ class Target(Device):
 
 
 def tcl(target: Target, design: Design, rtl: Path, harness: Path, xdc: Path) -> str:
-    return f"""read_verilog {{{rtl}}} {{{harness}}}
+    # One thread a run, as the suite runs a spec a worker: the results are the same, for less memory and CPU.
+    return f"""set_param general.maxThreads 1
+read_verilog {{{rtl}}} {{{harness}}}
 read_xdc {{{xdc}}}
 synth_design -top {design.top} -part {target.part(design)} -mode out_of_context
 opt_design
