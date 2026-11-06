@@ -129,7 +129,7 @@ representation.
     asin(x)             = atan2(x, sqrt(1 - x⋅x))                       ; x ∈ [-1,+1]
     acos(x)             = atan2(sqrt(1 - x⋅x), x)                       ; x ∈ [-1,+1]
     h                   = max(abs(x), abs(y))
-    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; also see zkf.Cordic
+    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; x, y finite; also see zkf.Cordic
 
     min(a,b), max(a,b)  = zkf.Cmp(a,b)
     clamp(x, lo, hi)    = min(max(x, lo), hi)
@@ -233,7 +233,7 @@ unreasonable, check the synthesis settings first, and if necessary give `rom_att
 
 ## Sizing the exponent and the significand (wexp/wman)
 
-The library is mostly focused on formats with wman≥7 (that is, at least 8 significand bits including the hidden one),
+The library is mostly focused on formats with wman≥7 (that is, at least 7 significand bits including the hidden one),
 which covers all commonly encountered standard float formats.
 Narrower wman is supported where logic generalizes to narrower widths without special-casing (e.g., in simple algebra).
 Certain complex operators may require a larger minimal width where special efforts are required to support narrow

@@ -397,6 +397,9 @@ def test_refusals() -> None:
         Cordic(fmt, wmultiplier=18, stage_core_mul=2)
     with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1$"):
         Cordic(fmt, wmultiplier=36, stage_core_mul=0)
+    # The default, the fastest configuration, is refused clearly rather than demanded.
+    with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1$"):
+        Cordic(fmt, wmultiplier=36)
     refusal = "stage_core=CoreStages.SHIFT|TAKEN|ORDERED: leave out TAKEN|ORDERED, which mode=0 lacks"
     with pytest.raises(ValueError, match=f"^{re.escape(refusal)}$"):
         Cordic(

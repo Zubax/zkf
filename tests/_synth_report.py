@@ -34,9 +34,7 @@ class Table:
 HARNESS = """<p>Each row is measured through a registered synthesis harness: every DUT input is driven by a wrapper
 register and every DUT output is captured by a wrapper register. This makes the reported f max a register-to-register
 limit instead of ignoring primary-input or primary-output paths. The harness registers are included in utilization
-numbers, but the DUT latency column excludes the harness: it is the latency that the model states.</p>
-<p>Helper-module rows are standalone out-of-context builds. Parent-module rows are flattened and context-optimized, so
-helper and parent resource counts are not additive.</p>"""
+numbers, but the DUT latency column excludes the harness: it is the latency that the model states.</p>"""
 
 YOSYS_LINKS = (("nextpnr", "nextpnr_log"), ("Yosys", "yosys_log"), ("JSON", "nextpnr_json"))
 VIVADO = """<p>Flow: Vivado synthesis, placement and routing out of context for {part}, or another speed grade where the

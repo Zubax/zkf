@@ -118,7 +118,7 @@ class Cordic(Operator):
 
     operator = "cordic"
     stage_input: int = 0
-    stage_core_mul: int
+    stage_core_mul: int = 0
     """As `Mul`'s, from 1 up; a rotation passes the product twice in series."""
     stage_core: CoreStages = CoreStages(0)
     """See `Cordic.CoreStages`; a fixed mode refuses those it lacks."""

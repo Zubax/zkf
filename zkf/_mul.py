@@ -20,7 +20,7 @@ class Mul(Operator):
     stage_core_mul: int = 0
     """
     Taken in this order: the output, the operands' capture, the grid of products (a lone multiplier's pipeline
-    register), then the levels of the grid's sum.
+    register), then each level of the grid's sum but its last.
     """
     stage_output: int = 0
     wmultiplier: int

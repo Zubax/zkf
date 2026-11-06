@@ -13,10 +13,11 @@ from collections import Counter
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from _harness import FREQ_MHZ, Design, Row, Sources, run
 
-type Report = dict[str, object]
+type Report = dict[str, Any]
 """The JSON report of nextpnr-ecp5; nextpnr-xilinx gives none."""
 
 ROM_ATTRS = {"rom_style": "block"}
@@ -67,7 +68,7 @@ def synthesize(target: Target, design: Design, directory: Path) -> Row:
 
     nextpnr_text = (directory / "nextpnr.log").read_text()
     data = read_report(report)
-    cells = netlist_cells(netlist, design.top) or log_cells((directory / "yosys.log").read_text())
+    cells = netlist_cells(netlist, design.top)
 
     def link(path: Path) -> str:
         return str(path.relative_to(directory.parent)) if path.is_file() else ""
@@ -89,47 +90,13 @@ def synthesize(target: Target, design: Design, directory: Path) -> Row:
     return row | target.resources(cells, data, nextpnr_text)
 
 
-def log_cells(yosys_log: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
-    for line in yosys_log.splitlines():
-        match = re.match(r"\s+([A-Za-z0-9_.$]+)\s+([0-9]+)\s*$", line)
-        if match:
-            counts[match.group(1)] = int(match.group(2))
-        match = re.match(r"\s+([0-9]+)\s+([A-Za-z0-9_.$]+)\s*$", line)
-        if match:
-            counts[match.group(2)] = int(match.group(1))
-    return counts
-
-
 def netlist_cells(netlist: Path, top: str) -> dict[str, int]:
-    try:
-        data = json.loads(netlist.read_text())
-    except json.JSONDecodeError, FileNotFoundError:
-        return {}
-    modules = data.get("modules")
-    if not isinstance(modules, dict):
-        return {}
-    module = modules.get(top)
-    if not isinstance(module, dict):
-        return {}
-    cells = module.get("cells")
-    if not isinstance(cells, dict):
-        return {}
-    counts: Counter[str] = Counter()
-    for cell in cells.values():
-        if isinstance(cell, dict) and isinstance(cell.get("type"), str):
-            counts[cell["type"]] += 1
-    return dict(counts)
+    return dict(Counter(cell["type"] for cell in json.loads(netlist.read_text())["modules"][top]["cells"].values()))
 
 
 def read_report(path: Path) -> Report:
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text())
-    except json.JSONDecodeError:
-        return {}
-    return data if isinstance(data, dict) else {}
+    report: Report = json.loads(path.read_text()) if path.exists() else {}
+    return report
 
 
 def clocks(nextpnr_log: str, report: Report) -> dict[str, tuple[float, float, bool]]:
@@ -137,15 +104,10 @@ def clocks(nextpnr_log: str, report: Report) -> dict[str, tuple[float, float, bo
     Each clock's achieved frequency and target, in MHz, and whether it meets the target: from the report, or else from
     the log, which states each clock after placement and again after routing.
     """
-    found: dict[str, tuple[float, float, bool]] = {}
-    table = report.get("fmax")
-    if isinstance(table, dict):
-        for name, clock in table.items():
-            if not isinstance(clock, dict):
-                continue
-            achieved, constraint = clock.get("achieved"), clock.get("constraint")
-            if isinstance(achieved, (int, float)) and isinstance(constraint, (int, float)):
-                found[name] = float(achieved), float(constraint), achieved >= constraint
+    found = {
+        name: (float(clock["achieved"]), float(clock["constraint"]), clock["achieved"] >= clock["constraint"])
+        for name, clock in report.get("fmax", {}).items()
+    }
     if not found:
         pattern = r"Max frequency for clock\s+'([^']+)':\s*([0-9.]+)\s*MHz\s*\((PASS|FAIL) at ([0-9.]+) MHz\)"
         for name, achieved, verdict, constraint in re.findall(pattern, nextpnr_log):
@@ -181,15 +143,8 @@ def used(count: int, available: int | None = None) -> str:
 
 
 def resource(report: Report, key: str) -> tuple[int, int | None] | None:
-    table = report.get("utilization")
-    if isinstance(table, dict):
-        item = table.get(key)
-        if isinstance(item, dict):
-            count = item.get("used")
-            available = item.get("available")
-            if isinstance(count, int):
-                return count, available if isinstance(available, int) else None
-    return None
+    item = report.get("utilization", {}).get(key)
+    return None if item is None else (item["used"], item.get("available"))
 
 
 def format_resource(report: Report, key: str, fallback: int | None = None) -> str:

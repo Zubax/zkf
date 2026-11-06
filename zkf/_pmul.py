@@ -54,11 +54,7 @@ class Pmul(wiring.Component):
 
     The operands are cut into their `slices`, one row of the grid of their products per slice of `a`, and the products
     are summed: unsigned ones by the diagonals of the grid, signed ones by rows, then the rows. `stages` turns on the
-    first of `positions`: `p`; the operands; the grid; each level of the sum but its last, from the grid's. The latency
-    is `stages`.
-
-    `attrs` go on the operands' capture where a register follows each multiplier: a lone one's from 2 stages on, a
-    grid's from 3.
+    first of `positions`, as `Mul.stage_core_mul` orders them, and is the latency; `attrs` go as `Mul.mul_attrs` do.
     """
 
     in_valid: Signal

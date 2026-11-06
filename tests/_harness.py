@@ -160,10 +160,9 @@ class Design:
         else:
             stages = f"{latency} {'stage' if latency == 1 else 'stages'}"
         group = f"{type(self.model).__name__} {getattr(self.model, 'fmt', '')}"
-        config = self.model.config if isinstance(self.model, Block) else {}
         return {
             "name": self.name,
-            "knobs": ", ".join(f"{knob}={value}" for knob, value in config.items()),
+            "knobs": ", ".join(f"{knob}={value}" for knob, value in self.model.config.items()),
             "register_stages": stages,
             "group": group,
         }

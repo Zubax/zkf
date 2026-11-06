@@ -134,33 +134,6 @@ def random_bits(width: int, rng: np.random.Generator) -> int:
     return value
 
 
-def random_pack_mag_scale(fmt: ZkfFormat, rng: np.random.Generator) -> tuple[int, int, int]:
-    wmag = 2 * fmt.wman
-    sign = int(rng.integers(0, 2))
-    mode = int(rng.integers(0, 12))
-    if mode == 0:
-        mag = 0
-    elif mode <= 3:
-        width = int(rng.integers(1, wmag + 1))
-        mag = (1 << (width - 1)) | random_bits(width - 1, rng)
-    elif mode <= 5:
-        centers = [1, 1 << (fmt.wfrac - 1), 1 << fmt.wfrac, 1 << fmt.wman, (1 << wmag) - 1]
-        mag = min(max(centers[int(rng.integers(0, len(centers)))] + int(rng.integers(-16, 17)), 0), ((1 << wmag) - 1))
-    else:
-        mag = random_bits(wmag, rng)
-    scale_min = -(1 << (fmt.wexp + 1))
-    scale_max = (1 << (fmt.wexp + 1)) - 1
-    if mode in (1, 4):
-        scale = int(rng.integers(scale_min, fmt.min_exp_unbiased + 4))
-    elif mode in (2, 5):
-        scale = int(rng.integers(fmt.max_exp_unbiased - wmag - 4, scale_max + 1))
-    elif mode == 3:
-        scale = int(rng.choice([fmt.min_exp_unbiased, fmt.min_exp_unbiased - 1, -1, 0, 1, fmt.max_exp_unbiased]))
-    else:
-        scale = int(rng.integers(scale_min, scale_max + 1))
-    return sign, mag, scale
-
-
 def exp2_operands(fmt: ZkfFormat, count: int, cf: int, seed: int = SEED) -> list[int]:
     """
     The corners; powers of two of both signs, whose results are exact and meet the overflow and the underflow; the
