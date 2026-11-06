@@ -311,10 +311,5 @@ Roughly ordered by severity.
   the first that closes; or an API that takes the clock and the speed grade and picks one (preferred).
   Each set is judged by its worst placement; a timing model would not do, as the binding paths are often mostly routing.
 
-### Postponed as YAGNI
-
 - `wmultiplier` is one number, the narrower side of a rectangular multiplier: two of its slices can be one tile on the
   chip (25x18, 27x18), so a grid register may cut nothing there.
-
-- The default test tier takes 10 minutes on 8 workers. Simulating the C++ that `amaranth.back.cxxrtl`
-  prints is 16 to 103 times faster, with a bench of its own.
