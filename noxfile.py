@@ -2,9 +2,12 @@
 Central verification entry point for the Zubax Kulibin Float (ZKF) engine.
 """
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 import os
 import shutil
+import threading
 
 import nox
 
@@ -12,7 +15,39 @@ nox.options.reuse_existing_virtualenvs = True
 
 BLACK_TARGETS = ("zkf", "tests", "noxfile.py")
 
-PYTEST_DIST = ("-n", str(max(1, round(2 * (os.cpu_count() or 2) / 3))), "--dist", "worksteal")
+
+def meminfo(key: str) -> int:
+    """A figure of `/proc/meminfo`, in bytes."""
+    with open("/proc/meminfo") as table:
+        return next(int(line.split()[1]) << 10 for line in table if line.startswith(f"{key}:"))
+
+
+def workers(gib: float) -> tuple[str, ...]:
+    """
+    The workers of pytest-xdist that take `gib` GiB each: as many as the available memory holds, two CPUs spared, and
+    at least two.
+    """
+    count = min((os.process_cpu_count() or 2) - 2, int(meminfo("MemAvailable") // (gib * 2**30)))
+    return "-n", str(max(2, count)), "--dist", "worksteal"
+
+
+@contextmanager
+def watched(session: nox.Session) -> Iterator[None]:
+    """Logs the most memory that the machine had in use while the block ran, sampled each second."""
+    total, peak, done = meminfo("MemTotal"), [0], threading.Event()
+
+    def sample() -> None:
+        while not done.wait(1):
+            peak[0] = max(peak[0], total - meminfo("MemAvailable"))
+
+    thread = threading.Thread(target=sample, daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        done.set()
+        thread.join()
+        session.log(f"memory in use at most: {peak[0] / 2**30:.1f} GiB of {total / 2**30:.1f}, {peak[0] / total:.0%}")
 
 
 @nox.session(python=False, default=False)
@@ -45,28 +80,32 @@ def tests(session: nox.Session) -> None:
     """The per-PR tier, with the gate on the branch coverage of the hardware's structural variants."""
     session.install("-e", ".[test]")
     coverage = ("--cov", "--cov-report=term-missing:skip-covered", "--cov-report=html:build/coverage")
-    session.run("python", "-m", "pytest", *PYTEST_DIST, *(session.posargs or coverage))
+    with watched(session):
+        session.run("python", "-m", "pytest", *workers(1.5), *(session.posargs or coverage))
 
 
 @nox.session(default=False)
 def deep(session: nox.Session) -> None:
     session.install("-e", ".[test]")
-    session.run("python", "-m", "pytest", "-m", "deep", *PYTEST_DIST, *session.posargs)
+    with watched(session):
+        session.run("python", "-m", "pytest", "-m", "deep", *workers(2), *session.posargs)
 
 
 @nox.session
 def accuracy(session: nox.Session) -> None:
     """`exp2`, `log2` and `cordic` against mpmath."""
     session.install("-e", ".[test]")
-    session.run("python", "-m", "pytest", "-m", "accuracy", *PYTEST_DIST, *session.posargs)
+    with watched(session):
+        session.run("python", "-m", "pytest", "-m", "accuracy", *workers(1.5), *session.posargs)
 
 
 @nox.session
 def synth(session: nox.Session) -> None:
     """The specs of the catalog through the Yosys flow on the ECP5, each once; the reports go to `build/synth/`."""
     session.install("-e", ".[test]")
-    workers = ("-n", str(os.cpu_count() or 1), "--dist", "worksteal")
-    session.run("python", "-m", "pytest", "-m", "synth", "--synth-flows", "yosys_ecp5", *workers, *session.posargs)
+    flows = ("--synth-flows", "yosys_ecp5")
+    with watched(session):
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(1), *session.posargs)
 
 
 @nox.session
@@ -75,13 +114,10 @@ def synth_vendor(session: nox.Session) -> None:
     session.install("-e", ".[test]")
     names = ("diamond_ecp5", "vivado_artix7", "vivado_zynquplus", "quartus_cyclone4", "quartus_cyclone5")
     flows = tuple(option for name in names for option in ("--synth-flows", name))
-    # A worker's place and route takes up to 5 GB, Vivado's on the UltraScale+; more than the memory holds get killed.
-    with open("/proc/meminfo") as meminfo:
-        available_kib = next(int(line.split()[1]) for line in meminfo if line.startswith("MemAvailable:"))
-    workers = ("-n", str(max(1, min(int(PYTEST_DIST[1]), available_kib // (6 << 20)))), "--dist", "worksteal")
     # The catalog closes on the texts that Amaranth's own Yosys prints; another Yosys prints others, placed otherwise.
     env = {"AMARANTH_USE_YOSYS": "builtin"}
-    session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers, *session.posargs, env=env)
+    with watched(session):
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(3), *session.posargs, env=env)
 
 
 @nox.session
