@@ -107,8 +107,7 @@ class Divsqrt(Operator):
             if a.is_inf:
                 return DivsqrtResult(fmt.inf(0), False)
 
-            # The recurrence in integers: `qfrac` fraction bits of the root of the radicand aligned to an even exponent,
-            # the guard by the rule of the parity of WMAN, the sticky from the exact remainder.
+            # `qfrac` fraction bits of the root of the radicand at an even exponent; the guard by WMAN's parity.
             qfrac = fmt.wfrac + (fmt.wfrac % 2)
             r = (a.exp - fmt.bias) & 1
             radicand = a.significand() << (2 * qfrac + r - fmt.wfrac)
@@ -203,9 +202,8 @@ class DivsqrtStep(wiring.Component):
                         m.d.comb += hi_sel.eq(hi_case)
             w_next, d_next, d3_next = w_sel, d | placed(digit), Cat(d3[: iq + 1], hi_sel)
         else:
-            # Selected by the compares, which are monotonic: a level shallower than by the digit, where the divider and
-            # the root share the path. The root's candidates fall back to `high` for the divider, so the select of `d3`
-            # stays 4:1.
+            # Selected by the monotonic compares, a level shallower than by the digit, where the operations share the
+            # path; the root's candidates fall back to `high` for the divider, so the select of `d3` stays 4:1.
             w_next = Mux(ge2, Mux(ge3, remainders[2], remainders[1]), Mux(ge1, remainders[0], scaled[:ww]))
             lower, upper, upper2 = (Mux(sqrt, value[:wh], high) for value in (high - 3, high + 3, high + 6))
             d3_next = Cat(d3[: iq + 1], Mux(ge2, Mux(ge3, upper2, upper), Mux(ge1, high, lower)))
@@ -508,8 +506,7 @@ class _Radix4(_Digits):
         ww = (2 if roots else 1) + wframe
         b, op = self.b, self.op
 
-        # The state after the first digit of each operation, of which an unfolded divider has none yet: the digits so
-        # far, then the remainder and the divisor or twice the root, and three times that.
+        # After the first digit, which an unfolded divider lacks: digits, remainder, the divisor or `2Q`, and 3x that.
         root = quotient = None
         if roots:
             root0 = self.root0(m, wframe, 2)
@@ -534,10 +531,7 @@ class _Radix4(_Digits):
             Signal(ww + 2, name="d30", reset_less=True),
         )
         m.d.sync += [w.eq(w0), d.eq(d0), d3.eq(d30)]
-        prefix = inc = None
-        if divides:
-            prefix = Signal(len(prefix0), name="prefix0", reset_less=True)
-            m.d.sync += prefix.eq(prefix0)
+        prefix = _Prefix(m, prefix0 if divides else None)
         inj = None
         if mode == 2:  # what the root puts into the subtrahends of the next stage, registered off its compares
             assert den is not None
@@ -552,15 +546,13 @@ class _Radix4(_Digits):
             m.d.comb += [step.w.eq(w), step.d.eq(d), step.d3.eq(d3)]
             if ops is not None and inj is not None:
                 m.d.comb += [step.sqrt.eq(ops), step.inj.eq(inj)]
-            taken_so_far = prefix if prefix is not None else d[wframe + 1 - 2 * s : wframe + 2]  # `d` is twice the root
-            if s == stages - 1:
-                inc = Signal(len(taken_so_far), name="inc", reset_less=True)
-                m.d.sync += inc.eq(taken_so_far + 1)
-                if divides and not even:  # 5 and 7 times the divisor, for the step of radix 8 that ends it
-                    d5 = Signal(ww + 3, name="d5", reset_less=True)
-                    m.d.sync += d5.eq(d + Cat(Const(0, 2), d))
-                    d7 = Signal(ww + 3, name="d7", reset_less=True)
-                    m.d.sync += d7.eq(Cat(Const(0, 3), d) - d)
+            prefix.step(s, step.digit, d[wframe + 1 - 2 * s : wframe + 2], s == stages - 1)  # `d` is twice the root
+            # 5 and 7 times the divisor, for the step of radix 8 that ends an odd WMAN.
+            if s == stages - 1 and divides and not even:
+                d5 = Signal(ww + 3, name="d5", reset_less=True)
+                m.d.sync += d5.eq(d + Cat(Const(0, 2), d))
+                d7 = Signal(ww + 3, name="d7", reset_less=True)
+                m.d.sync += d7.eq(Cat(Const(0, 3), d) - d)
             if mode == 2:
                 assert ops is not None
                 held_bits = Cat(d[iq - 2], d[iq - 1], d3[iq - 2]) if iq >= 2 else None
@@ -570,10 +562,6 @@ class _Radix4(_Digits):
                 else:
                     m.d.comb += inj.eq(0)
                 ops = delay(m, f"op{s}", 1, ops, 1)
-            if prefix is not None:
-                prefix_q = Signal(len(prefix) + 2, name=f"prefix{s}", reset_less=True)
-                m.d.sync += prefix_q.eq(Cat(step.digit, prefix))
-                prefix = prefix_q
             w, d, d3 = (
                 Signal(ww, name=f"w{s}", reset_less=True),
                 Signal(ww, name=f"d{s}", reset_less=True),
@@ -581,10 +569,8 @@ class _Radix4(_Digits):
             )
             m.d.sync += [w.eq(step.w_next), d.eq(step.d_next), d3.eq(step.d3_next)]
 
-        assert inc is not None
         wp = 2 * stages + 1
-        if prefix is None:
-            prefix = d[wframe + 2 - wp : wframe + 2]
+        digits, digits1 = prefix.final(d[wframe + 2 - wp : wframe + 2])
         if even:
             m.submodules.last = last = _Last4(wman, mode, fold, ww, wp)
             m.d.comb += last.inj.eq(Cat(inj[0], inj[2]) if inj is not None else Const(0, 2))
@@ -595,8 +581,7 @@ class _Radix4(_Digits):
         m.d.comb += last.w.eq(w)
         m.d.comb += last.d.eq(d)
         m.d.comb += last.d3.eq(d3)
-        m.d.comb += last.prefix.eq(prefix)
-        m.d.comb += last.prefix1.eq(_plus1(prefix, inc, 2))
+        m.d.comb += [last.prefix.eq(digits), last.prefix1.eq(digits1)]
         m.d.comb += self.significand.eq(last.significand)
         return m
 
@@ -646,8 +631,7 @@ class _Radix8(_Digits):
         wman, wfrac = fmt.wman, fmt.wfrac
         layout, stages = self.layout(model), self.stages(model)
         divides, roots = mode != 1, mode != 0
-        # Fraction bits of the frame: the root's last digit weighs 1 for a guard after it, 4 for a digit of radix 4,
-        # and 1 for none, its guard in the digit.
+        # The root's last digit weighs 1 with a guard after it, 4 as a digit of radix 4, 1 with its guard in the digit.
         wframe = wfrac if not roots or layout.last_r == 1 else wman
         ww = (2 if roots else 1) + wframe
         b, op = self.b, self.op
@@ -685,10 +669,7 @@ class _Radix8(_Digits):
             ops = delay(m, "op0", 1, op, 1)
         w, d = Signal(ww, name="w0", reset_less=True), Signal(ww, name="d0", reset_less=True)
         m.d.sync += [w.eq(w0), d.eq(d0)]
-        prefix = inc = None
-        if divides:
-            prefix = Signal(len(prefix0), name="prefix0", reset_less=True)
-            m.d.sync += prefix.eq(prefix0)
+        prefix = _Prefix(m, prefix0 if divides else None)
         inj = None
         if mode == 2:  # what the root puts into the subtrahends of the next stage, registered off its compares
             inj = Signal(7, name="inj0", reset_less=True)
@@ -703,23 +684,15 @@ class _Radix8(_Digits):
                 if ops is not None and inj is not None:
                     m.d.comb += [step.sqrt.eq(ops), step.inj.eq(inj)]
             m.d.comb += [step.w.eq(w), step.d.eq(d)]
-            # The digits so far; `d` is twice the root.
-            taken_so_far = prefix if prefix is not None else d[iq(s - 1) + 1 : wframe + 2]
-            if s == stages - 1:
-                inc = Signal(len(taken_so_far), name="inc", reset_less=True)
-                m.d.sync += inc.eq(taken_so_far + 1)
-                if mode == 2 and layout.last_q >= 3:  # the divisor's multiples for the last bits
-                    d3, d5, d7 = multiples(step.d, s)
+            prefix.step(s, step.digit, d[iq(s - 1) + 1 : wframe + 2], s == stages - 1)  # `d` is twice the root
+            if s == stages - 1 and mode == 2 and layout.last_q >= 3:  # the divisor's multiples for the last bits
+                d3, d5, d7 = multiples(step.d, s)
             if mode == 2:
                 assert ops is not None
                 if s < stages - 1:
                     inj = Signal(7, name=f"inj{s}", reset_less=True)
                     m.d.sync += inj.eq(ops.replicate(7) | _bits(d, iq(s + 1) - 3, 7))
                 ops = delay(m, f"op{s}", 1, ops, 1)
-            if prefix is not None:
-                prefix_q = Signal(len(prefix) + 3, name=f"prefix{s}", reset_less=True)
-                m.d.sync += prefix_q.eq(Cat(step.digit, prefix))
-                prefix = prefix_q
             d_next = step.d_next if mode else d
             w, d = Signal(ww, name=f"w{s}", reset_less=True), Signal(ww, name=f"d{s}", reset_less=True)
             m.d.sync += [w.eq(step.w_next), d.eq(d_next)]
@@ -728,13 +701,11 @@ class _Radix8(_Digits):
                 d5 = delay(m, f"d5{s}", ww + 3, d5, 1)
                 d7 = delay(m, f"d7{s}", ww + 3, d7, 1)
 
-        assert inc is not None
-        if prefix is None:
-            prefix = d[iq(stages - 1) + 1 : wframe + 2]
-        m.submodules.last = last = _Last(wman, mode, layout.last_q, layout.last_r, ww, len(prefix))
+        digits, digits1 = prefix.final(d[iq(stages - 1) + 1 : wframe + 2])
+        m.submodules.last = last = _Last(wman, mode, layout.last_q, layout.last_r, ww, len(digits))
         m.d.comb += last.sqrt.eq(ops if ops is not None else Const(mode, 1))
         m.d.comb += [last.w.eq(w), last.d.eq(d), last.d3.eq(d3), last.d5.eq(d5), last.d7.eq(d7)]
-        m.d.comb += [last.prefix.eq(prefix), last.prefix1.eq(_plus1(prefix, inc, 3))]
+        m.d.comb += [last.prefix.eq(digits), last.prefix1.eq(digits1)]
         m.d.comb += self.significand.eq(last.significand)
         return m
 
@@ -746,6 +717,38 @@ def _either(op: Value, root: tuple[Value, ...] | None, quotient: tuple[Value, ..
         assert found is not None
         return found
     return tuple(Mux(op, r, q) for r, q in zip(root, quotient))
+
+
+class _Prefix:
+    """
+    The digits of a division so far, `first` shifted a digit a stage, and `inc`, those before the last digit plus one,
+    registered beside it (see `_plus1`); a root's are read off `d`, given as `of_root`.
+    """
+
+    def __init__(self, m: Module, first: Value | None) -> None:
+        self._m, self._bits = m, 0
+        self._inc: Signal | None = None
+        self._digits: Signal | None = None
+        if first is not None:
+            self._digits = Signal(len(first), name="prefix0", reset_less=True)
+            m.d.sync += self._digits.eq(first)
+
+    def step(self, s: int, digit: Value, of_root: Value, last: bool) -> None:
+        self._bits = len(digit)
+        so_far = self._digits if self._digits is not None else of_root
+        if last:
+            self._inc = Signal(len(so_far), name="inc", reset_less=True)
+            self._m.d.sync += self._inc.eq(so_far + 1)
+        if self._digits is not None:
+            shifted = Signal(len(self._digits) + len(digit), name=f"prefix{s}", reset_less=True)
+            self._m.d.sync += shifted.eq(Cat(digit, self._digits))
+            self._digits = shifted
+
+    def final(self, of_root: Value) -> tuple[Value, Value]:
+        """The prefix and `prefix + 1`, as `_Last` takes them."""
+        assert self._inc is not None
+        digits = self._digits if self._digits is not None else of_root
+        return digits, _plus1(digits, self._inc, self._bits)
 
 
 def _plus1(prefix: Value, inc: Value, bits: int) -> Value:

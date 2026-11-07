@@ -87,7 +87,7 @@ def test_the_attributes_reach_the_text(model: Exp2 | Log2) -> None:
         ),
         (replace(model, mul_attrs={"use_dsp": "yes"}), '(* use_dsp = "yes" *)', r"reg .*"),
     ):
-        lines = marked.compile().splitlines()
+        lines = marked.compile().replace(marked.name, model.name).splitlines()  # the attributes name the module too
         at = [k for k, line in enumerate(lines) if line.strip() == attribute]
         assert at and all(re.fullmatch(declaration, lines[k + 1].strip()) for k in at), attribute
         assert [line for line in lines if line.strip() != attribute] == plain

@@ -41,7 +41,7 @@ Some of the simple combinational operators may produce non-canonical outputs (na
 this however does not affect compatibility with other operators since they always canonicalize inputs.
 
 A Yosys script that runs `opt` after `proc` with no `opt_clean` between them stops at "Conflicting init values" on
-some configurations; `attrmap -remove init` before `proc` avoids it, and the registers keep their initial values.
+some configurations; `attrmap -remove init` before `proc` avoids it.
 This is mostly a Yosys quirk rather than a library issue.
 
 Read as SystemVerilog (Icarus `-g2012`, which cocotb uses), the printed text needs a reset edge after time zero, or

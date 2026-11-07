@@ -77,8 +77,9 @@ class Timing:
 class Block(ABC):
     """
     A configuration that compiles to one Verilog top module. Its dataclass fields are its knobs, except those declared
-    `compare=False`. A subclass is declared `@dataclass(frozen=True, kw_only=True, eq=False)`; two instances of one
-    class are equal iff their `config` is, whether a knob was given or defaulted.
+    `compare=False`, such as the synthesis attributes: no part of `config`, part of `name`. A subclass is declared
+    `@dataclass(frozen=True, kw_only=True, eq=False)`; two instances of one class are equal iff their `config` is,
+    whether a knob was given or defaulted.
     """
 
     operator: ClassVar[str]
@@ -104,16 +105,20 @@ class Block(ABC):
     @property
     def name(self) -> str:
         """
-        The Verilog module name: the operator and a digest of `config` and the latency, so distinct configurations never
-        share a name, nor does one whose latency changes, at a length that vendor tools take; attributes are no part of
-        it, so two texts of one name can differ by them (`compile(prefix)` tells such modules apart).
+        The Verilog module name: the operator and a digest of `config`, the attributes and the latency, so distinct
+        configurations never share a name, nor does one whose latency changes, at a length that vendor tools take.
         """
-        knobs = []
-        for knob, value in self.config.items():
+
+        def plain(value: Any) -> Any:
             if isinstance(value, enum.Flag):  # By its members' names: their values shift when a member is added.
-                value = sorted(member.name for member in value)
-            knobs.append((knob, int(value) if isinstance(value, bool) else value))  # `True` and 1 are one knob value.
-        digest = hashlib.sha256(str((self.operator, knobs, self.timing)).encode()).hexdigest()
+                return sorted(member.name for member in value)
+            if isinstance(value, Mapping):  # None and {} are no attributes alike.
+                return sorted((key, plain(item)) for key, item in value.items())
+            return int(value) if isinstance(value, bool) else value  # `True` and 1 are one value.
+
+        knobs = sorted((knob, plain(value)) for knob, value in self.config.items())
+        attrs = sorted((f.name, plain(getattr(self, f.name) or {})) for f in fields(self) if not f.compare)
+        digest = hashlib.sha256(str((self.operator, knobs, attrs, self.timing)).encode()).hexdigest()
         return f"zkf_{self.operator}_{digest[:12]}"
 
     @property
@@ -227,7 +232,7 @@ def ge(left: Value, right: Value) -> Value:
 
 
 def add_carry(a: Value, b: Value, carry: Value) -> Value:
-    """`a + b + carry`, unsigned, as wide as `a + b`, the carry entering below both, which Quartus maps faster."""
+    """`a + b + carry`, unsigned, as wide as `a + b`, the carry entering below both: one carry chain in every tool."""
     return (Cat(carry, a) + Cat(carry, b))[1:]
 
 

@@ -265,7 +265,8 @@ def test_every_width_at_radix_4(wman: int) -> None:
 def test_the_attributes_reach_the_tables(mode: int) -> None:
     model = Cordic(ZkfFormat(5, 16), wmultiplier=18, mode=mode, stage_core_mul=3)
     attribute = '(* syn_romstyle = "logic" *)'
-    lines = replace(model, rom_attrs={"syn_romstyle": "logic"}).compile().splitlines()
+    styled = replace(model, rom_attrs={"syn_romstyle": "logic"})
+    lines = styled.compile().replace(styled.name, model.name).splitlines()  # the attributes name the module too
     marked = {lines[at + 1].split()[-1].rstrip(";") for at, line in enumerate(lines) if line.strip() == attribute}
     assert marked == {"angle"} | ({"taken"} if _ahead(model) else set())
     assert [line for line in lines if line.strip() != attribute] == model.compile().splitlines()

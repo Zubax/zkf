@@ -2,7 +2,7 @@ import enum
 import re
 import subprocess
 import sys
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -280,12 +280,22 @@ def test_one_configuration_is_one_model() -> None:
     block = {"rom_style": "block"}
     table = Exp2(F18, wmultiplier=18, stage_core_kernel=2, rom_attrs=block)
     plain = Exp2(F18, wmultiplier=18, stage_core_kernel=2)
-    assert table == plain and table.name == plain.name
+    assert table == plain and table.name != plain.name  # one configuration, two texts, two names
     assert replace(table, stage_output=1).rom_attrs == block and "rom_attrs" not in table.config
-    keep = {"keep": "true"}
+    keep: dict[str, int | str] = {"keep": "true", "syn_keep": 1}
     for model in (Mul(F36, stage_core_mul=3, wmultiplier=18), Cordic(F18, stage_core_mul=3, wmultiplier=18), table):
         kept = replace(model, mul_attrs=keep)
-        assert kept == model and kept.name == model.name and "mul_attrs" not in kept.config
+        assert kept == model and kept.name != model.name and "mul_attrs" not in kept.config
+        assert kept.name == replace(model, mul_attrs=dict(reversed(list(keep.items())))).name
+        assert replace(model, mul_attrs={}).name == model.name  # no attributes either way
+        assert replace(model, mul_attrs={"keep": True}).name == replace(model, mul_attrs={"keep": 1}).name
+
+    @dataclass(frozen=True, kw_only=True, eq=False)
+    class Labeled(Pipe):
+        label: str = field(default="", compare=False)
+
+    assert Labeled(w=1) == Labeled(w=1, label="x") and Labeled(w=1).name != Labeled(w=1, label="x").name
+    Labeled(w=1, label="x").compile()
 
 
 def test_clocked() -> None:

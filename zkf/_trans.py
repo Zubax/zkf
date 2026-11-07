@@ -34,9 +34,8 @@ degree.
 """
 _K_FAST = 11
 """
-The most bits that index a segment of `fast`'s table: four times the compact one's rows at most. 4096 rows would save
-about a fifth more kernel cycles over WMAN 10 to 53 for twice the extra ROM, but cuts Diamond's margin at e6m18 to under
-1%, and at e8m45 drops nextpnr's argument into the table's address to 88 MHz.
+The most bits that index a segment of `fast`'s table, four times the compact one's rows: one more would double the ROM
+for a few kernel cycles less, and the argument into the table's address begins to bind the timing.
 """
 _K_BASE = 9
 """The fewest bits that index a segment: one more doubles the table and takes a bit off every operand above `c0`."""
@@ -252,8 +251,7 @@ class Kernel(wiring.Component):
         m.d.sync += w.eq(self.x[:rw])
         c = [Cat(read.data.c0, Const(1, 1))] + [read.data[f"c{j}"] for j in range(1, d + 1)]
 
-        # The terms of the sum after c0 by when each is formed, each with whether it is subtracted: c1*w, the wide
-        # product, first.
+        # The terms after c0 by when each is formed, with whether it subtracts; c1*w, the wide product, first.
         terms: dict[int, list[tuple[bool, Value]]] = defaultdict(list)
         terms[at.ready["p1"]].append((not exp2, product("p1", c[1], w[rw - t[0] :])[t[0] - (cw[1] - fields[1]) :]))
 
@@ -269,8 +267,7 @@ class Kernel(wiring.Component):
                 continue
             name, a, b, formed = f"p{j}", c[j], w[rw - t[i] :], at.ready[f"p{j}"]
             if name in at.post:
-                # Its capture, and its output after the pair's sum, which a multiplier's post-adder takes: the capture
-                # is held, with the pair's register behind the multiplier.
+                # Its output after the pair's sum, for a multiplier's post-adder: the capture held, the register behind.
                 attrs = self._mul_attrs
                 a, b = delay(m, f"{name}_a", len(a), a, formed, attrs), delay(m, f"{name}_b", len(b), b, formed, attrs)
                 pj = product(name, a, b, 0)
@@ -319,8 +316,7 @@ class Kernel(wiring.Component):
         for time, group in sorted(terms.items()):
             out_valid, partial = pipe(m, f"sum{time}_", out_valid, len(partial), partial, time - since)
             if time == max(terms) and len(group) == 1:
-                # The last term meets only the sum's low bits, whose carry or borrow selects the high bits or their
-                # step, formed beside it.
+                # A carry select: the last term meets the low bits; their carry or borrow picks the high bits or a step.
                 [(subtracted, term)] = group
                 n = len(term)
                 low = partial[:n] - term if subtracted else partial[:n] + term
@@ -364,8 +360,7 @@ def _arith_range(spec: Spec, row: Sequence[int]) -> tuple[Fraction, Fraction]:
 
     linear = odd(0)
     if spec.tc:
-        # c1 * wn = c1 * wh / 2**t0 + c1 * wl / 2**rw exactly; the second product drops the low sc bits of c1. Two
-        # floors.
+        # c1 * wn = c1 * wh / 2**t0 + c1 * wl / 2**rw; the second product drops the low sc bits of c1; two floors.
         tc, sc = spec.tc, spec.sc
         if not (tc == rw - t[0] and 0 <= sc <= rw and sc < row[1].bit_length()):
             raise ValueError("split of the wide product")
@@ -508,8 +503,7 @@ def _generate(
         rw = width - k
         # The segment boundary nearest sqrt(2) - 1.
         thr = int(_fitting.nint((_fitting.sqrt(2) - 1) * (1 << k))) if function == "log2" else 0
-        # A probe fits only the segments where each coefficient peaks and the error is largest, those of the ends and
-        # of re-centering: its widths are the full fit's and its estimate a bound below.
+        # A probe fits the segments where each coefficient peaks and the error is largest: the widths are the fit's.
         segments = _ends(function, k, thr) if probe else range(1 << k)
         raw = [_fit(function, k, d, cf, thr, segment) for segment in segments]
         if not all(row[j] for row in raw for j in range(1, d + 1)):  # a zero: the degree is too high for the segments
@@ -526,8 +520,7 @@ def _generate(
             return shorter if shorter != spec and _estimate(shorter, raw, segments)[0] <= _SELECT else spec
 
         if d == 1 and cut:
-            # c1*w past a multiple of the multipliers by a few bits on either side: c1 gives up its low bits, w its own,
-            # if the budget allows.
+            # c1 and w each give up the few bits past a multiple of the multipliers, if the budget allows.
             z1, t0 = cw[1] - fitted(cw[1]), fitted(rw)
             rounded = [[row[0], ((row[1] + ((1 << z1) >> 1)) >> z1) << z1] for row in raw]
             shorter = replace(spec, z=(0, z1), t=(t0,))
@@ -538,8 +531,7 @@ def _generate(
             if max(t2, cw[2], q[0]) > narrow:
                 continue
             if rw > narrow:
-                # The wide product takes a multiplier's width of argument; the bits below multiply the top of c1, unless
-                # dropping them costs about an LSB only.
+                # A multiplier's width of argument; the bits below multiply the top of c1, unless they cost an LSB only.
                 tc, sc = (rw - narrow, max(0, min(narrow - 2, cw[1] - 2))) if cw[1] - narrow > 1 else (0, 0)
                 spec = replace(spec, t=(narrow,), tc=tc, sc=sc)
         elif d == 3:
@@ -700,9 +692,8 @@ def _schedule(spec: Spec, wmultiplier: int, stages: int) -> _Schedule:
         assert len({n[name] for name in squares}) == 1, "the square's products are of one size"
         ready["sq"] = n[squares[0]]
         ready["sqn"] = n["sqn"] if spec.tn else ready["sq"]
-        # Pair i is formed at its product's count, that of a `post` product in its register; the chain starts once its
-        # top pair is, each product takes its operands once the pair above and its square are, and each pair joins
-        # once both it and the product above are formed.
+        # A pair forms at its product's count, a `post` one in its register; the chain starts at its top pair, a product
+        # takes its operands once the pair above and its square are formed; a pair joins once it and that product are.
         formed = {i: n.get(f"p{2 * i + 1}", 0) for i in range(1, half + 1)}
         turn = {half: formed[half]}
         for i in range(half - 1, -1, -1):
