@@ -81,7 +81,7 @@ def synth_vivado(session: nox.Session) -> None:
     # The catalog closes on the texts that Amaranth's own Yosys prints; another Yosys prints others, placed otherwise.
     env = {"AMARANTH_USE_YOSYS": "builtin"}
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(gib=2.7), *session.posargs, env=env)
+        session.run("python", "-m", "pytest", "-m", "synth", *flows, *workers(gib=3), *session.posargs, env=env)
 
 
 @nox.session

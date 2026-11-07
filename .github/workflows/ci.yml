@@ -49,6 +49,8 @@ jobs:
     name: deep
     if: &run_deep contains(github.event.head_commit.message, '#ci-deep') || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, ci-runner]
+    # Beyond the 6 hours that a job gets by default.
+    timeout-minutes: &deep_timeout 1440
     container: *mega_toolchain_container
     steps:
       - *checkout_step
@@ -59,6 +61,7 @@ jobs:
     name: accuracy
     if: *run_deep
     runs-on: [self-hosted, ci-runner-small]
+    timeout-minutes: *deep_timeout
     container: *mega_toolchain_container
     steps:
       - *checkout_step
