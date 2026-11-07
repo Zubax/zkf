@@ -18,9 +18,8 @@ from _harness import Design, Row
 from _synth_report import BUILD
 
 FLOWS: dict[str, tuple[tuple[str, ...], Callable[[Design, Path], Row], Callable[[Design], str]]] = {
-    "yosys_ecp5": (_yosys.ECP5.tools, partial(_yosys.synthesize, _yosys.ECP5), _yosys.ECP5.part),
+    "yosys_ecp5": (_yosys.TOOLS, _yosys.synthesize, _yosys.part),
     "diamond_ecp5": (_diamond.TOOLS, _diamond.synthesize, _diamond.part),
-    "yosys_spartan": (_yosys.SPARTAN.tools, partial(_yosys.synthesize, _yosys.SPARTAN), _yosys.SPARTAN.part),
     "vivado_artix7": (_vivado.TOOLS, partial(_vivado.synthesize, _vivado.ARTIX7), _vivado.ARTIX7.part),
     "vivado_zynquplus": (_vivado.TOOLS, partial(_vivado.synthesize, _vivado.ZYNQUPLUS), _vivado.ZYNQUPLUS.part),
     "quartus_cyclone4": (_quartus.TOOLS, partial(_quartus.synthesize, _quartus.CYCLONE4), _quartus.CYCLONE4.part),
@@ -36,10 +35,9 @@ def test_synth(
     flow: str, name: str, request: pytest.FixtureRequest, record_property: Callable[[str, object], None]
 ) -> None:
     """
-    The flow, run once, closes timing on the spec: on Yosys every clock meets its target in the report of nextpnr, or
-    else in its log, and with neither the spec misses; on Diamond and on Vivado there is no setup or hold error and
-    every net is routed; on Quartus no setup or hold slack is negative in any corner. The row goes to the reports, that
-    of a tool that failed with what failed.
+    The flow, run once, closes timing on the spec: on Yosys every clock meets its target in the report of nextpnr; on
+    Diamond and on Vivado there is no setup or hold error and every net is routed; on Quartus no setup or hold slack is
+    negative in any corner. The row goes to the reports, that of a tool that failed with what failed.
     """
     named = request.config.getoption("synth_flows")
     if named and flow not in named:
@@ -63,18 +61,12 @@ def test_synth(
     assert row["status"] == "PASS", f"{row['fmax']} at {row['target']}; see {directory}"
 
 
-def test_the_timing_comes_from_the_report_or_else_the_log() -> None:
-    """In the log, the last line of a clock is the one after routing; with no clock stated, the spec misses."""
-    passed = (
-        "Info: Max frequency for clock 'dut.clk': 95.00 MHz (FAIL at 100.00 MHz)\n"
-        "Info: Max frequency for clock 'dut.clk': 165.32 MHz (PASS at 100.00 MHz)\n"
-    )
-    failed = (
-        "Info: Max frequency for clock 'dut.clk': 113.77 MHz (PASS at 100.00 MHz)\n"
-        "Warning: Max frequency for clock 'dut.clk': 95.00 MHz (FAIL at 100.00 MHz)\n"
-    )
-    assert _yosys.fmax(passed, {}) == "165.32 MHz" and _yosys.timing_met(passed, {})
-    assert _yosys.fmax(failed, {}) == "95.00 MHz" and not _yosys.timing_met(failed, {})
-    report: _yosys.Report = {"fmax": {"clk": {"achieved": 99.5, "constraint": 100.0}}}
-    assert _yosys.fmax(passed, report) == "99.50 MHz" and not _yosys.timing_met(passed, report)
-    assert _yosys.fmax("", {}) == "not reported" and not _yosys.timing_met("", {})
+def test_every_clock_meets_its_target_or_the_spec_misses() -> None:
+    """With no clock stated, the spec misses too."""
+
+    def report(*achieved: float) -> _yosys.Report:
+        return {"fmax": {f"clk{i}": {"achieved": mhz, "constraint": 100.0} for i, mhz in enumerate(achieved)}}
+
+    assert _yosys.timing_met(report(100.0, 165.32)) and _yosys.fmax(report(100.0, 165.32)) == "100.00 MHz"
+    assert not _yosys.timing_met(report(99.5, 165.32))
+    assert not _yosys.timing_met(report()) and _yosys.fmax(report()) == "not reported"

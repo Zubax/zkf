@@ -36,7 +36,6 @@ register and every DUT output is captured by a wrapper register. This makes the 
 limit instead of ignoring primary-input or primary-output paths. The harness registers are included in utilization
 numbers, but the DUT latency column excludes the harness: it is the latency that the model states.</p>"""
 
-YOSYS_LINKS = (("nextpnr", "nextpnr_log"), ("Yosys", "yosys_log"), ("JSON", "nextpnr_json"))
 VIVADO = """<p>Flow: Vivado synthesis, placement and routing out of context for {part}, or another speed grade where the
 row says so, at {freq:g} MHz, once.</p>"""
 VIVADO_LINKS = (("Vivado", "vivado_log"), ("timing", "timing_report"))
@@ -46,19 +45,12 @@ context (every pin of the harness but the clock is virtual) for {part}, or anoth
 at {freq:g} MHz. The slacks are the worst over every corner that the timing analysis models.</p>"""
 QUARTUS_LINKS = (("synthesis", "map_report"), ("fit", "fit_report"), ("timing", "timing_report"))
 
-YOSYS_DETAILS = (
-    ("Worst Slack", "slack"),
-    ("Utilization", "utilization"),
-    ("Yosys Cell Counts", "yosys_cells"),
-    ("Report JSON", "json"),
-)
-
 TABLES = {
     "yosys_ecp5": Table(
         "Kulibin Float Yosys Synthesis Report (ECP5)",
         f"""<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 (sequential -dff retiming disabled), nextpnr-ecp5 out of
-context (no I/O pads) for {_yosys.ECP5_DEVICE}, or {_yosys.ECP5_LARGE_DEVICE} where the row says so,
-{_yosys.ECP5_PACKAGE} speed grade {Design.ecp5_grade}, or another where the row says so, at
+context (no I/O pads) for {_yosys.DEVICE}, or {_yosys.LARGE_DEVICE} where the row says so,
+{_yosys.PACKAGE} speed grade {Design.ecp5_grade}, or another where the row says so, at
 {FREQ_MHZ:g} MHz.</p>
 <p class="note"><strong>Note on LUT4 counts:</strong> nextpnr-ecp5 <code>--12k</code> targets the LFE5U-25F fabric
 &mdash; the LFE5U-12F is the same silicon die, marketed with a reduced capacity. The utilization figures of its rows
@@ -79,8 +71,8 @@ the 45F (<code>--45k</code>) show its own array, <code>/43848</code>.</p>""",
             ("BRAM DP16KD", "bram", None),
             ("IO", "io", None),
         ),
-        YOSYS_LINKS,
-        YOSYS_DETAILS,
+        (("nextpnr", "nextpnr_log"), ("Yosys", "yosys_log"), ("JSON", "nextpnr_json")),
+        (("Worst Slack", "slack"), ("Utilization", "utilization"), ("Yosys Cell Counts", "yosys_cells")),
     ),
     "diamond_ecp5": Table(
         "Kulibin Float Diamond Synthesis Report (ECP5)",
@@ -113,26 +105,6 @@ passes are {_diamond.ROUTE_PASSES}.</p>""",
             ("LSE timing", "lse_twr"),
         ),
         (),
-    ),
-    "yosys_spartan": Table(
-        "Kulibin Float Yosys Synthesis Report (Spartan-7)",
-        f"""<p>Flow: Yosys synth_xilinx -flatten -family xc7, nextpnr-xilinx for {_yosys.SPARTAN_DEVICE} at
-{FREQ_MHZ:g} MHz (no pin constraints; --freq sets the clock target).</p>
-<p class="note"><strong>Note:</strong> the open nextpnr-xilinx / prjxray Spartan-7 database covers <code>xc7s50</code>
-only, so this is the smallest <em>supported</em> Spartan-7 rather than the smallest in the family. Every top-level
-harness port is given an <code>IOSTANDARD</code> (but no fixed pin) so the placer can route the registered harness;
-reported f max is the post-route, register-to-register limit.</p>""",
-        (
-            ("Yosys LUT", "lut", False),
-            ("FF", "ff", None),
-            ("CARRY4", "carry", None),
-            ("MUXF7/8", "wide", None),
-            ("DSP48E1", "dsp", None),
-            ("BRAM", "bram", None),
-            ("IO", "io", None),
-        ),
-        YOSYS_LINKS,
-        YOSYS_DETAILS,
     ),
     "vivado_artix7": Table(
         "Kulibin Float Vivado Synthesis Report (Artix-7)",
