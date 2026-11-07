@@ -62,11 +62,11 @@ def accuracy(session: nox.Session) -> None:
     """`exp2`, `log2` and `cordic` against mpmath."""
     session.install("-e", ".[test]")
     with watched(session):
-        session.run("python", "-m", "pytest", "-m", "accuracy", *workers(gib=1.5), *session.posargs)
+        session.run("python", "-m", "pytest", "-m", "accuracy", *workers(gib=0.4), *session.posargs)
 
 
 @nox.session
-def synth(session: nox.Session) -> None:
+def synth_yosys(session: nox.Session) -> None:
     """The specs of the catalog through the Yosys flow on the ECP5, each once; the reports go to `build/synth/`."""
     session.install("-e", ".[test]")
     flows = ("--synth-flows", "yosys_ecp5")

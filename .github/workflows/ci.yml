@@ -68,8 +68,8 @@ jobs:
       - *python_cache_step
       - run: nox -s accuracy
 
-  synth:
-    name: synth
+  synth_yosys:
+    name: synth_yosys
     if: *run_ci
     runs-on: ubuntu-latest
     container:
@@ -78,10 +78,10 @@ jobs:
     steps:
       - *checkout_step
       - *python_cache_step
-      - run: nox -s synth
+      - run: nox -s synth_yosys
       - if: always()
         uses: actions/upload-artifact@v7
-        with: { name: synth-artifacts, path: build, if-no-files-found: ignore }
+        with: { name: synth_yosys-artifacts, path: build, if-no-files-found: ignore }
 
   synth_vivado:
     name: synth_vivado

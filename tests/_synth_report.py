@@ -55,7 +55,7 @@ YOSYS_DETAILS = (
 
 TABLES = {
     "yosys_ecp5": Table(
-        "Kulibin Float Yosys Synthesis Report",
+        "Kulibin Float Yosys Synthesis Report (ECP5)",
         f"""<p>Flow: Yosys synth_ecp5 with -noabc9 -abc2 (sequential -dff retiming disabled), nextpnr-ecp5 out of
 context (no I/O pads) for {_yosys.ECP5_DEVICE}, or {_yosys.ECP5_LARGE_DEVICE} where the row says so,
 {_yosys.ECP5_PACKAGE} speed grade {Design.ecp5_grade}, or another where the row says so, at
@@ -83,7 +83,7 @@ the 45F (<code>--45k</code>) show its own array, <code>/43848</code>.</p>""",
         YOSYS_DETAILS,
     ),
     "diamond_ecp5": Table(
-        "Kulibin Float Diamond Synthesis Report",
+        "Kulibin Float Diamond Synthesis Report (ECP5)",
         f"""<p>Flow: Lattice Diamond LSE ({_diamond.DEVICE.format(grade=Design.ecp5_grade)}, or another size or speed
 grade where the row says so) at {FREQ_MHZ:g} MHz. Synthesis optimization goal is Timing, MAP register retiming is
 disabled, PAR placement effort is {_diamond.PAR_EFFORT} with one placement, router is {_diamond.ROUTER}, and routing
@@ -115,7 +115,7 @@ passes are {_diamond.ROUTE_PASSES}.</p>""",
         (),
     ),
     "yosys_spartan": Table(
-        f"Kulibin Float Yosys Synthesis Report (Spartan-7 {_yosys.SPARTAN_DEVICE})",
+        "Kulibin Float Yosys Synthesis Report (Spartan-7)",
         f"""<p>Flow: Yosys synth_xilinx -flatten -family xc7, nextpnr-xilinx for {_yosys.SPARTAN_DEVICE} at
 {FREQ_MHZ:g} MHz (no pin constraints; --freq sets the clock target).</p>
 <p class="note"><strong>Note:</strong> the open nextpnr-xilinx / prjxray Spartan-7 database covers <code>xc7s50</code>
