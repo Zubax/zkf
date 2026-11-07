@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "zkf"
 dynamic = ["version"]
-requires-python = ">=3.11"
+requires-python = ">=3.14"
 description = "Efficient floating-point engine RTL for controls & embedded following IEEE 754 sans NaN and subnormals"
 readme = { file = "README.md", content-type = "text/markdown" }
 license = "Apache-2.0"
@@ -19,14 +19,18 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Electronic Design Automation (EDA)",
     "Typing :: Typed",
 ]
+dependencies = [
+    "amaranth[builtin-yosys]~=0.5",
+    "mpmath~=1.4",
+]
 
 [project.optional-dependencies]
-oracle = ["numpy~=2.4", "mpmath~=1.4"]
 test = [
-    "zkf[oracle]",
-    "cocotb~=2.0",
-    "pytest>=8",
-    "pytest-xdist>=3.2", # 3.2: worksteal dist mode
+    "numpy~=2.4",
+    "pytest~=9.0",
+    "pytest-xdist~=3.2",
+    "pytest-cov~=7.0",
+    "mypy~=2.4",
 ]
 
 [project.urls]
@@ -35,33 +39,45 @@ Repository = "https://github.com/Zubax/zkf"
 [tool.setuptools.dynamic]
 version = { attr = "zkf.__version__" }
 
-# namespaces=false keeps zkf/rtl (no __init__.py) as data, not a PEP 420 namespace package.
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["zkf", "zkf.*"]
-namespaces = false
+include = ["zkf"]
 
 [tool.setuptools.package-data]
-zkf = ["rtl/**/*.v", "py.typed"]
+zkf = ["py.typed"]
 
 [tool.pytest.ini_options]
-# Only the float matrix orchestrator is collected here; the cocotb test_*.py modules run inside a simulator,
-# not under pytest, and the model-layout / pmul checks run as standalone scripts from the nox sessions.
-testpaths = ["tb"]
-python_files = ["test_float_matrix.py"]
-# Deselect the deep/properties/fast tiers by default so a bare run (and `nox -s tests`) exercises only the
-# per-PR set; the nox sessions override -m to select the heavier tiers explicitly.
-addopts = ["-v", "-m", "not deep and not properties and not fast", "-p", "no:mypy"]
+testpaths = ["tests"]
+addopts = ["-m", "not deep and not accuracy and not synth", "-p", "no:cacheprovider"]
 markers = [
-    "pr: per-PR verification tier (the default selection)",
-    "deep: full parameter-equivalence sweep (correctness on icarus, coverage on verilator); skipped unless -m deep",
-    "properties: algebraic-property tests on add/mul; skipped unless -m properties",
-    "fast: smallest-config smoke tier; skipped unless -m fast",
-    "icarus: Icarus Verilog correctness run",
-    "verilator: Verilator coverage-collecting run",
+    "deep: the long tier",
+    "accuracy: end-to-end accuracy against mpmath",
+    "synth: the specs of the catalog through the synthesis flows",
 ]
+# Amaranth reports several mistakes only as warnings; a component that a test builds and drops is not one.
+filterwarnings = ["error", "ignore::amaranth.hdl.UnusedElaboratable"]
 
 [tool.black]
 line-length = 120
-target-version = ["py311"]
-extend-exclude = "zkf/_tables/.+\\.py"
+target-version = ["py314"]
+
+# Of the package: the structural variants of the hardware that the configurations build, and the reference.
+[tool.coverage.run]
+branch = true
+source = ["zkf"]
+omit = ["zkf/__main__.py"]
+
+[tool.coverage.report]
+fail_under = 99
+
+[tool.mypy]
+strict = true
+files = ["zkf", "tests"]
+follow_imports = "silent"
+disallow_subclassing_any = false
+warn_return_any = false
+
+[[tool.mypy.overrides]]
+module = ["amaranth.*", "mpmath.*"]
+ignore_missing_imports = true
+follow_untyped_imports = false

@@ -12,20 +12,24 @@ on:
       - '.github/workflows/release.yml'
   pull_request:
     paths-ignore: *docs_only
-env:
-  COCOTB_IGNORE_PYTHON_REQUIRES: "1"
-
+  # Runs the deep tiers alone.
+  workflow_dispatch:
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: ${{ !contains(github.event.head_commit.message, '#yolo') }}
+env:
+  # Every test by name with its outcome, and why each skipped one was skipped.
+  PYTEST_ADDOPTS: -v -rs
 
 jobs:
   tests:
-    name: tests (${{ matrix.sim }})
-    # Skipped by `#yolo` in the head commit message, and for a same-repo PR, which its head commit's push run covers.
+    name: tests
+    # Skipped by `#yolo` in the head commit message, for a same-repo PR, which its head commit's push run covers, and
+    # for a manual run.
     if: &run_ci >-
       !contains(github.event.head_commit.message, '#yolo') &&
-      (github.event_name == 'push' || github.event.pull_request.head.repo.full_name != github.repository)
+      (github.event_name == 'push' ||
+      github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository)
     runs-on: [self-hosted, ci-runner]
     container: &mega_toolchain_container
       image: containers.zubax.com/zubax-fpga-toolchain-mega:latest
@@ -39,19 +43,14 @@ jobs:
           path: ~/.cache/pip
           key: pip-${{ runner.os }}-${{ hashFiles('pyproject.toml') }}
           restore-keys: pip-${{ runner.os }}-
-      - run: ${{ matrix.run }}
-    # The matrix in two halves, one per runner slot. The Verilator rows carry the coverage gate, so they stay together.
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { sim: verilator, run: "nox -s tests -- -k 'not icarus'" }
-          - { sim: icarus, run: "nox -s checks black && nox -s focused -- -k icarus" }
+      - run: nox -s tests mypy black
 
   deep:
     name: deep
-    if: &run_deep contains(github.event.head_commit.message, '#ci-deep')
+    if: &run_deep contains(github.event.head_commit.message, '#ci-deep') || github.event_name == 'workflow_dispatch'
     runs-on: [self-hosted, ci-runner]
+    # Beyond the 6 hours that a job gets by default.
+    timeout-minutes: &deep_timeout 1440
     container: *mega_toolchain_container
     steps:
       - *checkout_step
@@ -62,36 +61,69 @@ jobs:
     name: accuracy
     if: *run_deep
     runs-on: [self-hosted, ci-runner-small]
+    timeout-minutes: *deep_timeout
     container: *mega_toolchain_container
     steps:
       - *checkout_step
       - *python_cache_step
       - run: nox -s accuracy
 
-  formal:
-    name: formal
+  synth_yosys:
+    name: synth_yosys
     if: *run_ci
     runs-on: ubuntu-latest
-    container: &fpga_toolchain_container
+    container:
       image: ghcr.io/zubax/zubax-fpga-toolchain:latest
       options: --user root
     steps:
       - *checkout_step
       - *python_cache_step
-      - run: nox -s formal
+      - run: nox -s synth_yosys
       - if: always()
         uses: actions/upload-artifact@v7
-        with: { name: formal-report, path: build/float/formal/report.html, if-no-files-found: ignore }
+        with: { name: synth_yosys-artifacts, path: build, if-no-files-found: ignore }
 
-  synth:
-    name: synth
+  synth_vivado:
+    name: synth_vivado
     if: *run_ci
-    runs-on: ubuntu-latest
-    container: *fpga_toolchain_container
+    runs-on: [self-hosted, ci-runner]
+    container: *mega_toolchain_container
     steps:
       - *checkout_step
       - *python_cache_step
-      - run: nox -s synth
+      # Vivado installs its Tcl store in the home at its first start and the store's apps at its first `read_verilog`,
+      # which the parallel runs would otherwise race over.
+      - run: |
+          echo 'module warm; endmodule' > /tmp/warm.v
+          echo 'read_verilog /tmp/warm.v' > /tmp/warm.tcl
+          vivado -mode batch -nojournal -nolog -source /tmp/warm.tcl
+      - run: nox -s synth_vivado
       - if: always()
         uses: actions/upload-artifact@v7
-        with: { name: synth-artifacts, path: build, if-no-files-found: ignore }
+        with: { name: synth_vivado-artifacts, path: build, if-no-files-found: ignore }
+
+  synth_diamond:
+    name: synth_diamond
+    if: *run_ci
+    runs-on: [self-hosted, ci-runner]
+    container: *mega_toolchain_container
+    steps:
+      - *checkout_step
+      - *python_cache_step
+      - run: nox -s synth_diamond
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with: { name: synth_diamond-artifacts, path: build, if-no-files-found: ignore }
+
+  synth_quartus:
+    name: synth_quartus
+    if: *run_ci
+    runs-on: [self-hosted, ci-runner]
+    container: *mega_toolchain_container
+    steps:
+      - *checkout_step
+      - *python_cache_step
+      - run: nox -s synth_quartus
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with: { name: synth_quartus-artifacts, path: build, if-no-files-found: ignore }
