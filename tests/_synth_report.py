@@ -60,7 +60,7 @@ the 45F (<code>--45k</code>) show its own array, <code>/43848</code>.</p>""",
         (
             ("Part", "part", None),
             ("Yosys LUT4", "lut", None),
-            ("Placed LUT4", "lut_placed", False),
+            ("Total LUT4", "lut_total", False),
             ("FF", "ff", None),
             ("TRELLIS_COMB", "comb", None),
             ("CCU2C", "carry", None),

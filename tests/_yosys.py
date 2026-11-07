@@ -21,7 +21,8 @@ YOSYS_COMMAND = os.environ.get("YOSYS", "yosys")
 """The Yosys of the system, as Amaranth finds it: the one that comes with Amaranth reads no Verilog, has no solver."""
 YOSYS = shutil.which(YOSYS_COMMAND)
 """Where `YOSYS_COMMAND` is, if anywhere."""
-TOOLS = (YOSYS_COMMAND, "nextpnr-ecp5")
+NEXTPNR = "nextpnr-ecp5"
+TOOLS = (YOSYS_COMMAND, NEXTPNR)
 DEVICE, LARGE_DEVICE = "LFE5U-12F", "LFE5U-45F"
 PACKAGE = "CABGA381"
 UTIL_RESOURCES = ("TRELLIS_COMB", "TRELLIS_FF", "TRELLIS_IO", "MULT18X18D", "ALU54B", "DP16KD", "TRELLIS_RAMW", "DCCA")
@@ -31,12 +32,8 @@ YOSYS_TIMEOUT_S = 900.0
 NEXTPNR_TIMEOUT_S = 1200.0
 
 
-def device(design: Design) -> str:
-    return LARGE_DEVICE if design.large else DEVICE
-
-
 def part(design: Design) -> str:
-    return f"{device(design)}-{design.ecp5_grade}"
+    return f"{LARGE_DEVICE if design.large else DEVICE}-{design.ecp5_grade}"
 
 
 def script(design: Design, sources: Sources, netlist: Path) -> str:
@@ -51,7 +48,7 @@ def script(design: Design, sources: Sources, netlist: Path) -> str:
 
 def nextpnr_args(design: Design, netlist: Path, report: Path) -> list[str | Path]:
     return [
-        {DEVICE: "--12k", LARGE_DEVICE: "--45k"}[device(design)],
+        "--45k" if design.large else "--12k",
         "--package",
         PACKAGE,
         "--speed",
@@ -77,14 +74,14 @@ def synthesize(design: Design, directory: Path) -> Row:
     sources = design.write(directory, rom_attrs=ROM_ATTRS)
     ys.write_text(script(design, sources, netlist))
     run([YOSYS_COMMAND, "-s", ys], directory / "yosys.log", YOSYS_TIMEOUT_S)
-    run(["nextpnr-ecp5", *nextpnr_args(design, netlist, report)], directory / "nextpnr.log", NEXTPNR_TIMEOUT_S)
+    run([NEXTPNR, *nextpnr_args(design, netlist, report)], directory / "nextpnr.log", NEXTPNR_TIMEOUT_S)
 
     nextpnr_text = (directory / "nextpnr.log").read_text()
     data: Report = json.loads(report.read_text())
     cells = netlist_cells(netlist, design.top)
 
     def link(path: Path) -> str:
-        return str(path.relative_to(directory.parent)) if path.is_file() else ""
+        return str(path.relative_to(directory.parent))
 
     return design.row | {
         "fmax": fmax(data),
@@ -97,7 +94,7 @@ def synthesize(design: Design, directory: Path) -> Row:
         "nextpnr_log": link(directory / "nextpnr.log"),
         "nextpnr_json": link(report),
         "lut": str(cells.get("LUT4", 0)),
-        "lut_placed": used(*placed_lut4(nextpnr_text)),
+        "lut_total": used(*total_lut4(nextpnr_text)),
         "ff": str(cells.get("TRELLIS_FF", 0)),
         "comb": utilized(data, "TRELLIS_COMB"),
         "carry": str(cells.get("CCU2C", 0)),
@@ -144,7 +141,7 @@ def slack(report: Report) -> str:
 
 
 def used(count: int, available: int) -> str:
-    return f"{count}/{available} ({100.0 * count / available:.2f}%)" if available else str(count)
+    return f"{count}/{available} ({100.0 * count / available:.2f}%)"
 
 
 def utilized(report: Report, key: str) -> str:
@@ -152,7 +149,8 @@ def utilized(report: Report, key: str) -> str:
     return used(item["used"], item["available"])
 
 
-def placed_lut4(nextpnr_log: str) -> tuple[int, int]:
+def total_lut4(nextpnr_log: str) -> tuple[int, int]:
+    """The LUT4s that the netlist takes before packing, its carries and memories included, and the device's."""
     match = re.search(r"Total LUT4s:\s*([0-9]+)/([0-9]+)", nextpnr_log)
     assert match, "nextpnr stated no total of LUT4s"
     return int(match.group(1)), int(match.group(2))
@@ -166,9 +164,9 @@ def format_cells(cells: Mapping[str, int]) -> str:
 
 
 def utilization(nextpnr_log: str) -> str:
-    """nextpnr's table of resources, after its total of LUT4s: those listed and any other in use."""
+    """nextpnr's total of LUT4s, then its table of the placed resources: those listed and any other in use."""
     tables = re.findall(r"Device utilisation:\n((?:Info:\s+\w+:\s+[0-9]+/\s*[0-9]+.*\n)+)", nextpnr_log)
     rows = re.findall(r"(\w+):\s+([0-9]+)/\s*([0-9]+)", tables[-1])
-    lines = [f"Total LUT4s: {used(*placed_lut4(nextpnr_log))}"]
+    lines = [f"Total LUT4s: {used(*total_lut4(nextpnr_log))}"]
     lines += [f"{key}: {used(int(n), int(of))}" for key, n, of in sorted(rows) if key in UTIL_RESOURCES or int(n)]
     return "\n".join(lines)
