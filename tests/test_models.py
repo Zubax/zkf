@@ -188,10 +188,8 @@ def test_refusals() -> None:
         lambda: Mul(F36, wmultiplier=18, stage_core_mul=5),
         lambda: Mul(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=2),
         lambda: Fma(F36, wmultiplier=18, stage_core_mul=1),
-        lambda: Divsqrt(ZkfFormat(6, 17), stage_core=Divsqrt.CoreStages.FIRST_DIGIT, fast=False),
         lambda: Exp2(F18, wmultiplier=18, stage_core_kernel=4),
         lambda: Exp2(F36, wmultiplier=18, stage_core_kernel=5),
-        lambda: Cordic(F18, wmultiplier=18, stage_core_mul=3, mode=0, stage_core=Cordic.CoreStages.TAKEN),
         lambda: Log2(F18, wmultiplier=18),
         lambda: Pipe(w=0),
     )

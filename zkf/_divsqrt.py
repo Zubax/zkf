@@ -65,9 +65,6 @@ class Divsqrt(Operator):
             raise UnsupportedFormat(f"fast: WMAN={self.fmt.wman} is below 9; set fast=False")
         if not 0 <= self.mode <= 2:
             raise ValueError(f"mode={self.mode} is outside 0..2")
-        if Divsqrt.CoreStages.FIRST_DIGIT in self.stage_core and not _Digits.unfolds(self):
-            why = "is one above a multiple of 3" if self.fast else "is odd"
-            raise ValueError(f"stage_core={self.stage_core}: WMAN={self.fmt.wman} {why}; leave FIRST_DIGIT out")
 
     @property
     def timing(self) -> Timing:

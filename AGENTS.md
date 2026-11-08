@@ -19,6 +19,9 @@ Each attribute adds maintenance and portability risk.
 
 Less code does not always imply simpler code. Apply common sense and keep the code straightforward.
 
+Register-stage knobs that the chosen configuration cannot implement are silently ignored by design, not refused:
+e.g., a register of a mode that the operator lacks. A stage count outside its knob's range is refused, not clamped.
+
 ### Reset strategy
 
 Use synchronous active-high reset for stream control only: validity flags, state-machine state, and other control

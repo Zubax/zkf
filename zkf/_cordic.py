@@ -121,7 +121,7 @@ class Cordic(Operator):
     stage_core_mul: int = 0
     """As `Mul`'s, from 1 up; a rotation passes the product twice in series."""
     stage_core: CoreStages = CoreStages(0)
-    """See `Cordic.CoreStages`; a fixed mode refuses those it lacks."""
+    """See `Cordic.CoreStages`."""
     stage_output: int = 0
     wmultiplier: int
     """As `Mul`'s."""
@@ -163,9 +163,6 @@ class Cordic(Operator):
         check("stage_core_mul", self.stage_core_mul, wa, wb, signed=self.mode != 1, wmultiplier=self.wmultiplier)
         if not 0 <= self.rotation_seed <= 2:
             raise ValueError(f"rotation_seed={self.rotation_seed} is outside 0..2")
-        lacked = self.stage_core & _LACKED[self.mode]
-        if lacked:
-            raise ValueError(f"stage_core={self.stage_core}: leave out {lacked.name}, which mode={self.mode} lacks")
 
     @property
     def timing(self) -> Timing | Mapping[int, Timing]:

@@ -1,10 +1,10 @@
-import re
 from fractions import Fraction
 from itertools import product
 from typing import Any
 
 import numpy as np
 import pytest
+from amaranth.back import verilog
 
 from _bench import Case, run_pipeline
 from _catalog import CATALOG
@@ -267,16 +267,16 @@ def test_latency() -> None:
     assert [Divsqrt(ZkfFormat(8, wman), fast=True).timing.latency for wman in (24, 25, 26)] == [7, 8, 8]
 
 
+def test_a_digit_that_the_format_cannot_unfold_is_ignored() -> None:
+    for fmt, fast in ((ZkfFormat(6, 17), False), (ZkfFormat(6, 16), True)):
+        given, built = Divsqrt(fmt, fast=fast, stage_core=Divsqrt.CoreStages.FIRST_DIGIT), Divsqrt(fmt, fast=fast)
+        assert given.timing == built.timing
+        assert verilog.convert(given.component(), name="core") == verilog.convert(built.component(), name="core")
+
+
 def test_refusals() -> None:
-    first = Divsqrt.CoreStages.FIRST_DIGIT
     with pytest.raises(ValueError):
         Divsqrt(ZkfFormat(6, 18), mode=3)
-    with pytest.raises(ValueError, match=re.escape(f"stage_core={first}: WMAN=17 is odd; leave FIRST_DIGIT out")):
-        Divsqrt(ZkfFormat(6, 17), stage_core=first, fast=False)
-    with pytest.raises(
-        ValueError, match=re.escape(f"stage_core={first}: WMAN=16 is one above a multiple of 3; leave FIRST_DIGIT out")
-    ):
-        Divsqrt(ZkfFormat(6, 16), stage_core=first, fast=True)
     with pytest.raises(UnsupportedFormat, match="^fast: WMAN=8 is below 9; set fast=False$"):
         Divsqrt(ZkfFormat(3, 8))
     with pytest.raises(UnsupportedFormat, match="^WMAN=4 is below 5$"):

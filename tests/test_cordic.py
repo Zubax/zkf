@@ -1,4 +1,3 @@
-import re
 from dataclasses import replace
 from fractions import Fraction
 from functools import reduce
@@ -7,6 +6,7 @@ from typing import Any
 
 import numpy as np
 import pytest
+from amaranth.back import verilog
 
 from _bench import run_cuts, run_handshake
 from _catalog import CATALOG
@@ -275,10 +275,9 @@ def test_the_attributes_reach_the_tables(mode: int) -> None:
 @pytest.mark.parametrize("stages", [{}, {"sm": 3, "sc": ~CoreStages(0), "so": 2}, {"si": 1}], ids=str)
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
-    knobs = stages | {"sc": stages.get("sc", CoreStages(0)) & ~LACKED[mode]}
-    cut(build(ZkfFormat(5, 16), mode, **knobs))
+    cut(build(ZkfFormat(5, 16), mode, **stages))
     if mode == 0:
-        cut(build(ZkfFormat(3, 16), mode, **knobs))  # an exponent that a vectoring does not take
+        cut(build(ZkfFormat(3, 16), mode, **stages))  # an exponent that a vectoring does not take
 
 
 # Without CORRECTIONS a packer out of step with the other takes a value that has moved on.
@@ -388,7 +387,6 @@ def test_refusals() -> None:
         {"stage_core_mul": 1, "mode": 0},
         {"stage_core_mul": 5, "mode": 0},
         {"stage_core_mul": 4, "wmultiplier": 36},
-        *({"stage_core": member, "mode": mode} for mode in (0, 1) for member in LACKED[mode]),
         {"mode": 3},
     ]
     for knobs in refused:
@@ -401,19 +399,16 @@ def test_refusals() -> None:
     # The default, the fastest configuration, is refused clearly rather than demanded.
     with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1$"):
         Cordic(fmt, wmultiplier=36)
-    refusal = "stage_core=CoreStages.SHIFT|TAKEN|ORDERED: leave out TAKEN|ORDERED, which mode=0 lacks"
-    with pytest.raises(ValueError, match=f"^{re.escape(refusal)}$"):
-        Cordic(
-            fmt,
-            wmultiplier=18,
-            stage_core_mul=3,
-            stage_core=CoreStages.SHIFT | CoreStages.TAKEN | CoreStages.ORDERED,
-            mode=0,
-        )
-    refusal = "stage_core=CoreStages.FOLDED|ANGLE: leave out FOLDED, which mode=1 lacks"
-    with pytest.raises(ValueError, match=f"^{re.escape(refusal)}$"):
-        Cordic(fmt, wmultiplier=18, stage_core_mul=3, stage_core=CoreStages.FOLDED | CoreStages.ANGLE, mode=1)
     Cordic(fmt, wmultiplier=36, stage_core_mul=1)
     for wexp, wman, mode in ((4, 16, 1), (4, 16, 2), (8, 15, 0), (8, 54, 2)):
         with pytest.raises(UnsupportedFormat):
             Cordic(ZkfFormat(wexp, wman), wmultiplier=18, stage_core_mul=3, mode=mode)
+
+
+def test_a_register_of_a_mode_lacked_is_ignored() -> None:
+    for mode in (0, 1):
+        built = Cordic(ZkfFormat(6, 18), wmultiplier=18, stage_core_mul=3, mode=mode, stage_core=~LACKED[mode])
+        for member in LACKED[mode]:
+            given = replace(built, stage_core=built.stage_core | member)
+            assert given.timing == built.timing
+            assert verilog.convert(given.component(), name="core") == verilog.convert(built.component(), name="core")
