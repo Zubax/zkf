@@ -30,4 +30,4 @@ from ._resize import Resize as Resize
 from ._rint import RoundMode as RoundMode, Rint as Rint, RintResult as RintResult
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.10.0.dev0"
+__version__ = "0.10.0.dev1"
