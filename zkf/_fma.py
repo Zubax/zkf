@@ -6,7 +6,7 @@ from amaranth.lib.wiring import In, Out
 
 from ._add import Add, AddCore
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, ge, pipe, zext
-from ._pmul import Pmul, check
+from ._pmul import Pmul
 from ._value import Zkf
 
 
@@ -18,7 +18,7 @@ class Fma(Operator):
     stage_input: int = 0
     stage_core_mul: int = 0
     """As `Mul`'s."""
-    stage_core_add: Add.CoreStages = Add.CoreStages(0)
+    stage_core_add: Add.CoreStages = Add.CoreStages.NONE
     """See `Add.CoreStages`; the sum's decoded operands are the product and `c`."""
     stage_output: int = 0
     wmultiplier: int
@@ -32,10 +32,6 @@ class Fma(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
-        if self.wmultiplier < 8:
-            raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
-        wman = self.fmt.wman
-        check("stage_core_mul", self.stage_core_mul, wman, wman, signed=False, wmultiplier=self.wmultiplier)
 
     @property
     def timing(self) -> Timing:

@@ -16,7 +16,7 @@ from amaranth.utils import ceil_log2
 
 from ._fixed_to_float import FixedToFloat, fixed_to_float_reference
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, add_carry, bundle, pipe, sext, zext
-from ._pmul import Pmul, check, slices
+from ._pmul import Pmul, slices
 from ._txn import Txn
 from ._divsqrt import DivideStep8, DivsqrtStep
 from ._value import UnsupportedFormat, Zkf, ZkfFormat, context
@@ -91,6 +91,8 @@ class Cordic(Operator):
     class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order: a rotation's, a vectoring's, then those of both."""
 
+        NONE = 0
+        """No register."""
         SHIFT = enum.auto()
         """A rotation's shift amount, which reduces the operand modulo a turn."""
         REDUCED = enum.auto()
@@ -118,13 +120,13 @@ class Cordic(Operator):
 
     operator = "cordic"
     stage_input: int = 0
-    stage_core_mul: int = 0
-    """As `Mul`'s, from 1 up; a rotation passes the product twice in series."""
-    stage_core: CoreStages = CoreStages(0)
+    stage_core_mul: int = 1
+    """As `Mul`'s, from 1 up where a rotation is built; a rotation passes the product twice in series."""
+    stage_core: CoreStages = CoreStages.NONE
     """See `Cordic.CoreStages`."""
     stage_output: int = 0
     wmultiplier: int
-    """As `Mul`'s."""
+    """As `Mul`'s, 16 bits at least."""
     mode: int = 2
     fast: bool = True
     """
@@ -150,17 +152,15 @@ class Cordic(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
-        if self.wmultiplier < 8:
-            raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
+        if self.wmultiplier < 16:
+            raise ValueError(f"wmultiplier={self.wmultiplier} is below 16")
         if not 0 <= self.mode <= 2:
             raise ValueError(f"mode={self.mode} is outside 0..2")
         if self.mode and self.fmt.wexp < 5:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is below 5, which a vectoring takes")
-        g = _geometry(self.fmt.wman)
-        wa, wb = g.operands(self.mode)
-        if self.stage_core_mul < 1:
-            raise ValueError(f"stage_core_mul={self.stage_core_mul} is below 1")
-        check("stage_core_mul", self.stage_core_mul, wa, wb, signed=self.mode != 1, wmultiplier=self.wmultiplier)
+        _geometry(self.fmt.wman)  # refuses a WMAN that has no constants
+        if self.mode != 1 and self.stage_core_mul < 1:
+            raise ValueError(f"stage_core_mul={self.stage_core_mul} is below 1, which a rotation takes")
         if not 0 <= self.rotation_seed <= 2:
             raise ValueError(f"rotation_seed={self.rotation_seed} is outside 0..2")
 
@@ -231,7 +231,7 @@ _ROTATION = (
 )
 _VECTORING = Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.SHIFTED | Cordic.CoreStages.ANGLE
 """The members of `Cordic.CoreStages` on the path of one mode alone."""
-_LACKED = (_VECTORING, _ROTATION, Cordic.CoreStages(0))
+_LACKED = (_VECTORING, _ROTATION, Cordic.CoreStages.NONE)
 """The members of `Cordic.CoreStages` that each `mode` does not build."""
 
 

@@ -14,7 +14,6 @@ from amaranth.sim import SimulatorContext
 from _bench import _Dut
 from _operands import SEED, directed_numbers, random_operand
 from zkf import Add, Mul, Zkf, ZkfFormat
-from zkf._pmul import counts
 
 FORMATS = [(2, 4), (3, 4), (3, 5), (4, 6), (5, 11), (6, 18), (7, 17), (8, 24), (11, 53)]
 STAGES: dict[str, list[dict[str, Any]]] = {
@@ -26,7 +25,7 @@ STAGES: dict[str, list[dict[str, Any]]] = {
             | Add.CoreStages.SUM
             | Add.CoreStages.NORMALIZED
         },
-        {"stage_core": ~Add.CoreStages(0)},
+        {"stage_core": ~Add.CoreStages.NONE},
     ],
     "mul": [{"stage_core_mul": count} for count in (2, 3)],
 }
@@ -93,9 +92,6 @@ def test_properties(operator: str, fmt: ZkfFormat) -> None:
         return Zkf(fmt, bits).canonicalize().bits
 
     for stages in STAGES[operator]:
-        taken = counts(fmt.wman, fmt.wman, signed=False, wmultiplier=18)
-        if operator == "mul" and stages["stage_core_mul"] not in taken:
-            continue
         model: Add | Mul = Add(fmt, **stages) if operator == "add" else Mul(fmt, wmultiplier=18, **stages)
 
         def given(pairs: Sequence[tuple[int, int]]) -> list[int]:

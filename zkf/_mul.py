@@ -7,7 +7,7 @@ from amaranth.lib.wiring import In, Out
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, pipe
 from ._pack import Pack
 from ._fixed_to_float import fixed_to_float_reference
-from ._pmul import Pmul, check
+from ._pmul import Pmul
 from ._value import Zkf
 
 
@@ -26,9 +26,7 @@ class Mul(Operator):
     wmultiplier: int
     """The operand width of the target's multipliers."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
-    """
-    On the product's capture, where a register follows the multipliers: from `stage_core_mul=2` on, a grid's from 3 on.
-    """
+    """On the product's operand capture: from `stage_core_mul=2` on."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -36,10 +34,6 @@ class Mul(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
-        if self.wmultiplier < 8:
-            raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
-        wman = self.fmt.wman
-        check("stage_core_mul", self.stage_core_mul, wman, wman, signed=False, wmultiplier=self.wmultiplier)
 
     @property
     def timing(self) -> Timing:

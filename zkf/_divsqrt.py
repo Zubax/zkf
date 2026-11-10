@@ -38,6 +38,8 @@ class Divsqrt(Operator):
     class CoreStages(enum.Flag):
         """The registers of `stage_core`."""
 
+        NONE = 0
+        """No register."""
         FIRST_DIGIT = enum.auto()
         """
         A stage more, the divider's first digit resolved in it rather than folded into stage 0 and the root's digits
@@ -46,7 +48,7 @@ class Divsqrt(Operator):
 
     operator = "divsqrt"
     stage_input: int = 0
-    stage_core: CoreStages = CoreStages(0)
+    stage_core: CoreStages = CoreStages.NONE
     """See `Divsqrt.CoreStages`; the other digits have a stage each, fixed."""
     stage_output: int = 0
     mode: int = 2

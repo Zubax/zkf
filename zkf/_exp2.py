@@ -10,7 +10,7 @@ from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe
-from ._trans import Kernel, Spec, kernel_check, kernel_depth, pack_fixed, spec as table
+from ._trans import Kernel, Spec, kernel_depth, pack_fixed, spec as table
 from ._value import UnsupportedFormat, Zkf, ZkfFormat, context
 
 
@@ -30,6 +30,8 @@ class Exp2(Operator):
     class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
+        NONE = 0
+        """No register."""
         REDUCE = enum.auto()
         """The reduced argument, ahead of the table."""
         SUM = enum.auto()
@@ -37,27 +39,52 @@ class Exp2(Operator):
 
     operator = "exp2"
     stage_input: int = 0
-    stage_core_kernel: int = 0
+    stage_core_kernel_level: int = 0
     """
-    Of every product of the kernel, as `Mul`'s `stage_core_mul`, each raised to the least that it takes and capped at
-    its own positions, those of one multiplier at its output and operands.
+    The registers of the kernel's products, each level keeping those of the level below and adding:
+
+        level     register added                                    to every product
+        0         none: the products are combinational
+        1         its output                                        cut into a grid of multipliers
+        2         its operands' capture                             cut into a grid of multipliers
+        3         its output                                        of one multiplier
+        4         its grid's, behind the multipliers                cut wider than 2 multipliers a side
+        5         its grid's, behind the multipliers                cut 2 multipliers wide
+        6         its operands' capture                             of one multiplier
+        7, 8, ... the next one within the sum of its grid           whose grid's sum takes another
+
+    A product is cut into a grid where an operand is wider than `wmultiplier`. A single multiplier whose product is
+    added to a coefficient, as an odd term's is, takes its output register after that sum, for a DSP's post-adder. The
+    order is the one that measured best for f_max across the supported flows; a register adds a cycle only where it lies
+    on the kernel's longest path. A level that adds no register to the kernel at hand is refused, naming the nearest
+    that do: on a kernel of single multipliers only 0, 3 and 6 are taken. So is a level past the last.
+
+    On 18-bit multipliers, the levels taken and the operator's latency at each, its other knobs at their defaults:
+
+        format             products of its kernel                               level: latency
+        e6m18              one multiplier                                       0: 1, 3: 2, 6: 3
+        e8m24              a 2x1 grid, three single multipliers                 0: 1, 1: 2, 2: 3, 3: 3, 5: 4, 6: 5
+        e8m36              a 3x2 grid, a 2x2 grid, three single multipliers     0: 1, 1: 2, 2: 3, 3: 4, 4: 4, 5: 5,
+                                                                                6: 6, 7: 6
+        e11m53, compact    grids of 4x3, 3x3 twice, 2x2 twice, and one single   0: 1, 1: 4, 2: 7, 4: 9, 5: 10, 6: 10,
+                           multiplier, whose output its pair already registers  7: 12
     """
-    stage_core: CoreStages = CoreStages(0)
+    stage_core: CoreStages = CoreStages.NONE
     """See `Exp2.CoreStages`."""
     stage_output: int = 0
     wmultiplier: int
-    """As `Mul`'s; the table is generated for it."""
+    """As `Mul`'s, 16 bits at least; the table is generated for it."""
     fast: bool = True
     """
-    The table of the shortest kernel of 2048 segments or fewer, the fewest bits among those as short; off takes the
-    compact one, of the degree that WMAN alone sets.
+    The table of 2048 segments or fewer whose kernel is the shortest with every product registered up to its grid,
+    the fewest bits among those as short; off takes the compact one, of the degree that WMAN alone sets.
     """
     rom_attrs: Attrs | None = field(default=None, compare=False)
     """
     Synthesis attributes of the table's memory, such as `{"rom_style": "block"}`; those of several tools can be mixed.
     """
     mul_attrs: Attrs | None = field(default=None, compare=False)
-    """On the captures of the kernel's products where a register follows their multipliers."""
+    """On the captures of the kernel's products."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -65,15 +92,16 @@ class Exp2(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
-        if self.wmultiplier < 8:
-            raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
+        if self.wmultiplier < 16:
+            raise ValueError(f"wmultiplier={self.wmultiplier} is below 16")
         if self.fmt.wexp < 3:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is below 3")
-        kernel_check(self.stage_core_kernel, self._spec, self.wmultiplier)
+        # Generates the table, refusing a format that has none, and refuses what the kernel cannot build.
+        kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level)
 
     @property
     def timing(self) -> Timing:
-        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel)
+        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level)
         return Timing(self.stage_input + 1 + kernel + len(self.stage_core) + self.stage_output, 1)
 
     @property
@@ -150,7 +178,7 @@ class _Exp2(wiring.Component):
         m.submodules.kernel = kernel = Kernel(
             spec,
             wmultiplier=model.wmultiplier,
-            stages=model.stage_core_kernel,
+            level=model.stage_core_kernel_level,
             rom_attrs=model.rom_attrs,
             mul_attrs=model.mul_attrs,
         )

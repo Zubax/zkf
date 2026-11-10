@@ -10,51 +10,19 @@ from amaranth.utils import ceil_log2
 from ._block import Attrs, pipe, zext
 
 
-def slices(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> tuple[int, int]:
-    """
-    How many slices `Pmul` cuts each operand into: the fewest of `wmultiplier` bits, or of `wmultiplier - 1` if signed
-    since every slice but the top one is zero-extended; e.g. 66x41 gives 4x3 at 18.
-    """
-
-    def count(width: int) -> int:
-        return 1 if width <= wmultiplier else -(-width // (wmultiplier - signed))
-
-    return count(wa), count(wb)
-
-
-def positions(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> tuple[str, ...]:
-    """The registers of `Pmul` in the order that `stages` takes them, each only where it splits something."""
-    ga, gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
-    levels = _levels(gb) + _levels(ga) if signed else _levels(ga + gb - 1)
-    return ("output", "capture", "grid") + tuple(f"sum{k}" for k in range(1, levels))
-
-
-def counts(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> range:
-    """
-    The `stages` of `Pmul` that an operator takes: none that builds nothing more; where the product is cut, at least 2,
-    its operands' capture ahead of the multipliers, and at least 3 where a side of its grid is longer than 2.
-    """
-    ga, gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
-    low = 0 if ga == gb == 1 else 2 if max(ga, gb) <= 2 else 3
-    return range(low, len(positions(wa, wb, signed=signed, wmultiplier=wmultiplier)) + 1)
-
-
-def check(knob: str, stages: int, wa: int, wb: int, *, signed: bool, wmultiplier: int) -> None:
-    """Refuses, as `knob`, a `stages` outside `counts`, saying what to set."""
-    taken = counts(wa, wb, signed=signed, wmultiplier=wmultiplier)
-    if stages not in taken:
-        span = f"{taken.start}..{taken.stop - 1}"
-        raise ValueError(f"{knob}={stages}: set {span} on {wmultiplier}-bit multipliers")
-
-
 class Pmul(wiring.Component):
     """
-    `p = a * b`, exact, as `wa + wb` raw bits (two's complement where `signed`); the operands are both signed or both
-    unsigned. `sideband` is the shape of an optional payload delayed with `p`.
+    Integer `p = a * b`, exact, as `wa + wb` raw bits (two's complement where `signed`);
+    the operands are both signed or both unsigned.
+    `sideband` is the shape of an optional payload, `sb_in` delayed with `p` to `sb_out`.
 
-    The operands are cut into their `slices`, one row of the grid of their products per slice of `a`, and the products
-    are summed: unsigned ones by the diagonals of the grid, signed ones by rows, then the rows. `stages` turns on the
-    first of `positions`, as `Mul.stage_core_mul` orders them, and is the latency; `attrs` go as `Mul.mul_attrs` do.
+    The operands are cut into slices that fit `wmultiplier`-bit multipliers, one row of the grid per slice of `a`,
+    and the products are summed: unsigned ones by the diagonals of the grid, signed ones by rows, then the rows.
+    `stages` turns on as many registers, in the order that `Mul.stage_core_mul` takes them, and is the latency;
+    `attrs` go as `Mul.mul_attrs` do.
+
+    This component is used to efficiently implement more complex floating-point arithmetic that uses integer
+    multiplication under the hood. It is exposed as a public member because it is often useful in third-party circuits.
     """
 
     in_valid: Signal
@@ -74,11 +42,13 @@ class Pmul(wiring.Component):
         sideband: ShapeLike | None = None,
         attrs: Attrs | None = None,
     ) -> None:
-        named = positions(wa, wb, signed=signed, wmultiplier=wmultiplier)
-        assert 0 <= stages <= len(named), (stages, named)
+        if wmultiplier < 2:
+            raise ValueError(f"wmultiplier={wmultiplier} is below 2")
+        top = len(positions(wa, wb, signed=signed, wmultiplier=wmultiplier))
+        if not 0 <= stages <= top:
+            raise ValueError(f"stages={stages} is outside 0..{top}")
         self._ga, self._gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
-        behind = stages >= 3 or (stages >= 2 and self._ga == self._gb == 1)
-        self._capture_attrs = dict(attrs or {}) if behind else {}
+        self._attrs = dict(attrs or {})
         self._wa, self._wb, self._signed, self._sideband = wa, wb, signed, sideband
         self._stages = stages
         self._capture = stages >= 2
@@ -108,8 +78,8 @@ class Pmul(wiring.Component):
 
         c_a, c_b = self.a, self.b
         if self._capture:
-            c_a = Signal(self._wa, name="c_a", reset_less=True, attrs=self._capture_attrs)
-            c_b = Signal(self._wb, name="c_b", reset_less=True, attrs=self._capture_attrs)
+            c_a = Signal(self._wa, name="c_a", reset_less=True, attrs=self._attrs)
+            c_b = Signal(self._wb, name="c_b", reset_less=True, attrs=self._attrs)
             m.d.sync += [c_a.eq(self.a), c_b.eq(self.b)]
         slices_a, slices_b = self._slices(self._wa, ga), self._slices(self._wb, gb)
 
@@ -239,6 +209,25 @@ class Pmul(wiring.Component):
         if len(nodes) == 1:
             return nodes[0][0]
         return joined(f"{name}_last", nodes, top, _levels(count) - 1 in registered)[0]
+
+
+def slices(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> tuple[int, int]:
+    """
+    How many slices `Pmul` cuts each operand into: the fewest of `wmultiplier` bits, or of `wmultiplier - 1` if signed
+    since every slice but the top one is zero-extended; e.g. 66x41 gives 4x3 at 18.
+    """
+
+    def count(width: int) -> int:
+        return 1 if width <= wmultiplier else -(-width // (wmultiplier - signed))
+
+    return count(wa), count(wb)
+
+
+def positions(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> tuple[str, ...]:
+    """The registers of `Pmul` in the order that `stages` takes them, each only where it splits something."""
+    ga, gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
+    levels = _levels(gb) + _levels(ga) if signed else _levels(ga + gb - 1)
+    return ("output", "capture", "grid") + tuple(f"sum{k}" for k in range(1, levels))
 
 
 def _levels(count: int) -> int:

@@ -19,6 +19,8 @@ class Add(Operator):
     class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
+        NONE = 0
+        """No register."""
         DECODE = enum.auto()
         """The decoded operands."""
         OPERANDS = enum.auto()
@@ -38,7 +40,7 @@ class Add(Operator):
 
     operator = "add"
     stage_input: int = 0
-    stage_core: CoreStages = CoreStages(0)
+    stage_core: CoreStages = CoreStages.NONE
     """See `Add.CoreStages`."""
     stage_output: int = 0
 
@@ -106,7 +108,7 @@ class AddCore(wiring.Component):
         wsig: int | None = None,
         we: int | None = None,
         wshift: int | None = None,
-        stages: Add.CoreStages = Add.CoreStages(0),
+        stages: Add.CoreStages = Add.CoreStages.NONE,
         stage_output: int = 0,
     ) -> None:
         self._fmt = fmt

@@ -412,8 +412,8 @@ def test_the_oracles() -> None:
     one, half, zero, inf, minus_inf = n(1), n(Fraction(1, 2)), Zkf(fmt, 0), fmt.inf(0), fmt.inf(1)
     minus_zero, root2, root_half, minus_root_half = w(1 << 31 | 5), w(0x3FB504F3), w(0x3F3504F3), w(0xBF3504F3)
     exp2, log2, cordic = (
-        Exp2(fmt, stage_core_kernel=3, wmultiplier=18),
-        Log2(fmt, stage_core_kernel=3, stage_core_mul=3, wmultiplier=18),
+        Exp2(fmt, stage_core_kernel_level=6, wmultiplier=18),
+        Log2(fmt, stage_core_kernel_level=6, stage_core_mul=3, wmultiplier=18),
         Cordic(fmt, stage_core_mul=3, wmultiplier=18),
     )
     for x, y in (
@@ -482,8 +482,8 @@ def test_the_oracles() -> None:
 def test_the_oracles_do_not_read_the_precision_of_the_caller() -> None:
     fmt = ZkfFormat(8, 36)
     exp2, log2, cordic = (
-        Exp2(fmt, stage_core_kernel=3, wmultiplier=18),
-        Log2(fmt, stage_core_kernel=3, stage_core_mul=3, wmultiplier=18),
+        Exp2(fmt, stage_core_kernel_level=6, wmultiplier=18),
+        Log2(fmt, stage_core_kernel_level=6, stage_core_mul=3, wmultiplier=18),
         Cordic(fmt, stage_core_mul=3, wmultiplier=18),
     )
     x, one, near = fmt.encode(Fraction(1, 10)), fmt.encode(1), fmt.pack(0, fmt.bias, 1)

@@ -104,9 +104,14 @@ class Block(ABC):
 
     @property
     def name(self) -> str:
+        """The Verilog module name: the operator and `digest`."""
+        return f"zkf_{self.operator}_{self.digest}"
+
+    @property
+    def digest(self) -> str:
         """
-        The Verilog module name: the operator and a digest of `config`, the attributes and the latency, so distinct
-        configurations never share a name, nor does one whose latency changes, at a length that vendor tools take.
+        12 hex digits digesting the operator, `config`, the attributes and the timing, so distinct configurations never
+        share one, nor does one whose latency changes, at a length that keeps `name` within what vendor tools take.
         """
 
         def plain(value: Any) -> Any:
@@ -118,8 +123,7 @@ class Block(ABC):
 
         knobs = sorted((knob, plain(value)) for knob, value in self.config.items())
         attrs = sorted((f.name, plain(getattr(self, f.name) or {})) for f in fields(self) if not f.compare)
-        digest = hashlib.sha256(str((self.operator, knobs, attrs, self.timing)).encode()).hexdigest()
-        return f"zkf_{self.operator}_{digest[:12]}"
+        return hashlib.sha256(str((self.operator, knobs, attrs, self.timing)).encode()).hexdigest()[:12]
 
     @property
     @abstractmethod

@@ -10,6 +10,7 @@ from ._block import (
     Operator as Operator,
     Timing as Timing,
 )
+from ._pmul import Pmul as Pmul
 
 # Operators that are synthesized into RTL, along with their numerical reference models.
 from ._absneg import AbsNeg as AbsNeg, AbsNegResult as AbsNegResult
@@ -30,4 +31,4 @@ from ._resize import Resize as Resize
 from ._rint import RoundMode as RoundMode, Rint as Rint, RintResult as RintResult
 
 # Changing the version causes a new release to be deployed and tagged when pushed to the main branch.
-__version__ = "0.10.0.dev2"
+__version__ = "0.10.0.dev3"

@@ -38,13 +38,15 @@ class Rint(Operator):
     class CoreStages(enum.Flag):
         """The registers of `stage_core`."""
 
+        NONE = 0
+        """No register."""
         MASK = enum.auto()
         """The discard mask and the truncated magnitude, ahead of the rounding decision."""
 
     operator = "rint"
     wint: int = 32
     stage_input: int = 0
-    stage_core: CoreStages = CoreStages(0)
+    stage_core: CoreStages = CoreStages.NONE
     """See `Rint.CoreStages`."""
     stage_output: int = 0
 

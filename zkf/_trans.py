@@ -6,7 +6,7 @@ component that evaluates it. The tests certify the tables.
 import functools
 import threading
 from collections import defaultdict
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from fractions import Fraction
 from math import ceil
@@ -20,7 +20,7 @@ from amaranth.lib.wiring import In, Out
 
 from ._block import Attrs, delay, pipe
 from ._pack import pack_reference
-from ._pmul import Pmul, counts, positions, slices
+from ._pmul import Pmul, positions, slices
 from ._value import UnsupportedFormat, Zkf, ZkfFormat
 
 _ERR_GUARD = 8
@@ -153,24 +153,21 @@ def pack_fixed(fmt: ZkfFormat, sign: int, exp: int, v: int, point: int) -> Zkf:
     return pack_reference(fmt, sign, 0, 0, exp + v.bit_length() - 1 - point, v >> drop, (v >> (drop - 1)) & 1, 1, 0)
 
 
-def kernel_counts(spec: Spec, wmultiplier: int) -> range:
-    """The counts that `Kernel` takes: from none, up to the most positions of one product."""
-    return range(max(_caps(spec, wmultiplier).values()) + 1)
+def kernel_levels(spec: Spec, wmultiplier: int) -> list[int]:
+    """The levels of `Exp2.stage_core_kernel_level` that `Kernel` takes: 0 and each that adds a register."""
+    return list(_ladder(spec, wmultiplier))
 
 
-def kernel_check(stages: int, spec: Spec, wmultiplier: int) -> None:
-    """Refuses, as `stage_core_kernel`, a count outside `kernel_counts`, saying what to set."""
-    taken = kernel_counts(spec, wmultiplier)
-    if stages not in taken:
-        raise ValueError(
-            f"stage_core_kernel={stages}: set {taken.start}..{taken.stop - 1} for the {spec.function} kernel at "
-            f"WMAN={spec.wman} on {wmultiplier}-bit multipliers"
-        )
-
-
-def kernel_depth(spec: Spec, wmultiplier: int, stages: int) -> int:
-    """Register stages of `Kernel` after the table's own."""
-    return _schedule(spec, wmultiplier, stages).total
+def kernel_depth(spec: Spec, wmultiplier: int, level: int) -> int:
+    """Register stages of `Kernel` after the table's own; refuses a level that adds no register or is past the last."""
+    ladder = _ladder(spec, wmultiplier)
+    if level not in ladder:
+        taken = list(ladder)
+        if not 0 <= level <= taken[-1]:
+            raise ValueError(f"level={level} is outside 0..{taken[-1]}")
+        below, above = max(at for at in taken if at < level), min(at for at in taken if at > level)
+        raise ValueError(f"level={level} adds no register here; take {below} or {above}")
+    return ladder[level].total
 
 
 class Kernel(wiring.Component):
@@ -181,10 +178,10 @@ class Kernel(wiring.Component):
     at that scale, `f` being the fraction re-centered from the segment `thr` up.
 
     The table is addressed by the combinational argument, and the first register is its own, `w` beside it; `depth`
-    more follow, the terms of the sum added as they are formed, and the last sum is combinational. `stages` is the
-    count of every product, as `Exp2.stage_core_kernel`; each product builds its own capture. `c[2i+1]*w` of one
-    multiplier has its output after its pair's sum. `rom_attrs` goes on the table, `mul_attrs` on the products'
-    captures.
+    more follow, the terms of the sum added as they are formed, and the last sum is combinational. `level` is
+    `Exp2.stage_core_kernel_level`; each product builds its own capture.
+    `c[2i+1]*w` of one multiplier has its output after its pair's sum. `rom_attrs` goes on the table, `mul_attrs` on
+    the products' captures.
     """
 
     in_valid: Signal
@@ -197,13 +194,12 @@ class Kernel(wiring.Component):
         spec: Spec,
         *,
         wmultiplier: int,
-        stages: int,
+        level: int,
         rom_attrs: Attrs | None = None,
         mul_attrs: Attrs | None = None,
     ) -> None:
-        assert stages in kernel_counts(spec, wmultiplier), stages
-        self._spec, self._wmultiplier, self._schedule = spec, wmultiplier, _schedule(spec, wmultiplier, stages)
-        self.depth = self._schedule.total
+        self.depth = kernel_depth(spec, wmultiplier, level)
+        self._spec, self._wmultiplier, self._schedule = spec, wmultiplier, _ladder(spec, wmultiplier)[level]
         self._rom_attrs = rom_attrs or {}
         self._mul_attrs = mul_attrs or {}
         wy = spec.cf + (2 if spec.function == "exp2" else 1)
@@ -580,19 +576,21 @@ def _generated(function: str, wman: int, wmultiplier: int, fast: bool) -> Spec:
 
 def _shortest(compact: Spec, wmultiplier: int) -> Spec:
     """
-    Of the tables of `2**_K_FAST` segments or fewer that make a kernel shorter at count 3 than the compact one, that of
-    the least depth at count 3, then at count 2, then bits, then multipliers; or the compact one. Every degree up to the
-    compact one's, at every segmentation, with its operands cut to the multipliers or not, is probed; the full fits
-    follow the probes' order until the best fitted ranks no worse than the next probe, which ranks no worse than its
-    full fit.
+    Of the tables of `2**_K_FAST` segments or fewer whose kernel, every product registered up to its grid, is shorter
+    than the compact one's, that of the least such depth, then the least without the grid registers of the 2-wide
+    grids, then bits, then multipliers; or the compact one. Every degree up to the compact one's, at every segmentation,
+    with its operands cut to the multipliers or not, is probed; the full fits follow the probes' order until the best
+    fitted ranks no worse than the next probe, which ranks no worse than its full fit.
     """
     function, wman = compact.function, compact.wman
     width = compact.cf if function == "exp2" else wman - 1
 
     def rank(spec: Spec) -> tuple[int, int, int, int]:
         products = (slices(*size, signed=False, wmultiplier=wmultiplier) for size in _sizes(spec).values())
-        depth = _schedule(spec, wmultiplier, 3).total
-        return depth, _schedule(spec, wmultiplier, 2).total, _rom_bits(spec), sum(a * b for a, b in products)
+        caps, sides = _caps(spec, wmultiplier), _sides(spec, wmultiplier)
+        depth = _schedule(spec, wmultiplier, {name: min(3, cap) for name, cap in caps.items()}).total
+        wide = _schedule(spec, wmultiplier, {name: min(2 + (sides[name] > 2), cap) for name, cap in caps.items()})
+        return depth, wide.total, _rom_bits(spec), sum(a * b for a, b in products)
 
     def table(d: int, k: int, cut: bool, probe: bool) -> Spec | None:
         try:
@@ -653,11 +651,57 @@ def _sizes(spec: Spec) -> dict[str, tuple[int, int]]:
 
 def _caps(spec: Spec, wmultiplier: int) -> dict[str, int]:
     """The positions of each product of the kernel: those of `Pmul`, the output and the operands of one multiplier."""
-    out = {}
-    for name, (a, b) in _sizes(spec).items():
-        lone = slices(a, b, signed=False, wmultiplier=wmultiplier) == (1, 1)
-        out[name] = 2 if lone else len(positions(a, b, signed=False, wmultiplier=wmultiplier))
+    sides = _sides(spec, wmultiplier)
+    return {
+        name: 2 if sides[name] == 1 else len(positions(a, b, signed=False, wmultiplier=wmultiplier))
+        for name, (a, b) in _sizes(spec).items()
+    }
+
+
+def _sides(spec: Spec, wmultiplier: int) -> dict[str, int]:
+    """The widest side of each product's grid of multipliers, 1 for one multiplier."""
+    return {name: max(slices(a, b, signed=False, wmultiplier=wmultiplier)) for name, (a, b) in _sizes(spec).items()}
+
+
+def _staging(spec: Spec, wmultiplier: int, level: int) -> dict[str, int]:
+    """Each product's count at a level of `Exp2.stage_core_kernel_level`."""
+    caps, sides, out = _caps(spec, wmultiplier), _sides(spec, wmultiplier), {}
+    for name, cap in caps.items():
+        if sides[name] == 1:
+            count = 0 if level < 3 else 1 if level < 6 else 2
+        else:
+            count = (0, 1, 2, 2, 2 + (sides[name] > 2), 3, 3)[level] if level < 7 else level - 3
+        out[name] = min(count, cap)
     return out
+
+
+@functools.cache
+def _ladder(spec: Spec, wmultiplier: int) -> dict[int, "_Schedule"]:
+    """The schedule at 0 and at each level that adds a register to the one below, up to the last."""
+    out: dict[int, _Schedule] = {}
+    for level in range(max(6, max(_caps(spec, wmultiplier).values()) + 3) + 1):
+        at = _schedule(spec, wmultiplier, _staging(spec, wmultiplier, level))
+        if not out or _adds(out[max(out)], at):
+            out[level] = at
+    return out
+
+
+def _adds(below: "_Schedule", above: "_Schedule") -> bool:
+    """
+    Whether a schedule has a register that the one below lacks. The first register of a `post` product is its pair's
+    sum register, which a pair that already waits for the chain has: the top pair until the chain begins, the others
+    until they join it.
+    """
+    half = max(below.turn, default=0)
+
+    def waits(name: str) -> bool:
+        i = int(name[1:]) // 2
+        return below.begin[i - 1] >= 1 if i == half else below.turn[i] >= 1
+
+    changed = [name for name, count in above.stages.items() if count != below.stages[name]]
+    return not all(
+        name in below.post and (below.stages[name], above.stages[name]) == (0, 1) and waits(name) for name in changed
+    )
 
 
 @dataclass(frozen=True)
@@ -677,10 +721,8 @@ class _Schedule:
     total: int
 
 
-def _schedule(spec: Spec, wmultiplier: int, stages: int) -> _Schedule:
-    d, half, caps = spec.d, spec.d // 2, _caps(spec, wmultiplier)
-    least = {name: counts(a, b, signed=False, wmultiplier=wmultiplier).start for name, (a, b) in _sizes(spec).items()}
-    n = {name: min(max(stages, least[name]), cap) for name, cap in caps.items()}
+def _schedule(spec: Spec, wmultiplier: int, counts: Mapping[str, int]) -> _Schedule:
+    d, half, caps, n = spec.d, spec.d // 2, _caps(spec, wmultiplier), dict(counts)
     odd = [f"p{2 * i + 1}" for i in range(1, half + 1) if 2 * i + 1 <= d]
     post = frozenset(name for name in odd if caps[name] == 2)
     ready = {name: n[name] for name in caps if name in ("p1", "pl", *odd)}

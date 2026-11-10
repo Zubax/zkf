@@ -9,7 +9,7 @@ import pytest
 from zkf import Exp2, Log2, UnsupportedFormat, ZkfFormat
 from _certificate import certify
 from _trans import OTHERS, TABLES, build, every_row, simulate
-from zkf._trans import Kernel, Spec, _arith_range, kernel_counts, spec as table
+from zkf._trans import Kernel, Spec, _arith_range, kernel_levels, spec as table
 
 
 @pytest.mark.parametrize("key", TABLES + OTHERS, ids=str)
@@ -26,8 +26,8 @@ def test_every_width(function: str, wman: int, fast: bool) -> None:
     """
     The tables at every width from 8 to 64 that generation accepts (`fast`'s, at the native widths) and at which
     neither operand of `c1*w` is wider than four multipliers: each distinct one certified, the kernel at each width on
-    every row with its products cut as far as they go, and the operator whole at the narrowest width, at 18 and at 24,
-    with every register of its core.
+    every row with its products cut as far as they go, and the operator whole at the narrowest width that it takes (16
+    at least), at 18 and at 24, with every register of its core.
     """
     found: dict[int, Spec] = {}
     for width in range(8, 65) if not fast else (16, 18, 24, 27):
@@ -40,29 +40,30 @@ def test_every_width(function: str, wman: int, fast: bool) -> None:
     for spec in set(found.values()):
         certify(spec)
     for width, spec in found.items():
-        every_row(spec, Kernel(spec, wmultiplier=width, stages=kernel_counts(spec, width).stop - 1))
-    every = ~(Exp2 if function == "exp2" else Log2).CoreStages(0)
-    for width in sorted({min(found), 18, 24}):
+        every_row(spec, Kernel(spec, wmultiplier=width, level=kernel_levels(spec, width)[-1]))
+    every = ~(Exp2 if function == "exp2" else Log2).CoreStages.NONE
+    for width in sorted({min(width for width in found if width >= 16), 18, 24}):
         simulate(build(function, ZkfFormat(8, wman), width, stage_core=every, fast=fast), 1000)
 
 
 def test_what_has_no_table_is_refused() -> None:
     """
-    Out of range, and then, generated as the model is made, where no segmentation fits the multipliers: e.g. at 24 and
-    26 a square, and at 36 the cubic coefficient, is wider than two of them at every one.
+    Out of range, as the model is made; and, below the widths that the operators take, where no segmentation fits the
+    multipliers: e.g. at 24 and 26 a square, and at 36 the cubic coefficient, is wider than two of them at every one.
     """
-    for operator, wman, wmultiplier in (
-        (Exp2, 9, 18),
-        (Log2, 54, 18),
-        (Exp2, 20, 8),
-        (Log2, 20, 8),
-        (Exp2, 24, 8),
-        (Exp2, 26, 8),
-        (Log2, 33, 8),
-        (Log2, 36, 9),
+    for operator, wman in ((Exp2, 9), (Log2, 54)):
+        with pytest.raises(UnsupportedFormat, match="no .* table"):
+            operator(ZkfFormat(8, wman), wmultiplier=18)
+    for function, wman, wmultiplier in (
+        ("exp2", 20, 8),
+        ("log2", 20, 8),
+        ("exp2", 24, 8),
+        ("exp2", 26, 8),
+        ("log2", 33, 8),
+        ("log2", 36, 9),
     ):
         with pytest.raises(UnsupportedFormat, match="no .* table"):
-            operator(ZkfFormat(8, wman), wmultiplier=wmultiplier)
+            table(function, wman, wmultiplier, True)
     Exp2(ZkfFormat(8, 16), wmultiplier=30)  # a multiplier that takes every segment
 
 

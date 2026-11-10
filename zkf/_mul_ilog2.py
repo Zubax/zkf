@@ -21,13 +21,15 @@ class MulIlog2(Operator):
     class CoreStages(enum.Flag):
         """The registers of `stage_core`."""
 
+        NONE = 0
+        """No register."""
         DECODE = enum.auto()
         """The decoding, ahead of the selection of the result."""
 
     operator = "mul_ilog2"
     wk: int | None = None
     stage_input: int = 0
-    stage_core: CoreStages = CoreStages(0)
+    stage_core: CoreStages = CoreStages.NONE
     """See `MulIlog2.CoreStages`."""
     stage_output: int = 0
 
