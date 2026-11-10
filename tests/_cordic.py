@@ -409,7 +409,7 @@ def vectoring_strata(fmt: ZkfFormat, seed: int = SEED) -> list[tuple[int, int]]:
             for xe in {e for e in (fmt.bias, fmt.bias + 2, fmt.exp_inf - 2) if 1 <= e < fmt.exp_inf}:
                 x = fmt.pack(0, xe, 0)
                 slope = mp.tan(2 * mp.pi * mp.mpf(k.numerator) / k.denominator * mp.ldexp(1, 1 - fmt.bias))
-                y = fmt.encode(x.to_fraction() * Fraction(slope))
+                y = fmt.encode(x.to_mpf() * slope)
                 if not (y.is_zero or y.is_inf):
                     out |= {(normal(sy, y.exp, y.bits & fmt.frac_mask), x.bits) for sy in (0, 1)}
     return sorted(out | set(VECTORED.get((fmt.wexp, fmt.wman), [])))

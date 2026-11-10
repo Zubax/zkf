@@ -401,11 +401,11 @@ def _helper(function: str, argument: Any) -> Any:
 
 def _fit(function: str, k: int, d: int, cf: int, thr: int, segment: int) -> list[int]:
     """The magnitudes of a near-minimax polynomial of a segment, the low degree first, at the scale `2**cf`."""
-    fitted = _fitting.chebyfit(
-        lambda wn: _helper(function, _argument(function, k, thr, segment, wn)),
-        [_fitting.mpf(0), _fitting.mpf(1)],
-        d + 1,
-        asc=True,
+    # TODO: chebyfit(..., asc=True) once mpmath>=1.4 is required; asc is new in 1.4, which warns without it.
+    nodes = [(1 + _fitting.cospi((j + _fitting.mpf(0.5)) / (d + 1))) / 2 for j in range(d + 1)]
+    fitted = _fitting.lu_solve(
+        _fitting.matrix([[wn**i for i in range(d + 1)] for wn in nodes]),
+        [_helper(function, _argument(function, k, thr, segment, wn)) for wn in nodes],
     )
     out = [int(_fitting.nint(c * (1 << cf))) for c in fitted]
     # The coefficients of exp2 are positive; those of log2 alternate from a positive one; a high one may round to zero.
