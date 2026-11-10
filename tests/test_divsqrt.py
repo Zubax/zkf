@@ -219,7 +219,7 @@ def simulate(model: Divsqrt, kind: str | int, shard: int = 0, shards: int = 1) -
 def decodes(wman: int, fast: bool) -> tuple[Divsqrt.CoreStages, ...]:
     """The values of `stage_core`: a WMAN whose stage 0 folds no divider's digit has none to unfold."""
     folds = wman % 3 != 1 if fast else wman % 2 == 0
-    return (Divsqrt.CoreStages(0), Divsqrt.CoreStages.FIRST_DIGIT) if folds else (Divsqrt.CoreStages(0),)
+    return (Divsqrt.CoreStages.NONE, Divsqrt.CoreStages.FIRST_DIGIT) if folds else (Divsqrt.CoreStages.NONE,)
 
 
 # mode, wexp, wman, kind, fast: roots walked whole at each radix's smallest WMAN; radix 8 at each residue of WMAN by 3
@@ -284,7 +284,6 @@ def test_refusals() -> None:
 
 
 # mode, wexp, wman, kind, fast, stage_core, shard, shards: a shard holds 2**18 divisions at most.
-NONE = Divsqrt.CoreStages(0)
 DEEP: list[tuple[int, int, int, str | int, bool, Divsqrt.CoreStages, int, int]] = [
     *[
         (mode, 5, m, "significands", fast, sd, 0, 1)
@@ -300,11 +299,11 @@ DEEP: list[tuple[int, int, int, str | int, bool, Divsqrt.CoreStages, int, int]] 
         for sd in decodes(m, fast)
     ],
     *[
-        (1, w, m, "every", fast, NONE, 0, 1)
+        (1, w, m, "every", fast, Divsqrt.CoreStages.NONE, 0, 1)
         for fast in (False, True)
         for w, m in ((2, 9), (4, 9), (4, 10), (4, 11), (4, 12))
     ],
-    *[(mode, 2, 9, "every", True, NONE, shard, 16) for mode in (0, 2) for shard in range(16)],
+    *[(mode, 2, 9, "every", True, Divsqrt.CoreStages.NONE, shard, 16) for mode in (0, 2) for shard in range(16)],
     *[(mode, 3, m, "every", False, sd, 0, 1) for mode in (0, 1, 2) for m in (5, 6) for sd in decodes(m, False)],
     *[(mode, 4, m, "significands", False, sd, 0, 1) for mode in (0, 2) for m in (7, 8) for sd in decodes(m, False)],
     *[
@@ -314,13 +313,13 @@ DEEP: list[tuple[int, int, int, str | int, bool, Divsqrt.CoreStages, int, int]] 
         for shard in range(4)
     ],
     *[
-        (mode, w, m, 512, fast, NONE, 0, 1)
+        (mode, w, m, 512, fast, Divsqrt.CoreStages.NONE, 0, 1)
         for mode in (0, 1, 2)
         for fast in (False, True)
         for w, m in ((6, 17), (8, 23), (7, 12), (7, 13), (7, 14))
     ],
     *[
-        (mode, w, m, count, fast, NONE, 0, 1)
+        (mode, w, m, count, fast, Divsqrt.CoreStages.NONE, 0, 1)
         for mode in (0, 1, 2)
         for fast in (False, True)
         for w, m, count in ((8, 48, 384), (7, 53, 384), (8, 36, 1024))

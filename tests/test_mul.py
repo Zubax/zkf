@@ -1,4 +1,3 @@
-import re
 from typing import Any
 
 import numpy as np
@@ -16,7 +15,7 @@ from _operands import (
     random_zero,
 )
 from zkf import Mul, Zkf, ZkfFormat
-from zkf._pmul import counts
+from zkf._pmul import positions
 
 # Operands and the product, worked by hand at 8/24.
 BINARY32 = [
@@ -165,13 +164,11 @@ FORMATS = [
 
 
 def taken(wman: int, wmultiplier: int) -> range:
-    """The counts that the product takes."""
-    return counts(wman, wman, signed=False, wmultiplier=wmultiplier)
+    """The counts that the product takes: none up to its registers."""
+    return range(len(positions(wman, wman, signed=False, wmultiplier=wmultiplier)) + 1)
 
 
-@pytest.mark.parametrize(
-    "row, stage_core_mul", [(row, core) for row in FORMATS for core in range(4) if core in taken(row[1], 18)], ids=str
-)
+@pytest.mark.parametrize("row, stage_core_mul", [(row, core) for row in FORMATS for core in taken(row[1], 18)], ids=str)
 def test_formats(row: tuple[int, int, int], stage_core_mul: int) -> None:
     run(*row, stage_core_mul=stage_core_mul)
 
@@ -191,7 +188,7 @@ def test_stages(knobs: dict[str, int]) -> None:
 
 
 # The narrowest significands that 8-bit multipliers split in two and in three, at every count that they take.
-@pytest.mark.parametrize("row", [(12, 2), (12, 3), (17, 3), (17, 4)], ids=str)
+@pytest.mark.parametrize("row", [(wman, count) for wman in (12, 17) for count in taken(wman, 8)], ids=str)
 def test_split(row: tuple[int, int]) -> None:
     run(3, row[0], 512, 8, stage_core_mul=row[1])
 
@@ -202,8 +199,15 @@ def test_catalog(model: Mul) -> None:
 
 
 def test_refusals() -> None:
-    with pytest.raises(ValueError, match=re.escape("stage_core_mul=1: set 2..3 on 18-bit multipliers")):
-        Mul(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=1)
+    """The product refuses a count past its registers as it is built."""
+    with pytest.raises(ValueError, match=r"^stages=4 is outside 0\.\.3$"):
+        Mul(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=4).compile()
+
+
+def test_the_attributes_reach_the_capture_of_a_grid() -> None:
+    """At `stage_core_mul=2` a 2x2 grid's operands are captured, with no register behind its multipliers."""
+    text = Mul(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=2, mul_attrs={"use_dsp": "yes"}).compile()
+    assert text.count('(* use_dsp = "yes" *)') == 2
 
 
 def test_every_stage_is_a_cycle() -> None:

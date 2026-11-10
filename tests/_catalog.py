@@ -92,9 +92,9 @@ CATALOG: dict[str, Block] = {
             wmultiplier=18,
         ),
         # Without PACK nextpnr's seeds make 92.5 to 107.8 MHz.
-        Fma(F36, stage_output=1, stage_core_add=~Add.CoreStages(0), **_FMA36),
+        Fma(F36, stage_output=1, stage_core_add=~Add.CoreStages.NONE, **_FMA36),
         # Without PACK nextpnr's seeds make 99.3 to 106.4 MHz and Diamond's placements 99.2 to 112.9.
-        Fma(F36, stage_input=1, stage_core_add=~Add.CoreStages(0), **_FMA36),
+        Fma(F36, stage_input=1, stage_core_add=~Add.CoreStages.NONE, **_FMA36),
         # Folded, nextpnr's placements make 99.4 to 106.3 MHz.
         Divsqrt(F18, stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
         Divsqrt(F18, mode=0),
@@ -143,16 +143,14 @@ CATALOG: dict[str, Block] = {
         Rint(F18, stage_core=Rint.CoreStages.MASK),
         # On Cyclone IV E C8 Quartus makes 95.7 MHz, from the mask into the integer.
         _grade(Rint(F36, wint=44, stage_core=Rint.CoreStages.MASK), cyclone4_grade=7),
-        Exp2(F18, stage_core_kernel=2, wmultiplier=18),
-        Log2(F18, stage_core_kernel=2, stage_core_mul=2, wmultiplier=18),
-        Log2(F18, stage_core_kernel=2, stage_core_mul=2, stage_output=1, wmultiplier=18),
-        # At stage_core_kernel=2, which leaves the tiles of the products' grids unregistered, Vivado on Artix-7 misses
-        # by 0.042 ns.
-        Exp2(F24, stage_core_kernel=3, wmultiplier=18),
-        Log2(F24, stage_core_kernel=3, stage_core_mul=3, wmultiplier=18),
-        Exp2(F36, stage_core_kernel=3, wmultiplier=18),
+        Exp2(F18, stage_core_kernel_level=6, wmultiplier=18),
+        Log2(F18, stage_core_kernel_level=6, stage_core_mul=2, wmultiplier=18),
+        Log2(F18, stage_core_kernel_level=6, stage_core_mul=2, stage_output=1, wmultiplier=18),
+        Exp2(F24, stage_core_kernel_level=6, wmultiplier=18),
+        Log2(F24, stage_core_kernel_level=6, stage_core_mul=3, wmultiplier=18),
+        Exp2(F36, stage_core_kernel_level=6, wmultiplier=18),
         # Without ALIGN Vivado on Artix-7 misses by 0.634 ns, in the shift into the last product.
-        Log2(F36, stage_core_kernel=3, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
+        Log2(F36, stage_core_kernel_level=6, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
         # Without PACK nextpnr's seeds make 81.6 to 87.5 MHz, from the normalizer's count into the result; without
         # FOLDED nextpnr's seeds make 99.7 to 103.5, from the reduced coordinate into the engine.
         Cordic(

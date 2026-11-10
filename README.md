@@ -50,7 +50,8 @@ it shows neither.
 
 ### Tuning knobs
 
-Operators can be tuned for the target chip with register-stage knobs, all off by default:
+Operators can be tuned for the target chip with register-stage knobs.
+The default configuration has the least cycle latency; add stages if timing fails to close:
 
 - `stage_input` and `stage_output` -- input and output register stages shielding the operator's internal combinational
 paths from external circuits.
@@ -64,7 +65,7 @@ The docstrings describe the knobs of each operator.
 The `timing` property gives the latency and the initiation interval (II) of the chosen staging configuration.
 
 Operators that multiply take `wmultiplier`, the operand width of the target's multipliers (16, 18 and 24 bits are
-common in modern FPGAs; in the absence of hard DSP blocks any value will work).
+common in modern FPGAs; in the absence of hard DSP blocks, any value that the library accepts will do).
 
 `rom_attrs` and `mul_attrs` pass synthesis attributes to the lookup tables and to the products' operand registers,
 e.g. `rom_attrs={"rom_style": "block"}`.

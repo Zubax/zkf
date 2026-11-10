@@ -228,14 +228,14 @@ FORMATS = [
 @pytest.mark.parametrize("every_register", [False, True])
 @pytest.mark.parametrize("row", FORMATS, ids=str)
 def test_formats(row: tuple[int, int, int], every_register: bool) -> None:
-    run(*row, stage_core=~Add.CoreStages(0) if every_register else Add.CoreStages(0))
+    run(*row, stage_core=~Add.CoreStages.NONE if every_register else Add.CoreStages.NONE)
 
 
 @pytest.mark.parametrize(
     "knobs",
     [
         {"stage_input": 1},
-        {"stage_input": 2, "stage_core": ~Add.CoreStages(0), "stage_output": 1},
+        {"stage_input": 2, "stage_core": ~Add.CoreStages.NONE, "stage_output": 1},
         {"stage_input": 3},
         {"stage_output": 2},
     ],
@@ -247,7 +247,7 @@ def test_stages(knobs: dict[str, Any]) -> None:
 
 # Each register alone and all of them, at a normalizer of two levels and of three.
 @pytest.mark.parametrize(
-    "wman, stage_core", [(wman, core) for wman in (6, 18) for core in (*Add.CoreStages, ~Add.CoreStages(0))], ids=str
+    "wman, stage_core", [(wman, core) for wman in (6, 18) for core in (*Add.CoreStages, ~Add.CoreStages.NONE)], ids=str
 )
 def test_registers(wman: int, stage_core: Add.CoreStages) -> None:
     run(4, wman, 256, stage_core=stage_core)
@@ -266,7 +266,7 @@ def test_every_set(shard: int) -> None:
     "row",
     [
         (8, 18, 256, {"stage_input": 2}),
-        (8, 36, 768, {"stage_core": ~Add.CoreStages(0)}),
+        (8, 36, 768, {"stage_core": ~Add.CoreStages.NONE}),
         (6, 100, None, {}),
     ],
     ids=str,
@@ -300,10 +300,10 @@ DEEP = [
 @pytest.mark.parametrize(
     "stage_core",
     [
-        Add.CoreStages(0),
+        Add.CoreStages.NONE,
         Add.CoreStages.SUM | Add.CoreStages.NORMALIZED,
         Add.CoreStages.DECODE | Add.CoreStages.ALIGN | Add.CoreStages.NORMALIZE | Add.CoreStages.PACK,
-        ~Add.CoreStages(0),
+        ~Add.CoreStages.NONE,
     ],
     ids=str,
 )

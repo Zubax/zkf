@@ -46,11 +46,12 @@ ROTATIONS = [(3, 16, 512), (5, 16, 512), (8, 24, 1024), (8, 32, 768), (11, 53, 3
 # the difference of the exponents is short.
 VECTORINGS = [(6, 18, 1536), (8, 24, 1024), (8, 36, 768), (11, 53, 384), (5, 16, 512), (5, 53, 384)]
 # The knobs at 5/16 unless a row has a format, where they change no result; of every mode unless it has one; the
-# product's count the fewest unless a row has one. The input and output stages, which no mode changes, in both modes;
-# the seeds off and in part, of the modes that rotate. The product from its one register at a width where it is one
-# multiplier to the pairs of rows of a grid on narrower multipliers, all the registers of the rest (one by one in the
-# deep tier), without `fast` (one packer, the division at radix 4), and a product as long as the iterations that the
-# seed leaves; the catalog's rotation at 6/18 with CORRECTIONS, which no spec of the catalog takes.
+# product's count 1 unless a row has one. The input and output stages, which no mode changes, in both modes; the seeds
+# off and in part, of the modes that rotate. The product combinational in a vectoring, and from its one register at a
+# width where it is one multiplier to the pairs of rows of a grid on narrower multipliers, all the registers of the rest
+# (one by one in the deep tier), without `fast` (one packer, the division at radix 4), and a rotation whose angle,
+# issued ahead, would take another slice; the catalog's rotation at 6/18 with CORRECTIONS, which no spec of the catalog
+# takes.
 KNOBS: list[dict[str, Any]] = [
     {"wexp": 6, "wman": 18},
     {
@@ -61,7 +62,6 @@ KNOBS: list[dict[str, Any]] = [
         "mode": 0,
     },
     *({"rs": rs, "mode": mode} for rs in (0, 1) for mode in (0, 2)),
-    {"sm": 6, "wm": 9, "mode": 2},
     {"si": 1, "mode": 2},
     {"so": 1, "mode": 2},
     {"si": 1, "so": 1, "mode": 2},
@@ -70,17 +70,19 @@ KNOBS: list[dict[str, Any]] = [
     {"sm": 1, "wm": 32},
     {"sm": 3},
     {"sm": 4, "mode": 2},
-    {"sm": 4, "wm": 10},
-    {"sm": 5, "wm": 10, "mode": 2},
+    {"sm": 4, "wm": 16, "mode": 0},
+    {"sm": 2, "wm": 26, "mode": 0},
+    {"sm": 3, "wm": 26, "mode": 2},
     {"sm": 3, "wm": 16, "mode": 1},
     {"sm": 4, "wm": 16, "mode": 2},
     {"sm": 4, "mode": 0},
-    {"sm": 5, "wm": 9, "mode": 0},
     {"sm": 3, "wexp": 6, "wman": 18, "mode": 1},
+    {"sm": 0, "mode": 1},
+    {"sm": 0, "fa": False, "mode": 1},
     {"fa": False, "mode": 1},
     {"fa": False, "sm": 3, "wm": 16, "mode": 1},
     *({"sc": ~LACKED[mode], "sm": 1, "wm": 32, "mode": mode} for mode in (0, 1, 2)),
-    {"sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE, "sm": 4, "wm": 10, "mode": 0},
+    {"sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE, "sm": 4, "wm": 16, "mode": 0},
     {"si": 1, "sm": 3, "sc": SHARED | CoreStages.TAKEN | CoreStages.ORDERED, "so": 1, "mode": 1},
     {
         "si": 1,
@@ -94,7 +96,7 @@ KNOBS: list[dict[str, Any]] = [
         "so": 1,
         "mode": 2,
     },
-    {"si": 1, "sm": 4, "sc": ~CoreStages(0), "so": 2, "mode": 2},
+    {"si": 1, "sm": 4, "sc": ~CoreStages.NONE, "so": 2, "mode": 2},
     {"fa": False, "mode": 0},
     {"fa": False, "sm": 4, "mode": 2},
     {"fa": False, "si": 1, "sm": 1, "wm": 32, "sc": ~LACKED[0], "so": 2, "mode": 0},
@@ -108,7 +110,7 @@ BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {}), (4, 16, {"mode": 0}), (8, 36, {"f
 
 
 # The deep tier: the formats of the default one and others at more operands, under the knobs one by one.
-DEEP_KNOBS: list[dict[str, Any]] = [{}, {"rs": 1}, {"sm": 3}, {"sm": 4}, {"sm": 4, "wm": 10}]
+DEEP_KNOBS: list[dict[str, Any]] = [{}, {"rs": 1}, {"sm": 3}, {"sm": 4}, {"sm": 4, "wm": 16}]
 DEEP_KNOBS += [
     {"si": 1, "so": 1, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK}
 ]
@@ -126,6 +128,8 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (5, 16, 512, {"mode": 0, "sc": ~LACKED[0]}),
     (5, 16, 1000, {"sm": 1, "wm": 32}),
     (8, 24, 768, {"mode": 0}),
+    (8, 27, 256, {"mode": 2, "sm": 5, "wm": 16}),
+    (8, 48, 256, {"mode": 1, "sm": 5, "wm": 16}),
     *((wexp, wman, count, {"mode": 2}) for wexp, wman, count in VECTORINGS[:4]),
     (
         5,
@@ -143,6 +147,7 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (5, 16, 2000, {"mode": 1, "sm": 1, "wm": 32}),
     (5, 16, 512, {}),
     (8, 36, 2048, {"mode": 1} | synthesized(36, 1)),
+    (8, 36, 2048, {"mode": 1, "sm": 0}),
     *((5, 16, 256, {"sc": member, "mode": mode}) for mode in (0, 1, 2) for member in ~LACKED[mode]),
 ]
 
@@ -212,7 +217,7 @@ def subsets(seed: int = SEED) -> list[dict[str, Any]]:
         members = list(~LACKED[mode])
         for _ in range(count):
             taken = [member for member, coin in zip(members, rng.integers(0, 2, len(members))) if coin]
-            out.append({"sc": reduce(or_, taken, CoreStages(0)), "mode": mode})
+            out.append({"sc": reduce(or_, taken, CoreStages.NONE), "mode": mode})
     return out + [row | {"fa": False} for row in out[::3]]
 
 
@@ -272,7 +277,7 @@ def test_the_attributes_reach_the_tables(mode: int) -> None:
     assert [line for line in lines if line.strip() != attribute] == model.compile().splitlines()
 
 
-@pytest.mark.parametrize("stages", [{}, {"sm": 3, "sc": ~CoreStages(0), "so": 2}, {"si": 1}], ids=str)
+@pytest.mark.parametrize("stages", [{}, {"sm": 3, "sc": ~CoreStages.NONE, "so": 2}, {"si": 1}], ids=str)
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
     cut(build(ZkfFormat(5, 16), mode, **stages))
@@ -280,11 +285,16 @@ def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
         cut(build(ZkfFormat(3, 16), mode, **stages))  # an exponent that a vectoring does not take
 
 
+def test_cut_with_a_combinational_product() -> None:
+    cut(build(ZkfFormat(5, 16), 1, sm=0))
+
+
 # Without CORRECTIONS a packer out of step with the other takes a value that has moved on.
 @pytest.mark.parametrize("held", [True, False])
 @pytest.mark.parametrize("mode", [0, 2])
 def test_cut_fast(mode: int, held: bool) -> None:
-    cut(build(ZkfFormat(5, 16), mode, fa=True, sc=~LACKED[mode] & ~(CoreStages(0) if held else CoreStages.CORRECTIONS)))
+    sc = ~LACKED[mode] & ~(CoreStages.NONE if held else CoreStages.CORRECTIONS)
+    cut(build(ZkfFormat(5, 16), mode, fa=True, sc=sc))
 
 
 # A bypass's division starts two cycles ahead of the engine's end at these widths, at either radix: cut by reset around
@@ -356,6 +366,9 @@ def test_timing() -> None:
     # No effect in the mode that does not take it.
     one: dict[str, Any] = {"stage_core_mul": 2, "wmultiplier": 18}
     assert Cordic(fmt, **one, mode=1, rotation_seed=2).timing == Cordic(fmt, **one, mode=1, rotation_seed=0).timing
+    # A vectoring's product is behind its division.
+    vectorings = [timings(Cordic(fmt, stage_core_mul=count, wmultiplier=18, mode=1)) for count in (0, 1, 3)]
+    assert vectorings == [[(21, 21)]] * 3
 
 
 @pytest.mark.parametrize("wman", range(16, 54))
@@ -379,30 +392,37 @@ def test_seed_tables(wman: int) -> None:
 
 def test_refusals() -> None:
     fmt = ZkfFormat(6, 18)
-    # Both modes' product is a grid of 3x2 multipliers, a rotation's of 2x2, and one multiplier at a width of 36.
-    refused: list[dict[str, Any]] = [
-        {"rotation_seed": -1},
-        {"rotation_seed": 3},
-        {"stage_core_mul": 6},
-        {"stage_core_mul": 1, "mode": 0},
-        {"stage_core_mul": 5, "mode": 0},
-        {"stage_core_mul": 4, "wmultiplier": 36},
-        {"mode": 3},
-    ]
+    refused: tuple[dict[str, Any], ...] = ({"rotation_seed": -1}, {"rotation_seed": 3}, {"mode": 3})
     for knobs in refused:
         with pytest.raises(ValueError):
-            Cordic(fmt, **{"wmultiplier": 18, "stage_core_mul": 3} | knobs)
-    with pytest.raises(ValueError, match=r"^stage_core_mul=2: set 3\.\.4 "):
-        Cordic(fmt, wmultiplier=18, stage_core_mul=2)
-    with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1$"):
-        Cordic(fmt, wmultiplier=36, stage_core_mul=0)
-    # The default, the fastest configuration, is refused clearly rather than demanded.
-    with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1$"):
-        Cordic(fmt, wmultiplier=36)
-    Cordic(fmt, wmultiplier=36, stage_core_mul=1)
+            Cordic(fmt, wmultiplier=18, **knobs)
+    with pytest.raises(ValueError, match=r"^wmultiplier=15 is below 16$"):
+        Cordic(fmt, wmultiplier=15)
+    for mode in (0, 2):
+        with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1, which a rotation takes$"):
+            Cordic(fmt, wmultiplier=36, stage_core_mul=0, mode=mode)
+    Cordic(fmt, wmultiplier=36)  # the default, the fastest configuration
     for wexp, wman, mode in ((4, 16, 1), (4, 16, 2), (8, 15, 0), (8, 54, 2)):
         with pytest.raises(UnsupportedFormat):
-            Cordic(ZkfFormat(wexp, wman), wmultiplier=18, stage_core_mul=3, mode=mode)
+            Cordic(ZkfFormat(wexp, wman), wmultiplier=18, mode=mode)
+
+
+def test_a_count_above_the_product_is_refused_as_it_is_built() -> None:
+    """
+    At 5/16 on 18-bit multipliers the product has 4 registers, 3 at `mode=1`, and one multiplier's 3 at 6/18 on 36 bits;
+    `timing` takes a count past them, 6 at `mode=0` past the iterations of the angle's product issued ahead too.
+    """
+    for fmt, wmultiplier, mode, count, top in (
+        (ZkfFormat(5, 16), 18, 0, 5, 4),
+        (ZkfFormat(5, 16), 18, 1, 4, 3),
+        (ZkfFormat(5, 16), 18, 2, 5, 4),
+        (ZkfFormat(5, 16), 18, 0, 6, 4),
+        (ZkfFormat(6, 18), 36, 2, 4, 3),
+    ):
+        model = Cordic(fmt, wmultiplier=wmultiplier, stage_core_mul=count, mode=mode)
+        assert model.timing
+        with pytest.raises(ValueError, match=rf"^stages={count} is outside 0\.\.{top}$"):
+            model.compile()
 
 
 def test_a_register_of_a_mode_lacked_is_ignored() -> None:

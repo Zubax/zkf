@@ -15,7 +15,6 @@ from _operands import (
     random_zero,
 )
 from zkf import Add, Fma, Zkf, ZkfFormat
-from zkf._pmul import counts
 
 # Operands at 6/18 where one rounding differs from that of a multiplier and an adder in a row, and at 4/30 where a
 # deep cancellation leaves an exponent far below the product's range.
@@ -106,8 +105,6 @@ def drawn(model: Fma, rng: np.random.Generator) -> tuple[int, int, int]:
 
 
 def run(wexp: int, wman: int, count: int, wmultiplier: int = 18, shard: int = 0, shards: int = 1, **knobs: Any) -> None:
-    """The product takes the lowest count that it takes by default."""
-    knobs = {"stage_core_mul": counts(wman, wman, signed=False, wmultiplier=wmultiplier).start} | knobs
     simulate(Fma(ZkfFormat(wexp, wman), wmultiplier=wmultiplier, **knobs), count, shard, shards)
 
 
@@ -168,7 +165,7 @@ def test_formats(row: tuple[int, int, int]) -> None:
             "stage_core_add": Add.CoreStages.SUM | Add.CoreStages.OPERANDS,
             "stage_output": 2,
         },
-        {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages(0)},
+        {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages.NONE},
     ],
     ids=str,
 )
@@ -177,7 +174,7 @@ def test_stages(knobs: dict[str, Any]) -> None:
 
 
 # Each register of the sum alone and all of them.
-@pytest.mark.parametrize("stage_core", [*Add.CoreStages, ~Add.CoreStages(0)], ids=str)
+@pytest.mark.parametrize("stage_core", [*Add.CoreStages, ~Add.CoreStages.NONE], ids=str)
 def test_registers(stage_core: Add.CoreStages) -> None:
     run(4, 7, 256, stage_core_add=stage_core)
 
@@ -187,17 +184,17 @@ def test_registers(stage_core: Add.CoreStages) -> None:
 @pytest.mark.parametrize(
     "row",
     [
-        (4, 12, 256, 8, {"stage_core_mul": 2}),
+        (4, 12, 256, 8, {"stage_core_mul": 0}),
         (4, 12, 256, 8, {"stage_core_mul": 3}),
-        (4, 17, 256, 8, {"stage_core_mul": 3}),
+        (4, 17, 256, 8, {"stage_core_mul": 0}),
         (4, 17, 256, 8, {"stage_core_mul": 4}),
-        (6, 18, 384, 18, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages(0)}),
+        (6, 18, 384, 18, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages.NONE}),
         (
             6,
             18,
             384,
             18,
-            {"stage_input": 1, "stage_core_mul": 3, "stage_core_add": ~Add.CoreStages(0), "stage_output": 1},
+            {"stage_input": 1, "stage_core_mul": 3, "stage_core_add": ~Add.CoreStages.NONE, "stage_output": 1},
         ),
     ],
     ids=str,
@@ -217,19 +214,13 @@ def test_every_triple(shard: int) -> None:
 
 
 def test_refusals() -> None:
-    fmt = ZkfFormat(4, 6)
-    refused: list[dict[str, Any]] = [
-        {"stage_core_mul": 4},
-        {"stage_core_mul": -1},
-    ]
-    for knobs in refused:
-        with pytest.raises(ValueError):
-            Fma(fmt, **({"wmultiplier": 18} | knobs))
-    # A cut product without its capture or past its positions, and a grid with a side longer than 2 summed with its
-    # multipliers.
-    for wman, stage_core_mul in ((12, 1), (12, 5), (17, 2)):
-        with pytest.raises(ValueError):
-            Fma(ZkfFormat(4, wman), wmultiplier=8, stage_core_mul=stage_core_mul)
+    """
+    The product refuses a count past its registers as it is built: one multiplier's 3, a 2x2 grid's 3 at 12 bits on
+    8-bit ones, a 3x3 grid's 4 at 17.
+    """
+    for wman, wmultiplier, count, top in ((6, 18, 4, 3), (6, 18, -1, 3), (12, 8, 4, 3), (17, 8, 5, 4)):
+        with pytest.raises(ValueError, match=rf"^stages={count} is outside 0\.\.{top}$"):
+            Fma(ZkfFormat(4, wman), wmultiplier=wmultiplier, stage_core_mul=count).compile()
 
 
 @pytest.mark.deep
@@ -260,8 +251,8 @@ def test_deep_stages(stages: int) -> None:
     [
         (7, 12, 512, {}),
         (9, 24, 512, {}),
-        (8, 36, 768, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages(0)}),
-        (8, 36, 768, {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages(0)}),
+        (8, 36, 768, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages.NONE}),
+        (8, 36, 768, {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages.NONE}),
         (
             2,
             4,
@@ -269,11 +260,11 @@ def test_deep_stages(stages: int) -> None:
             {
                 "stage_input": 1,
                 "stage_core_mul": 2,
-                "stage_core_add": ~Add.CoreStages(0),
+                "stage_core_add": ~Add.CoreStages.NONE,
                 "stage_output": 1,
             },
         ),
-        (3, 4, 4096, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages(0), "stage_output": 1}),
+        (3, 4, 4096, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages.NONE, "stage_output": 1}),
         (
             6,
             18,

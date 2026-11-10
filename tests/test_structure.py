@@ -1,6 +1,7 @@
 """Every operator, elaborated over its knobs, and what an operator compiles to, which linters take."""
 
 import os
+import re
 import shutil
 import subprocess
 from collections.abc import Iterator
@@ -13,7 +14,7 @@ from amaranth.hdl import Fragment
 
 from _catalog import CATALOG
 from _cordic import LACKED
-from _sweep import configurations, make
+from _sweep import admits, configurations, make
 from zkf import (
     AbsNeg,
     Add,
@@ -110,12 +111,20 @@ MODELS: list[tuple[type[Block], ZkfFormat, dict[str, object]]] = [
 
 
 def models(cls: type[Block], fmt: ZkfFormat, fixed: dict[str, object], every_pair: bool = True) -> Iterator[Block]:
-    """Every configuration of the sweep that the format admits."""
+    """Every configuration of the sweep that the format admits; a refusal that the sweep does not expect fails."""
     for knobs in configurations(cls, every_pair=every_pair):
         try:
-            yield make(cls, fmt, **(knobs | fixed))
-        except ValueError:
+            model = make(cls, fmt, **(knobs | fixed))
+        except ValueError as refusal:
+            # A rotation's count of 0, and a kernel's level that adds no register or is past the last.
+            expected = (
+                r"stage_core_mul=0 is below 1, which a rotation takes"
+                r"|level=\d+ (is outside 0\.\.\d+|adds no register here; take \d+ or \d+)"
+            )
+            assert re.fullmatch(expected, str(refusal)), refusal
             continue
+        if admits(model):
+            yield model
 
 
 @pytest.mark.parametrize("shard", range(4))

@@ -21,6 +21,9 @@ Less code does not always imply simpler code. Apply common sense and keep the co
 
 Register-stage knobs that the chosen configuration cannot implement are silently ignored by design, not refused:
 e.g., a register of a mode that the operator lacks. A stage count outside its knob's range is refused, not clamped.
+A level knob, whose levels each add registers in a measured order, refuses a level that adds none, naming the
+nearest that do.
+No configuration is refused for the timing that it is expected to miss: closing timing is the user's job.
 
 ### Reset strategy
 
@@ -91,12 +94,10 @@ so a congestion-bound design gets slower as stages are added even though no logi
 
 A robust closure procedure that accounts for this starts lean and adds back one stage at a time:
 
-- Disable every optional stage. Mind the load-bearing exceptions above: a product's count starts at its minimum, below
-  which it is refused, and DSP tiles keep their bracketing registers.
+- Disable every optional stage, except the registers bracketing the DSP tiles, as above.
 - Read the critical path and judge, from the logic and the physics, whether it is the true bottleneck or merely a
   retiming casualty -- a path that only looks critical because a register was retimed away from the real cone. A true
   bottleneck is a recognizable deep operation (a wide barrel shift, a long carry chain, a DSP cascade); a casualty is an
   incidental cone that a stage added elsewhere will relieve.
-- Add exactly one stage, at the boundary that splits the true bottleneck, and re-measure. Adding stages one at a time
-  this way logic-balances a routing-dominated design without over-populating it with flip-flops.
+- Add exactly one stage/level, at the boundary that splits the true bottleneck, and re-measure.
 - Repeat until f_max clears the target.

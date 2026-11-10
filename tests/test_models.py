@@ -2,7 +2,7 @@ import enum
 import re
 import subprocess
 import sys
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from collections.abc import Callable
 from typing import Any
@@ -60,7 +60,7 @@ MODELS: tuple[type[Block], ...] = (
 def test_names() -> None:
     f = ZkfFormat(7, 18)
     add = Add(f, stage_input=1, stage_core=Add.CoreStages.PACK | Add.CoreStages.SUM, stage_output=2)
-    assert re.fullmatch(r"zkf_add_[0-9a-f]{12}", add.name)
+    assert re.fullmatch(r"[0-9a-f]{12}", add.digest) and add.name == f"zkf_add_{add.digest}"
     assert Add(f, stage_input=True).name == Add(f, stage_input=1).name  # equal configurations, one name
     assert add.name != Add(f, stage_input=1, stage_core=Add.CoreStages.PACK, stage_output=2).name
     assert add.compile().splitlines()[1:8] == [
@@ -139,31 +139,27 @@ def test_names_are_distinct() -> None:
                 try:
                     model = make(cls, fmt, **knobs)
                 except ValueError:
-                    # Every value of the sweep is taken but a product's own refusals.
-                    assert cls in (Mul, Fma, Cordic, Exp2, Log2), knobs
+                    # Every value of the sweep is taken but a rotation's count of 0 and a kernel's past its registers.
+                    assert cls in (Cordic, Exp2, Log2), knobs
                     continue
                 assert seen.setdefault(model.name, model) == model
 
 
 @pytest.mark.parametrize("cls", [Mul, Fma, Exp2, Log2, Cordic], ids=lambda cls: cls.operator)
 def test_multiplier_width_is_required(cls: type[Operator]) -> None:
-    product: dict[str, Any] = {
-        Mul: {"stage_core_mul": 3},
-        Fma: {"stage_core_mul": 3},
-        Cordic: {"stage_core_mul": 3},
-        Exp2: {},
-        Log2: {"stage_core_mul": 3},
-    }[cls]
-
-    def build(*args: Any, **knobs: Any) -> Operator:
-        return cls(*args, **(product | knobs))
-
+    """The operators of tables and Cordic take 16 bits at least; the others leave the width to the product."""
     with pytest.raises(TypeError):
-        build(F36)
-    for bad in (0, 7, -1):
-        with pytest.raises(ValueError):
-            build(F36, wmultiplier=bad)
-    build(F18 if cls in (Exp2, Log2) else F36, wmultiplier=8)  # no table of 8-bit multipliers is 36 bits wide
+        cls(F36)
+    if cls in (Mul, Fma):
+        cls(F36, wmultiplier=7)
+        for bad in (0, -1):
+            with pytest.raises(ValueError, match=rf"^wmultiplier={bad} is below 2$"):
+                cls(F36, wmultiplier=bad).compile()
+        return
+    for bad in (15, 0, -1):
+        with pytest.raises(ValueError, match=rf"^wmultiplier={bad} is below 16$"):
+            cls(F36, wmultiplier=bad)  # type: ignore[call-arg]
+    cls(F36, wmultiplier=16)  # type: ignore[call-arg]
 
 
 def test_a_set_of_another_type_is_refused() -> None:
@@ -172,6 +168,11 @@ def test_a_set_of_another_type_is_refused() -> None:
         Add(F18, stage_core=3)  # type: ignore[arg-type]
     with pytest.raises(TypeError, match=r"^stage_core_add=<CoreStages.ALIGN: 1>: a set of `Add.CoreStages` is due$"):
         Fma(F18, wmultiplier=18, stage_core_add=Log2.CoreStages.ALIGN)  # type: ignore[arg-type]
+
+
+def test_a_set_of_registers_is_none_by_default() -> None:
+    sets = [knob.default for cls in MODELS for knob in fields(cls) if isinstance(knob.default, enum.Flag)]
+    assert sets and all(not default and default.name == "NONE" for default in sets)
 
 
 def test_a_negative_count_of_stages_is_refused() -> None:
@@ -183,14 +184,9 @@ def test_a_negative_count_of_stages_is_refused() -> None:
 
 def test_refusals() -> None:
     knobs: tuple[Callable[[], Block], ...] = (
-        lambda: Mul(F18, wmultiplier=18, stage_core_mul=4),
-        lambda: Mul(F18, wmultiplier=18, stage_core_mul=-1),
-        lambda: Mul(F36, wmultiplier=18, stage_core_mul=5),
-        lambda: Mul(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=2),
-        lambda: Fma(F36, wmultiplier=18, stage_core_mul=1),
-        lambda: Exp2(F18, wmultiplier=18, stage_core_kernel=4),
-        lambda: Exp2(F36, wmultiplier=18, stage_core_kernel=5),
-        lambda: Log2(F18, wmultiplier=18),
+        lambda: Exp2(F18, wmultiplier=18, stage_core_kernel_level=7),
+        lambda: Exp2(F36, wmultiplier=18, stage_core_kernel_level=8),
+        lambda: Log2(F18, wmultiplier=18, stage_core_kernel_level=1),
         lambda: Pipe(w=0),
     )
     for build in knobs:
@@ -255,8 +251,8 @@ def test_ports() -> None:
         "y_int": (o, 44, True),
     }
     unary = valid | {"x": (i, f, False), "y": (o, f, False)}
-    assert widths(Exp2(F18, wmultiplier=18, stage_core_kernel=2)) == unary
-    log2 = Log2(F18, wmultiplier=18, stage_core_kernel=2, stage_core_mul=2)
+    assert widths(Exp2(F18, wmultiplier=18, stage_core_kernel_level=6)) == unary
+    log2 = Log2(F18, wmultiplier=18, stage_core_kernel_level=6, stage_core_mul=2)
     assert widths(log2) == unary | {"domain_error": (o, 1, False), "pole": (o, 1, False)}
     assert widths(Pipe(w=5)) == valid | {"x": (i, 5, False), "y": (o, 5, False)}
     assert widths(Cordic(F18, stage_core_mul=3, wmultiplier=18)) == valid | {
@@ -276,8 +272,8 @@ def test_one_configuration_is_one_model() -> None:
     assert len({MulIlog2(F18), MulIlog2(F18, wk=F18.wexp + 1), MulIlog2(F18, wk=5)}) == 2
     assert Add(F18) != Add(F36) and Add(F18) != Add(F18, stage_input=1) and Pipe(w=5, n=1) == Pipe(n=1, w=5)
     block = {"rom_style": "block"}
-    table = Exp2(F18, wmultiplier=18, stage_core_kernel=2, rom_attrs=block)
-    plain = Exp2(F18, wmultiplier=18, stage_core_kernel=2)
+    table = Exp2(F18, wmultiplier=18, stage_core_kernel_level=6, rom_attrs=block)
+    plain = Exp2(F18, wmultiplier=18, stage_core_kernel_level=6)
     assert table == plain and table.name != plain.name  # one configuration, two texts, two names
     assert replace(table, stage_output=1).rom_attrs == block and "rom_attrs" not in table.config
     keep: dict[str, int | str] = {"keep": "true", "syn_keep": 1}
@@ -326,10 +322,10 @@ from zkf import Cordic, Exp2, Log2, ZkfFormat
 mpmath.mp.prec = int(sys.argv[1])
 fitting = zkf._trans._fitting.prec  # the search's context, which generations at once would leave moved
 models = [
-    lambda: Log2(ZkfFormat(6, 16), wmultiplier=18, stage_core_kernel=2, stage_core_mul=2),
-    lambda: Log2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel=3, stage_core_mul=3),
-    lambda: Exp2(ZkfFormat(8, 24), wmultiplier=18, stage_core_kernel=3),
-    lambda: Exp2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel=3),
+    lambda: Log2(ZkfFormat(6, 16), wmultiplier=18, stage_core_kernel_level=6, stage_core_mul=2),
+    lambda: Log2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel_level=6, stage_core_mul=3),
+    lambda: Exp2(ZkfFormat(8, 24), wmultiplier=18, stage_core_kernel_level=6),
+    lambda: Exp2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel_level=6),
     lambda: Cordic(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=3),
 ]
 compile = lambda model: model().compile()  # made where it is compiled, which generates its tables

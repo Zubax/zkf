@@ -4,7 +4,8 @@ from amaranth.lib import data
 
 from _bench import Case, run_pipeline
 from _operands import SEED, random_bits
-from zkf._pmul import Pmul, counts
+from zkf import Pmul
+from zkf._pmul import positions
 
 CORNERS = (0, 1, -1, 0xAAAAAAAAAAAAAAAAAAAAAAAA, 0x555555555555555555555555, 0x10000, 0xFFFF)
 
@@ -56,7 +57,7 @@ SIZES = [(29, 20), (39, 24), (13, 25), (18, 18), (12, 12), (36, 36), (53, 53), (
         (size, signed, stages)
         for size in SIZES
         for signed in (False, True)
-        for stages in counts(*size, signed=signed, wmultiplier=18)
+        for stages in range(len(positions(*size, signed=signed, wmultiplier=18)) + 1)
     ],
     ids=str,
 )
@@ -93,7 +94,11 @@ GRIDS = [
 @pytest.mark.deep
 @pytest.mark.parametrize(
     "row, stages",
-    [(row, stages) for row in GRIDS for stages in counts(*row[:2], signed=row[2], wmultiplier=row[3])],
+    [
+        (row, stages)
+        for row in GRIDS
+        for stages in range(len(positions(*row[:2], signed=row[2], wmultiplier=row[3])) + 1)
+    ],
     ids=str,
 )
 def test_deep_grids(row: tuple[int, int, bool, int], stages: int) -> None:
@@ -107,3 +112,18 @@ def test_deep_grids(row: tuple[int, int, bool, int], stages: int) -> None:
 def test_every_pair_on_the_smallest_grid(signed: bool, stages: int) -> None:
     pairs = [(a, b) for a in range(256) for b in range(256)]
     run(8, 8, signed, stages, 3 + signed, pairs=pairs)
+
+
+def test_a_count_of_stages_without_a_register_is_refused() -> None:
+    """One multiplier, a 2x1 grid, and a 4x3 one with two levels of sums: each takes up to its registers."""
+    for wa, wb, signed, top in ((18, 18, False, 3), (36, 18, False, 3), (66, 41, True, 5)):
+        Pmul(wa, wb, signed=signed, wmultiplier=18, stages=top)
+        for stages in (-1, top + 1):
+            with pytest.raises(ValueError, match=rf"^stages={stages} is outside 0\.\.{top}$"):
+                Pmul(wa, wb, signed=signed, wmultiplier=18, stages=stages)
+
+
+def test_a_multiplier_narrower_than_2_bits_is_refused() -> None:
+    for wmultiplier in (1, 0, -1):
+        with pytest.raises(ValueError, match=rf"^wmultiplier={wmultiplier} is below 2$"):
+            Pmul(8, 8, signed=True, wmultiplier=wmultiplier, stages=0)

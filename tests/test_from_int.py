@@ -54,8 +54,8 @@ def test_formats(row: tuple[int, int, int, int | None]) -> None:
     "knobs",
     [
         *({"stage_core": member} for member in FromInt.CoreStages),
-        {"stage_core": ~FromInt.CoreStages(0)},
-        {"stage_input": 1, "stage_core": ~FromInt.CoreStages(0), "stage_output": 1},
+        {"stage_core": ~FromInt.CoreStages.NONE},
+        {"stage_input": 1, "stage_core": ~FromInt.CoreStages.NONE, "stage_output": 1},
         {"stage_input": 2},
         {"stage_output": 1},
         {"stage_output": 3},
@@ -67,7 +67,7 @@ def test_stages(knobs: dict[str, Any]) -> None:
 
 
 # Each register alone and all of them, before a normalizer of three levels.
-@pytest.mark.parametrize("stage_core", [*FromInt.CoreStages, ~FromInt.CoreStages(0)], ids=str)
+@pytest.mark.parametrize("stage_core", [*FromInt.CoreStages, ~FromInt.CoreStages.NONE], ids=str)
 def test_registers(stage_core: FromInt.CoreStages) -> None:
     run(6, 18, 32, 512, stage_core=stage_core)
 

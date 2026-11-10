@@ -18,6 +18,8 @@ class FromInt(Operator):
     class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
+        NONE = 0
+        """No register."""
         ABS = enum.auto()
         """`|a|`, ahead of the normalizer."""
         NORMALIZE = enum.auto()
@@ -28,7 +30,7 @@ class FromInt(Operator):
     operator = "from_int"
     wint: int = 32
     stage_input: int = 0
-    stage_core: CoreStages = CoreStages(0)
+    stage_core: CoreStages = CoreStages.NONE
     """See `FromInt.CoreStages`."""
     stage_output: int = 0
 

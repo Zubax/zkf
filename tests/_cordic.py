@@ -29,14 +29,14 @@ from zkf._cordic import (
     _iterate,
     _vector_residual,
 )
-from zkf._pmul import counts
+from zkf._pmul import positions
 
 # The registers on the path of one mode alone, as `Cordic.CoreStages` states them, and those that each mode lacks.
 ROTATION = (
     Cordic.CoreStages.SHIFT | Cordic.CoreStages.REDUCED | Cordic.CoreStages.FOLDED | Cordic.CoreStages.CORRECTIONS
 )
 VECTORING = Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.SHIFTED | Cordic.CoreStages.ANGLE
-LACKED = (VECTORING, ROTATION, Cordic.CoreStages(0))
+LACKED = (VECTORING, ROTATION, Cordic.CoreStages.NONE)
 
 SHORT = {
     "si": "stage_input",
@@ -60,8 +60,7 @@ def synthesized(wman: int, mode: int = 2) -> dict[str, Any]:
     own = [model for model in found if model.mode == mode] or found
     (sm,) = {model.stage_core_mul for model in own}
     fa = any(model.fast for model in own)
-    taken = counts(*_geometry(wman).operands(mode), signed=mode != 1, wmultiplier=18)
-    sm = min(max(sm, taken.start), taken.stop - 1)
+    sm = min(sm, len(positions(*_geometry(wman).operands(mode), signed=mode != 1, wmultiplier=18)))
     (rs,) = {model.rotation_seed for model in own if model.mode != 1} or {0}
     sc = reduce(or_, (model.stage_core for model in found))
     return {"sm": sm, "fa": fa, "rs": rs, "sc": sc}
@@ -276,10 +275,9 @@ def case(model: Cordic, vectoring: bool, a: int, b: int, noise: int = 0) -> Case
 
 
 def build(fmt: ZkfFormat, mode: int = 2, **short: Any) -> Cordic:
-    """The model, its knobs in short; `wm` is a multiplier width other than 18, and `sm` the fewest unless given."""
+    """The model, its knobs in short; `wm` is a multiplier width other than 18."""
     width = short.pop("wm", 18)
-    fewest = max(counts(*_geometry(fmt.wman).operands(mode), signed=mode != 1, wmultiplier=width).start, 1)
-    knobs = {SHORT[name]: value for name, value in ({"sm": fewest} | short).items()}
+    knobs = {SHORT[name]: value for name, value in short.items()}
     return Cordic(fmt, mode=mode, wmultiplier=width, **knobs)
 
 

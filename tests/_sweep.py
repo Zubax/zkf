@@ -5,26 +5,24 @@ from collections.abc import Mapping
 from dataclasses import fields
 from itertools import combinations
 
-from zkf import Block, Operator, Resize, ZkfFormat
+import zkf._cordic
+import zkf._log2
+from zkf import Block, Cordic, Fma, Log2, Mul, Operator, Resize, ZkfFormat
+from zkf._pmul import positions
 
 WIDTHS = {"fmt", "wmultiplier", "w", "wk", "wint", "fmt_in"}
 """What a sweep is given and does not vary."""
 # Every legal value of a knob, or the ends and one inside of an unbounded one.
-KNOBS: Mapping[str, tuple[int, ...]] = {
+KNOBS: Mapping[str, tuple[object, ...]] = {
     "stage_input": (0, 1, 3),
     "stage_output": (0, 1, 3),
     "stage_core_mul": (0, 1, 2, 3, 4, 5),
-    "stage_core_kernel": (0, 1, 2, 3, 4, 5),
+    "stage_core_kernel_level": (0, 1, 2, 3, 4, 5, 6, 7, 8),
     "mode": (0, 1, 2),
     "rotation_seed": (0, 1, 2),
     "n": (0, 1, 7),
     "fast": (False, True),
 }
-BASE: Mapping[str, Mapping[str, int]] = {
-    "cordic": {"stage_core_mul": 3},
-    "log2": {"stage_core_mul": 3},
-}
-"""What a sweep holds in place of a default, by operator: a product's count that its formats take at 18 bits."""
 
 
 def make(cls: type[Block], fmt: ZkfFormat, **knobs: object) -> Block:
@@ -32,6 +30,23 @@ def make(cls: type[Block], fmt: ZkfFormat, **knobs: object) -> Block:
     if cls is Resize:
         knobs = {"fmt_in": fmt} | knobs
     return cls(fmt, **knobs) if issubclass(cls, Operator) else cls(**knobs)
+
+
+def admits(model: Block) -> bool:
+    """
+    Whether the product of a model has the registers that its count asks for, which only elaboration refuses. Cordic's
+    rotation widens its product's angle only where that keeps the slices, so the product's top is that of its operands.
+    """
+    if isinstance(model, (Mul, Fma)):
+        wa = wb = model.fmt.wman
+    elif isinstance(model, Log2):
+        wa, wb = zkf._log2._last(model._spec, model.fmt)
+    elif isinstance(model, Cordic):
+        wa, wb = zkf._cordic._geometry(model.fmt.wman).operands(model.mode)
+    else:
+        return True
+    signed = isinstance(model, Cordic) and model.mode != 1
+    return model.stage_core_mul <= len(positions(wa, wb, signed=signed, wmultiplier=model.wmultiplier))
 
 
 def configurations(cls: type[Block], wmultiplier: int = 18, every_pair: bool = False) -> list[dict[str, object]]:
@@ -44,7 +59,6 @@ def configurations(cls: type[Block], wmultiplier: int = 18, every_pair: bool = F
     fixed: dict[str, object] = {
         name: width for name, width in (("wmultiplier", wmultiplier), ("w", 8)) if name in knobs
     }
-    fixed |= BASE.get(cls.operator, {})
     values: dict[str, tuple[object, ...]] = dict(KNOBS)
     within: list[dict[str, object]] = []
     for field in fields(cls):

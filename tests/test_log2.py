@@ -37,7 +37,7 @@ def test_stages(stages: dict[str, Any]) -> None:
 # The last product's count apart from the kernel's, and the side path laid out by the kernel's stages: none, two, three.
 @pytest.mark.parametrize(
     "stages",
-    [{"wm": 24, "sk": 0}, {"sk": 3, "sm": 2}, {"sk": 2, "sm": 3, "sc": CoreStages.ALIGN}, {"wm": 12, "sk": 3, "sm": 4}],
+    [{"wm": 24, "kl": 0}, {"kl": 5, "sm": 2}, {"kl": 2, "sm": 3, "sc": CoreStages.ALIGN}, {"wm": 16, "kl": 5, "sm": 3}],
     ids=str,
 )
 def test_last_product(stages: dict[str, Any]) -> None:
@@ -46,7 +46,7 @@ def test_last_product(stages: dict[str, Any]) -> None:
 
 # The kernel at degree 3, whose square takes two multipliers, and the rest beside it.
 @pytest.mark.parametrize(
-    "stages", [{"sk": 3}, {"sk": 4, "sm": 4, "sc": CoreStages.ALIGN}, {"sk": 4, "sc": ~CoreStages(0)}], ids=str
+    "stages", [{"kl": 6}, {"kl": 7, "sm": 4, "sc": CoreStages.ALIGN}, {"kl": 7, "sc": ~CoreStages.NONE}], ids=str
 )
 def test_degree_3(stages: dict[str, Any]) -> None:
     run("log2", 8, 36, 256, **stages)
@@ -58,9 +58,9 @@ def test_generated_for_the_format(row: tuple[int, int, dict[str, Any]]) -> None:
 
 
 def test_other_degrees() -> None:
-    run("log2", 8, 27, 256, sk=3, sm=4, fa=False)
-    run("log2", 8, 48, 256, sk=4, sm=4, fa=False)
-    run("log2", 11, 53, 256, sk=4, fa=False)
+    run("log2", 8, 27, 256, kl=6, sm=4, fa=False)
+    run("log2", 8, 48, 256, kl=7, sm=4, fa=False)
+    run("log2", 11, 53, 256, kl=7, fa=False)
 
 
 @pytest.mark.parametrize("model", [pytest.param(m, id=n) for n, m in CATALOG.items() if isinstance(m, Log2)])
@@ -74,42 +74,43 @@ def test_strata() -> None:
 
 def test_timing() -> None:
     fmt = ZkfFormat(6, 18)
-    assert build("log2", fmt, 24, stage_core_kernel=0, fast=False).timing.latency == 3  # of single multipliers
-    assert build("log2", fmt, stage_core_mul=2, fast=False).timing.latency == 5  # c1*w takes two multipliers
-    assert build("log2", fmt, stage_core_kernel=2, stage_core_mul=2, fast=False).timing.latency == 7
-    assert build("log2", fmt, stage_core_kernel=3, stage_core_mul=3, fast=False).timing.latency == 8
-    assert build("log2", fmt, stage_core_kernel=2, stage_core_mul=2).timing.latency == 5  # degree 1
-    assert [build("log2", ZkfFormat(8, 36), stage_core_kernel=k).timing.latency for k in range(5)] == [7, 7, 8, 9, 9]
-    assert [build("log2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in CoreStages] == [8, 8]
-    ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~CoreStages(0), "stage_output": 3}
-    assert build("log2", ZkfFormat(8, 36), **ends).timing.latency == 14
+    assert build("log2", fmt, 24, stage_core_kernel_level=0, fast=False).timing.latency == 1  # of single multipliers
+    assert build("log2", fmt, stage_core_mul=2, fast=False).timing.latency == 3
+    mixed = [build("log2", fmt, stage_core_kernel_level=k, stage_core_mul=2, fast=False) for k in (0, 1, 2, 3, 5, 6)]
+    assert [model.timing.latency for model in mixed] == [3, 4, 5, 5, 6, 7]
+    assert build("log2", fmt, stage_core_kernel_level=6, stage_core_mul=3, fast=False).timing.latency == 8
+    assert build("log2", fmt, stage_core_kernel_level=6, stage_core_mul=2).timing.latency == 5  # degree 1
+    latency = [build("log2", ZkfFormat(8, 36), stage_core_kernel_level=k).timing.latency for k in range(8)]
+    assert latency == [1, 2, 3, 4, 4, 5, 6, 6]
+    assert [build("log2", ZkfFormat(8, 36), stage_core=member).timing.latency for member in CoreStages] == [2, 2]
+    ends: dict[str, Any] = {"stage_input": 2, "stage_core": ~CoreStages.NONE, "stage_output": 3}
+    assert build("log2", ZkfFormat(8, 36), **ends).timing.latency == 8
 
 
 def test_refusals() -> None:
     fmt = ZkfFormat(6, 18)
-    with pytest.raises(ValueError, match="stage_core_kernel=3: set 0..2 for the log2 kernel"):
-        Log2(fmt, wmultiplier=18, stage_core_kernel=3, stage_core_mul=2)
-    with pytest.raises(ValueError, match="stage_core_mul=0: set 2..3 on 18-bit multipliers"):
-        Log2(fmt, wmultiplier=18)
-    for knobs in (
-        {"stage_core_mul": 1},
-        {"stage_core_mul": 4},
-    ):
-        with pytest.raises(ValueError):
-            build("log2", fmt, **knobs)
-    with pytest.raises(ValueError, match="stage_core_mul=2: set 3..4 on 18-bit multipliers"):
-        build("log2", ZkfFormat(8, 24), stage_core_mul=2)  # its grid is 2x3
+    with pytest.raises(ValueError, match=r"^level=7 is outside 0\.\.6$"):
+        Log2(fmt, wmultiplier=18, stage_core_kernel_level=7, stage_core_mul=2)
+    with pytest.raises(ValueError, match=r"^level=4 adds no register here; take 3 or 6$"):
+        Log2(fmt, wmultiplier=18, stage_core_kernel_level=4)  # of single multipliers only
+    with pytest.raises(ValueError, match=r"^wmultiplier=15 is below 16$"):
+        Log2(fmt, wmultiplier=15)
+    # The last product refuses a count past its registers as it is built.
+    with pytest.raises(ValueError, match=r"^stages=4 is outside 0\.\.3$"):
+        Log2(fmt, wmultiplier=18, stage_core_mul=4).compile()
+    with pytest.raises(ValueError, match=r"^stages=5 is outside 0\.\.4$"):
+        build("log2", ZkfFormat(8, 24), stage_core_mul=5).compile()  # its grid is 2x3
 
 
 # wexp, wman, kind, shard, shards, stages
 EACH: tuple[dict[str, Any], ...] = (
     {},
     {"si": 1},
-    {"sk": 3},
+    {"kl": 6},
     {"sm": 3},
-    {"sc": ~CoreStages(0)},
+    {"sc": ~CoreStages.NONE},
     {"so": 1},
-    {"sk": 3, "sc": CoreStages.ALIGN},
+    {"kl": 6, "sc": CoreStages.ALIGN},
 )
 type Row = tuple[int, int, str | int, int, int, dict[str, Any]]
 DEEP: list[Row] = []

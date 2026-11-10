@@ -10,8 +10,8 @@ from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe, zext
-from ._trans import Kernel, Spec, kernel_check, kernel_depth, pack_fixed, spec as table
-from ._pmul import Pmul, check
+from ._trans import Kernel, Spec, kernel_depth, pack_fixed, spec as table
+from ._pmul import Pmul
 from ._shift import Normshift
 from ._value import UnsupportedFormat, Zkf, ZkfFormat, context
 
@@ -47,6 +47,8 @@ class Log2(Operator):
     class CoreStages(enum.Flag):
         """The registers of `stage_core`, in path order."""
 
+        NONE = 0
+        """No register."""
         ALIGN = enum.auto()
         """The kernel's result and the operand, ahead of the alignment shift."""
         SELECT = enum.auto()
@@ -54,11 +56,11 @@ class Log2(Operator):
 
     operator = "log2"
     stage_input: int = 0
-    stage_core_kernel: int = 0
-    """As `Exp2`'s."""
+    stage_core_kernel_level: int = 0
+    """As `Exp2`'s, on Log2's own kernel, whose products, and so levels and latencies, differ from Exp2's."""
     stage_core_mul: int = 0
     """Of the last product, `f * C(f)`, as `Mul`'s."""
-    stage_core: CoreStages = CoreStages(0)
+    stage_core: CoreStages = CoreStages.NONE
     """See `Log2.CoreStages`."""
     stage_output: int = 0
     wmultiplier: int
@@ -68,7 +70,7 @@ class Log2(Operator):
     rom_attrs: Attrs | None = field(default=None, compare=False)
     """As that of `Exp2`."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
-    """As that of `Exp2`, and on the last product's capture where a register follows its multipliers."""
+    """As that of `Exp2`, and on the last product's capture."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -76,17 +78,16 @@ class Log2(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
-        if self.wmultiplier < 8:
-            raise ValueError(f"wmultiplier={self.wmultiplier} is below 8")
+        if self.wmultiplier < 16:
+            raise ValueError(f"wmultiplier={self.wmultiplier} is below 16")
         if self.fmt.wexp > self.fmt.wman + 1:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is above WMAN + 1")
-        spec = self._spec
-        kernel_check(self.stage_core_kernel, spec, self.wmultiplier)
-        check("stage_core_mul", self.stage_core_mul, *_last(spec, self.fmt), signed=False, wmultiplier=self.wmultiplier)
+        # Generates the table, refusing a format that has none, and refuses what the kernel cannot build.
+        kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level)
 
     @property
     def timing(self) -> Timing:
-        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel)
+        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level)
         inside = 1 + kernel + self.stage_core_mul + len(self.stage_core)
         return Timing(self.stage_input + inside + self.stage_output, 1)
 
@@ -192,7 +193,7 @@ class _Log2(wiring.Component):
         m.submodules.kernel = kernel = Kernel(
             spec,
             wmultiplier=model.wmultiplier,
-            stages=model.stage_core_kernel,
+            level=model.stage_core_kernel_level,
             rom_attrs=model.rom_attrs,
             mul_attrs=model.mul_attrs,
         )

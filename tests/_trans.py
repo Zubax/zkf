@@ -10,15 +10,12 @@ from mpmath import mp
 
 from _bench import Case, run_pipeline
 from _operands import SEED, exp2_operands, log2_operands, random_bits
-import zkf._exp2
-import zkf._log2
 from zkf import Exp2, Log2, Zkf, ZkfFormat
-from zkf._pmul import counts
 from zkf._trans import _GUARD, Kernel, Spec, _generate
 
 SHORT = {
     "si": "stage_input",
-    "sk": "stage_core_kernel",
+    "kl": "stage_core_kernel_level",
     "sm": "stage_core_mul",
     "sc": "stage_core",
     "so": "stage_output",
@@ -34,11 +31,11 @@ def others(core: type[enum.Flag]) -> list[tuple[int, int, dict[str, Any]]]:
     """
     return [
         (8, 20, {}),
-        (8, 25, {"wm": 17, "sk": 3}),
-        (8, 30, {"wm": 24, "sk": 3, "sc": next(iter(core))}),
-        (8, 40, {"sk": 4}),
-        (8, 44, {"wm": 27, "sk": 3, "sc": ~core(0)}),
-        (6, 17, {"wm": 8, "sk": 3}),
+        (8, 25, {"wm": 17, "kl": 6}),
+        (8, 30, {"wm": 24, "kl": 6, "sc": next(iter(core))}),
+        (8, 40, {"kl": 7}),
+        (8, 44, {"wm": 27, "kl": 6, "sc": ~core(0)}),
+        (6, 17, {"wm": 16, "kl": 6}),
     ]
 
 
@@ -49,28 +46,20 @@ def staging(core: type[enum.Flag]) -> list[dict[str, Any]]:
     """
     every = ~core(0)
     return [
-        {"sk": 3},
+        {"kl": 6},
         *({"sc": member} for member in core),
         {"sc": every},
         {"si": 1},
         {"so": 1},
         {"si": 2, "so": 2},
-        {"si": 1, "sk": 3, "sc": every, "so": 1},
+        {"si": 1, "kl": 6, "sc": every, "so": 1},
     ]
 
 
 def build(function: str, fmt: ZkfFormat, wmultiplier: int = 18, **stages: Any) -> Exp2 | Log2:
-    """
-    The model, its stages by their own names; the count of the last product of `log2` not given is the least that it
-    takes, in the table of the operator's module, which a test may replace.
-    """
-    module = zkf._exp2 if function == "exp2" else zkf._log2
-    spec = module.table(function, fmt.wman, wmultiplier, stages.get("fast", True))
-    least = {}
-    if function == "log2":
-        least["stage_core_mul"] = counts(*zkf._log2._last(spec, fmt), signed=False, wmultiplier=wmultiplier).start
+    """The model, its stages by their own names."""
     cls: Callable[..., Exp2 | Log2] = Exp2 if function == "exp2" else Log2
-    return cls(fmt, wmultiplier=wmultiplier, **(least | stages))
+    return cls(fmt, wmultiplier=wmultiplier, **stages)
 
 
 def run(function: str, wexp: int, wman: int, kind: str | int, shard: int = 0, shards: int = 1, **short: Any) -> None:
