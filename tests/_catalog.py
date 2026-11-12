@@ -98,7 +98,8 @@ CATALOG: dict[str, Block] = {
         # Folded, nextpnr's placements make 99.4 to 106.3 MHz.
         Divsqrt(F18, stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
         Divsqrt(F18, mode=0),
-        Divsqrt(F18, mode=1),
+        # Without FIRST_DIGIT Diamond makes 99.5 MHz, from the operand into the first digit.
+        Divsqrt(F18, mode=1, stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
         Divsqrt(F18, fast=False),
         # On speed grade 6 nextpnr's placements make 93.3 to 98.0 MHz, 98.8 to 105.9 with FIRST_DIGIT.
         _large(_grade(Divsqrt(F24), ecp5_grade=7)),
@@ -181,13 +182,14 @@ CATALOG: dict[str, Block] = {
                 cyclone4_grade=7,
             )
         ),
-        # On speed grade 6 Diamond makes 94.3 to 97.3 MHz, from the engine's angles in block RAM into `z`, and nextpnr's
-        # seeds 97.4 to 103.2, from the division's loop; on Artix-7 -1 Vivado misses by 0.221 ns, from the engine's `x`
-        # into `u`, no register helping; on Cyclone IV E C8 Quartus makes 88.6, from the angles in block RAM into `z`.
+        # On speed grade 6 Diamond makes 94.3 to 97.3 MHz, from the engine's angles in block RAM into `z`, and on grade 7
+        # nextpnr's seeds 94.8 to 108.9, from the division's loop; on Artix-7 -1 Vivado misses by 0.221 ns, from the
+        # engine's `x` into `u`, no register helping; on Cyclone IV E C8 Quartus makes 88.6, from the angles in block
+        # RAM into `z`.
         _large(
             _grade(
                 Cordic(F36, mode=1, stage_core_mul=4, stage_core=_CORDIC_VECTORING, wmultiplier=18),
-                ecp5_grade=7,
+                ecp5_grade=8,
                 artix7_grade=2,
                 cyclone4_grade=7,
             )

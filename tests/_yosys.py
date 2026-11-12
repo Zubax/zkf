@@ -39,8 +39,7 @@ def part(design: Design) -> str:
 def script(design: Design, sources: Sources, netlist: Path) -> str:
     return "\n".join(
         [f"read_verilog {sources.rtl} {sources.harness}", f"hierarchy -check -top {design.top}"]
-        # The README's remedy for "Conflicting init values".
-        + ["attrmap -remove init", "proc", "opt"]
+        + ["proc", "opt"]
         # No -dff: ABC in sequential mode retimes registers across the multipliers, which the wide specs lose by.
         + [f"synth_ecp5 -top {design.top} -noabc9 -abc2 -json {netlist}", "stat", ""]
     )

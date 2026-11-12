@@ -45,6 +45,7 @@ SHORT = {
     "so": "stage_output",
     "fa": "fast",
     "rs": "rotation_seed",
+    "hy": "hypot",
 }
 """The knobs as the rows name them."""
 

@@ -4,9 +4,11 @@ from functools import reduce
 from operator import or_
 from typing import Any
 
+import mpmath
 import numpy as np
 import pytest
 from amaranth.back import verilog
+from amaranth.hdl import Fragment
 
 from _bench import run_cuts, run_handshake
 from _catalog import CATALOG
@@ -25,7 +27,8 @@ from _cordic import (
     synthesized,
 )
 from _operands import SEED
-from zkf import Cordic, Timing, UnsupportedFormat, ZkfFormat
+import zkf._cordic
+from zkf import Cordic, Pmul, Timing, UnsupportedFormat, ZkfFormat
 
 from zkf._cordic import (
     _GUARD_ZF,
@@ -51,7 +54,7 @@ VECTORINGS = [(6, 18, 1536), (8, 24, 1024), (8, 36, 768), (11, 53, 384), (5, 16,
 # width where it is one multiplier to the pairs of rows of a grid on narrower multipliers, all the registers of the rest
 # (one by one in the deep tier), without `fast` (one packer, the division at radix 4), and a rotation whose angle,
 # issued ahead, would take another slice; the catalog's rotation at 6/18 with CORRECTIONS, which no spec of the catalog
-# takes.
+# takes; and without the length: by default, and without `fast` with every register.
 KNOBS: list[dict[str, Any]] = [
     {"wexp": 6, "wman": 18},
     {
@@ -102,6 +105,8 @@ KNOBS: list[dict[str, Any]] = [
     {"fa": False, "si": 1, "sm": 1, "wm": 32, "sc": ~LACKED[0], "so": 2, "mode": 0},
     {"fa": False, "sc": ~LACKED[2], "mode": 2},
     {"fa": False, "sc": ~LACKED[2] & ~CoreStages.CORRECTIONS, "mode": 2},
+    {"hy": False},
+    {"hy": False, "sm": 4, "fa": False, "sc": ~LACKED[2], "mode": 2},
 ]
 # In a rotation at 5/18 the sine reaches the packer's underflow, the bias being below the fraction; at 8/48 the
 # width of what the modes share crosses a power of two; 4 is an exponent that a rotation alone takes; and without
@@ -289,6 +294,11 @@ def test_cut_with_a_combinational_product() -> None:
     cut(build(ZkfFormat(5, 16), 1, sm=0))
 
 
+@pytest.mark.parametrize("mode", [1, 2])
+def test_cut_without_hypot(mode: int) -> None:
+    cut(build(ZkfFormat(5, 16), mode, hy=False))
+
+
 # Without CORRECTIONS a packer out of step with the other takes a value that has moved on.
 @pytest.mark.parametrize("held", [True, False])
 @pytest.mark.parametrize("mode", [0, 2])
@@ -398,6 +408,9 @@ def test_refusals() -> None:
             Cordic(fmt, wmultiplier=18, **knobs)
     with pytest.raises(ValueError, match=r"^wmultiplier=15 is below 16$"):
         Cordic(fmt, wmultiplier=15)
+    for mode in (0, 1, 2):
+        with pytest.raises(ValueError, match=r"^stage_core_mul=-1 is negative$"):
+            Cordic(fmt, wmultiplier=18, stage_core_mul=-1, mode=mode, hypot=False)
     for mode in (0, 2):
         with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1, which a rotation takes$"):
             Cordic(fmt, wmultiplier=36, stage_core_mul=0, mode=mode)
@@ -423,6 +436,49 @@ def test_a_count_above_the_product_is_refused_as_it_is_built() -> None:
         assert model.timing
         with pytest.raises(ValueError, match=rf"^stages={count} is outside 0\.\.{top}$"):
             model.compile()
+    # At 8/36 the rotation's product alone has 4 registers, 5 with the length's.
+    both = Cordic(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=5)
+    both.compile()
+    with pytest.raises(ValueError, match=r"^stages=5 is outside 0\.\.4$"):
+        replace(both, hypot=False).compile()
+
+
+def test_without_hypot(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Of a vectoring, the angle and its timing are as with the length, `r1` is `-inf` and the length's product is not
+    built: at `mode=1` no multiplier, whose count is then ignored; at `mode=0` the flag is ignored.
+    """
+    fmt = ZkfFormat(6, 18)
+    a, b = fmt.encode(Fraction(3, 4)), fmt.encode(-2)
+    for mode in (1, 2):
+        given = Cordic(fmt, wmultiplier=18, stage_core_mul=3, mode=mode)
+        model = replace(given, hypot=False)
+        assert model.timing == given.timing
+        assert model.evaluate(1, a, b) == given.evaluate(1, a, b)._replace(r1=fmt.inf(1))
+        assert model.evaluate(1, a, b, oracle=True) == given.evaluate(1, a, b, oracle=True)._replace(r1=-mpmath.inf)
+    assert model.evaluate(0, a, b) == given.evaluate(0, a, b)  # a rotation at `mode=2`
+    alone = Cordic(fmt, wmultiplier=18, mode=1, hypot=False)
+    built: list[Pmul] = []
+
+    def counted(*args: Any, **kwargs: Any) -> Pmul:
+        built.append(Pmul(*args, **kwargs))
+        return built[-1]
+
+    monkeypatch.setattr(zkf._cordic, "Pmul", counted)
+
+    def multiplies(model: Cordic) -> bool:
+        built.clear()
+        Fragment.get(model.component(), None)
+        return bool(built)
+
+    assert multiplies(replace(alone, hypot=True)) and not multiplies(alone)
+    assert verilog.convert(replace(alone, stage_core_mul=4).component(), name="core") == verilog.convert(
+        alone.component(), name="core"
+    )
+    rotation = Cordic(fmt, wmultiplier=18, mode=0)
+    assert verilog.convert(replace(rotation, hypot=False).component(), name="core") == verilog.convert(
+        rotation.component(), name="core"
+    )
 
 
 def test_a_register_of_a_mode_lacked_is_ignored() -> None:

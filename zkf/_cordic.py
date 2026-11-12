@@ -61,10 +61,10 @@ class Cordic(Operator):
     Rotation: `r0 = sin(2*pi*a)`, `r1 = cos(2*pi*a)`, `quadrant = floor(4 * (a mod 1))`; `b` is not read. A zero result
     is +0, and `a = +-inf` gives `r0 = r1 = +-inf`, of its sign, in quadrant 0.
 
-    Vectoring: `r0 = atan2(a, b) / (2*pi)` in (-1/2, 1/2], `r1 = hypot(a, b)`, `quadrant = 0`. An angle below half the
-    least normal is +0. A zero and an infinity give the angle of their axis, two infinities that of their diagonal, two
-    zeros +0. `r1 = +inf` if an operand is infinite or the length as computed overflows the exponent; one that only
-    rounds past `max` gives `max`.
+    Vectoring: `r0 = atan2(a, b) / (2*pi)` in (-1/2, 1/2], `r1 = hypot(a, b)` (see `hypot`), `quadrant = 0`. An angle
+    below half the least normal is +0. A zero and an infinity give the angle of their axis, two infinities that of
+    their diagonal, two zeros +0. `r1 = +inf` if an operand is infinite or the length as computed overflows the
+    exponent; one that only rounds past `max` gives `max`.
 
     Not pipelined: a transaction is taken on `in_valid & in_ready`, its result appears under `out_valid` after the
     latency of its mode and stays until taken by `out_ready`. `in_ready` follows `out_ready` combinationally in that
@@ -83,7 +83,7 @@ class Cordic(Operator):
     A vectoring orders the operands by magnitude, aligns the smaller to the binade of the larger, and drives `y` to zero
     from a quarter of the vector, `z` gathering the angle and `x` growing to the gain times that length. The residual
     angle is finished by one division, `y / x` at a digit a cycle, whose digits gather its product with `1/(2*pi)`;
-    meanwhile the multiplier takes `x / gain`, which scaled back is the length.
+    meanwhile, with `hypot`, the multiplier takes `x / gain`, which scaled back is the length.
     Near the positive x axis, where the angle is too small for the engine, the divider gives `|a| / |b|` from the
     significands, times `1/(2*pi)`. The octant and the quadrant are then unfolded into (-1/2, 1/2].
     """
@@ -133,6 +133,11 @@ class Cordic(Operator):
     A second packer, which packs a rotation's cosine of the octant beside its sine, a cycle less on a rotation; and a
     vectoring's division at radix 8, a third fewer of its digits. Off saves fabric and shortens the division's loop.
     """
+    hypot: bool = True
+    """
+    A vectoring's `r1`, the length. Without it `r1 = -inf` and the length's product is not built: no multiplier at
+    `mode=1`, and one as narrow as a rotation's at `mode=2`. No effect at `mode=0`.
+    """
     rotation_seed: int = 2
     """
     Up to 2 of a rotation's iterations, resolved ahead of the engine by compares of its coordinate with constants; no
@@ -152,6 +157,8 @@ class Cordic(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
+        if self.stage_core_mul < 0:
+            raise ValueError(f"stage_core_mul={self.stage_core_mul} is negative")
         if self.wmultiplier < 16:
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 16")
         if not 0 <= self.mode <= 2:
@@ -208,7 +215,8 @@ class Cordic(Operator):
             raise ValueError(f"vectoring={vectoring} is not 0 or 1")
         vectors = bool(vectoring) if self.mode == 2 else self.mode == 1
         if vectors:
-            return _atan2_oracle(a, b) if oracle else _atan2(a, b)
+            found = _atan2_oracle(a, b) if oracle else _atan2(a, b)
+            return found if self.hypot else found._replace(r1=-mpmath.inf if oracle else self.fmt.inf(1))
         return _sincos_oracle(a) if oracle else _sincos(a)
 
     def _timing_of(self, mode: int) -> Timing:
@@ -461,9 +469,24 @@ def _ahead(model: Cordic) -> int:
     c = _constants(model.fmt.wman)
     if c.n - k < _SEED + model.rotation_seed:
         return 0
-    wa, wb = c.operands(model.mode)
+    served = _served(model)
+    assert served is not None
+    wa, wb = c.operands(served)
     grid = functools.partial(slices, wa, signed=True, wmultiplier=model.wmultiplier)
     return k if grid(max(wb, _angle_bits(c, k))) == grid(wb) else 0
+
+
+def _served(model: Cordic) -> int | None:
+    """
+    What the product serves, as `_Geometry.operands` takes a mode: a rotation (0), a length (1) or both (2); None where
+    neither is built.
+    """
+    rotates, lengths = model.mode != 1, model.mode != 0 and model.hypot
+    if rotates and lengths:
+        return 2
+    if rotates or lengths:
+        return int(lengths)
+    return None
 
 
 def _seed(c: _Constants, signs: int) -> tuple[list[tuple[int, int, int, int]], tuple[int, int, int]]:
@@ -757,6 +780,8 @@ def _shared(c: _Constants, fmt: ZkfFormat, w: _Widths) -> dict[str, Any]:
 
 _RAISED = ("start", "pm_iv", "pk_iv", "res")
 """The outputs of `_shared` that either mode raises; the rest are of the mode that the transaction is in."""
+_PRODUCT = ("pm_iv", "pm_sb", "pm_a", "pm_b")
+"""The outputs of `_shared` that the multiplier takes, which a vectoring drives only with `hypot`."""
 _TAKING = ("x0", "y0", "z0", "xa", "ya", "pm_sb", "pm_a", "pm_b")
 """The outputs of `_shared` that a transaction drives in the cycle it is taken in, where the engine can start then."""
 
@@ -798,9 +823,10 @@ class _Cordic(wiring.Component):
         f = FloatLayout(fmt)
         ahead = _ahead(model)
 
-        # The shared multiplier is signed, a bit wider for vectoring's unsigned operands; the shared packer takes a
-        # biased exponent. The tags of the two modes overlap: each reads its own.
-        wa_pm, wb_pm = c.operands(mode)
+        # The shared multiplier is signed, a bit wider where it takes vectoring's unsigned operands; the shared packer
+        # takes a biased exponent. The tags of the two modes overlap: each reads its own.
+        served = _served(model)
+        wa_pm, wb_pm = (0, 0) if served is None else c.operands(served)
         if rotates:
             wb_pm = max(wb_pm, _rotation_operands(c, ahead)[1])
         pk_tags = data.UnionLayout(
@@ -854,15 +880,16 @@ class _Cordic(wiring.Component):
             early=early,
             seed=_SEED + model.rotation_seed,
         )
-        m.submodules.pmul = pmul = Pmul(
-            wa_pm,
-            wb_pm,
-            signed=rotates,
-            wmultiplier=model.wmultiplier,
-            stages=model.stage_core_mul,
-            sideband=_Product if rotates else None,
-            attrs=model.mul_attrs,
-        )
+        if served is not None:
+            m.submodules.pmul = pmul = Pmul(
+                wa_pm,
+                wb_pm,
+                signed=rotates,
+                wmultiplier=model.wmultiplier,
+                stages=model.stage_core_mul,
+                sideband=_Product if rotates else None,
+                attrs=model.mul_attrs,
+            )
         # `x` held off the engine's recurrence.
         xn = Signal(signed(wx), name="xn_held", reset_less=True)
         with m.If(engine.done):
@@ -897,7 +924,8 @@ class _Cordic(wiring.Component):
                 vec.early.eq((engine.early if early else engine.done) & held_vec),
             ]
             m.d.comb += [vec.yn.eq(engine.yn), vec.zn.eq(engine.zn), vec.xn_now.eq(engine.xn), vec.xn_held.eq(xn)]
-            m.d.comb += [vec.mul_valid.eq(pmul.out_valid & held_vec), vec.mul_p.eq(pmul.p)]
+            if model.hypot:
+                m.d.comb += [vec.mul_valid.eq(pmul.out_valid & held_vec), vec.mul_p.eq(pmul.p)]
             m.d.comb += [vec.packed.eq(f2f.out_valid & held_vec), vec.pk_y.eq(f2f.y)]
             m.d.comb += vec.pk_theta.eq(f2f.sb_out.vectoring.theta)
             sides.append(vec)
@@ -920,12 +948,16 @@ class _Cordic(wiring.Component):
             sides.append(rot)
 
         def shared(name: str) -> Value:
-            values = [getattr(side, name) for side in sides]
-            if not both:
+            values = [getattr(side, name) for side in sides if name in side.signature.members]
+            if len(values) == 1:
                 return values[0]
             return values[0] | values[1] if name in _RAISED else Mux(own_vec if name in _TAKING else held_vec, *values)
 
-        now = {name: shared(name) for name in _shared(c, fmt, widths)}
+        now = {
+            name: shared(name)
+            for name in _shared(c, fmt, widths)
+            if any(name in side.signature.members for side in sides)
+        }
         m.d.comb += engine.start.eq(now["start"])
         m.d.comb += engine.vectoring.eq(own_vec)
         m.d.comb += engine.x0.eq(now["x0"])
@@ -933,11 +965,12 @@ class _Cordic(wiring.Component):
         m.d.comb += engine.z0.eq(now["z0"])
         m.d.comb += engine.xa.eq(now["xa"])
         m.d.comb += engine.ya.eq(now["ya"])
-        m.d.comb += pmul.in_valid.eq(now["pm_iv"])
-        if rotates:
-            m.d.comb += pmul.sb_in.eq(now["pm_sb"])
-        m.d.comb += pmul.a.eq(now["pm_a"])
-        m.d.comb += pmul.b.eq(now["pm_b"])
+        if served is not None:
+            m.d.comb += pmul.in_valid.eq(now["pm_iv"])
+            if rotates:
+                m.d.comb += pmul.sb_in.eq(now["pm_sb"])
+            m.d.comb += pmul.a.eq(now["pm_a"])
+            m.d.comb += pmul.b.eq(now["pm_b"])
         back = data.StructLayout({"sign": 1, "inf": 1, "exp": signed(weu_pk), "mag": wmag_pk, "sb": pk_tags})
         given = bundle(
             back, sign=now["pk_sign"], inf=now["pk_inf"], exp=now["pk_exp"], mag=now["pk_mag"], sb=now["pk_sb"]
@@ -1344,8 +1377,10 @@ class _Vectoring(wiring.Component):
             "xn_now": In(signed(c.wx)),
             "xn_held": In(signed(c.wx)),
         }
-        taken |= {"mul_valid": In(1), "mul_p": In(w.wa_pm + w.wb_pm), "packed": In(1), "pk_y": In(f), "pk_theta": In(1)}
-        super().__init__(taken | _shared(c, model.fmt, w))
+        product = {"mul_valid": In(1), "mul_p": In(w.wa_pm + w.wb_pm)} if model.hypot else {}
+        taken |= product | {"packed": In(1), "pk_y": In(f), "pk_theta": In(1)}
+        shared = {name: port for name, port in _shared(c, model.fmt, w).items() if model.hypot or name not in _PRODUCT}
+        super().__init__(taken | shared)
 
     def elaborate(self, platform: object) -> Module:
         m = Module()
@@ -1490,7 +1525,7 @@ class _Vectoring(wiring.Component):
         # A zero or an infinity divides garbage, which the output masks.
         yk_abs = Signal(wx, name="be_ykabs")
         m.d.comb += yk_abs.eq(Mux(self.yn[-1], (-self.yn)[:wx], self.yn.as_unsigned()))
-        dv_valid, dv_run, mag_issue = Signal(name="dv_valid"), Signal(name="dv_run"), Signal(name="mag_issue")
+        dv_valid, dv_run = Signal(name="dv_valid"), Signal(name="dv_run")
         dv_zn, dv_yneg = Signal(signed(wz), name="dv_zn", reset_less=True), Signal(name="dv_yneg", reset_less=True)
         dv_cnt, dv_digit = (
             Signal(wcnt, name="dv_cnt", reset_less=True),
@@ -1523,7 +1558,9 @@ class _Vectoring(wiring.Component):
         dv_load = Signal(name="dv_load")
         m.d.comb += dv_load.eq(Mux(held_bypass, self.early, done))
         m.d.sync += dv_valid.eq(0)
-        m.d.sync += mag_issue.eq(done)
+        if model.hypot:
+            mag_issue = Signal(name="mag_issue")
+            m.d.sync += mag_issue.eq(done)
         # `x` is positive in a transaction that divides: no guard against a zero divisor.
         with m.If(dv_load):
             m.d.sync += dv_run.eq(1)
@@ -1545,8 +1582,9 @@ class _Vectoring(wiring.Component):
             m.d.sync += dv_yneg.eq(self.yn[-1])
 
         # The quotient times `1/(2*pi)` gathers a digit at a time, a cycle behind the division, exactly.
-        product = Signal(wmag_vec, name="vec_product")
-        m.d.comb += product.eq(self.mul_p[:wmag_vec])
+        if model.hypot:
+            product = Signal(wmag_vec, name="vec_product")
+            m.d.comb += product.eq(self.mul_p[:wmag_vec])
         wacc = wquo + wfactor
         acc = Signal(wacc, name="dv_acc", reset_less=True)
         acc_run, theta_ready = Signal(name="acc_run"), Signal(name="theta_ov")
@@ -1592,13 +1630,17 @@ class _Vectoring(wiring.Component):
         to_half = Signal(name="to_half")
         m.d.comb += to_half.eq(~held_bypass & (ag.tmag[zf - 1] | ag.tmag[zf - 3 - wfrac : zf - 1].all()))
 
-        # The length is packed first and held until theta; the 2 is the seed's quarter.
-        mag_exp = (sext(held_eden, weu_pk) + (wmag_pk - 1 - (xf + kinv_s) + 2))[:weu_pk].as_signed()
-        pk_iv = Signal(name="vec_pk_iv")
-        m.d.comb += pk_iv.eq(self.mul_valid | angle_valid)
-        mag_num = Signal(f, name="mag_num", reset_less=True)
-        with m.If(self.packed & ~self.pk_theta):
-            m.d.sync += mag_num.eq(self.pk_y)
+        # Without a length the packer takes the angle alone, and `-inf` is what no length can be.
+        pk_iv, pk_exp, pk_mag, mag_num = angle_valid, ag.texp, zext(ag.tmag, wmag_pk), f.const(fmt.inf(1))
+        if model.hypot:
+            # The length is packed first and held until theta; the 2 is the seed's quarter.
+            mag_exp = (sext(held_eden, weu_pk) + (wmag_pk - 1 - (xf + kinv_s) + 2))[:weu_pk].as_signed()
+            pk_iv = Signal(name="vec_pk_iv")
+            m.d.comb += pk_iv.eq(self.mul_valid | angle_valid)
+            pk_exp, pk_mag = Mux(angle_valid, ag.texp, mag_exp), zext(Mux(angle_valid, ag.tmag, product), wmag_pk)
+            mag_num = Signal(f, name="mag_num", reset_less=True)
+            with m.If(self.packed & ~self.pk_theta):
+                m.d.sync += mag_num.eq(self.pk_y)
         # Eighths of a turn are constants: no carry chain on the output.
         turn8 = Signal(f, name="turn8")
         eighth = {1: (bias - 3, 0), 2: (bias - 2, 0), 3: (bias - 2, 1 << (wfrac - 1)), 4: (bias - 1, 0)}
@@ -1610,15 +1652,17 @@ class _Vectoring(wiring.Component):
             with m.Default():
                 m.d.comb += turn8.eq(f.const(Zkf(fmt, 0)))
         theta, length = Signal(f, name="vec_theta"), Signal(f, name="vec_mag")
-        # Where an operand is zero the other is the larger, so the length is the denominator.
-        unpacked = Signal(1, name="held_sp_unpacked")
-        m.d.comb += unpacked.eq(held_sp_inf | held_sp_zero)
-        sp_mag = bundle(
-            f,
-            frac=held_den_sig[:wfrac] & ~unpacked.replicate(wfrac),
-            exp=held_eden[:wexp] | held_sp_inf.replicate(wexp),
-            sign=Const(0, 1),
-        )
+        sp_mag = mag_num
+        if model.hypot:
+            # Where an operand is zero the other is the larger, so the length is the denominator.
+            unpacked = Signal(1, name="held_sp_unpacked")
+            m.d.comb += unpacked.eq(held_sp_inf | held_sp_zero)
+            sp_mag = bundle(
+                f,
+                frac=held_den_sig[:wfrac] & ~unpacked.replicate(wfrac),
+                exp=held_eden[:wexp] | held_sp_inf.replicate(wexp),
+                sign=Const(0, 1),
+            )
         with m.If(held_special):
             m.d.comb += theta.eq(turn8)
             m.d.comb += length.eq(sp_mag)
@@ -1627,13 +1671,11 @@ class _Vectoring(wiring.Component):
             m.d.comb += length.eq(mag_num)
         m.d.comb += [self.start.eq(shifted_valid), self.x0.eq(sd.xl), self.y0.eq(sd.yl), self.z0.eq(z_load)]
         m.d.comb += [self.xa.eq(sd.xa), self.ya.eq(sd.ya)]
-        m.d.comb += [self.pm_iv.eq(mag_issue), self.pm_sb.eq(0)]
-        m.d.comb += [self.pm_a.eq(zext(xn[:wa_mag], w.wa_pm)), self.pm_b.eq(Const(c.kinv_mag, w.wb_pm))]
+        if model.hypot:
+            m.d.comb += [self.pm_iv.eq(mag_issue), self.pm_sb.eq(0)]
+            m.d.comb += [self.pm_a.eq(zext(xn[:wa_mag], w.wa_pm)), self.pm_b.eq(Const(c.kinv_mag, w.wb_pm))]
         m.d.comb += [self.pk_iv.eq(pk_iv), self.pk_sign.eq(angle_valid & held_sy & ~to_half), self.pk_inf.eq(0)]
-        m.d.comb += [
-            self.pk_exp.eq(Mux(angle_valid, ag.texp, mag_exp)),
-            self.pk_mag.eq(zext(Mux(angle_valid, ag.tmag, product), wmag_pk)),
-        ]
+        m.d.comb += [self.pk_exp.eq(pk_exp), self.pk_mag.eq(pk_mag)]
         m.d.comb += [self.pk_sb.eq(angle_valid), self.res.eq(self.packed & self.pk_theta)]
         m.d.comb += [self.r0.eq(theta), self.r1.eq(length), self.quadrant.eq(0)]
         return m

@@ -53,8 +53,8 @@ shielding the operator stage from the interconnect delays.
 ### Language
 
 The hardware is written in Amaranth, in the most straightforward way: only its canonical, idiomatic, public API.
-No private names, no part of the toolchain invoked directly, nothing that depends on a version of Amaranth or of Yosys
-or on how they print, and no pinned dependency.
+No private names, nothing that depends on a version of Amaranth or of Yosys or on how they print, and no pinned
+dependency.
 
 Everything of the package is private unless `zkf/__init__.py` explicitly exports it;
 only the tests may reach private names.

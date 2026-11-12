@@ -22,6 +22,7 @@ KNOBS: Mapping[str, tuple[object, ...]] = {
     "rotation_seed": (0, 1, 2),
     "n": (0, 1, 7),
     "fast": (False, True),
+    "hypot": (False, True),
 }
 
 
@@ -42,7 +43,10 @@ def admits(model: Block) -> bool:
     elif isinstance(model, Log2):
         wa, wb = zkf._log2._last(model._spec, model.fmt)
     elif isinstance(model, Cordic):
-        wa, wb = zkf._cordic._geometry(model.fmt.wman).operands(model.mode)
+        served = zkf._cordic._served(model)
+        if served is None:
+            return True
+        wa, wb = zkf._cordic._geometry(model.fmt.wman).operands(served)
     else:
         return True
     signed = isinstance(model, Cordic) and model.mode != 1
