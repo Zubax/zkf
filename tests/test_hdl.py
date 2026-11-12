@@ -49,5 +49,5 @@ def test_ports_exchange_zkf() -> None:
 
 
 def test_a_constant_is_a_value_of_the_format() -> None:
-    with pytest.raises(ValueError, match="is not"):
+    with pytest.raises(ValueError, match="^expected e4m6, got e5m5$"):
         FloatLayout(FMT).const(Zkf(ZkfFormat(5, 5), 0))

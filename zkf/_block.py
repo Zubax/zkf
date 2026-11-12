@@ -1,4 +1,4 @@
-"""The configuration base classes and their Verilog, the float port layout, and the register-stage helpers."""
+"""Operator base classes and their Verilog output, the float port layout, and register helpers."""
 
 import enum
 import hashlib
@@ -7,11 +7,9 @@ import os
 import shutil
 import subprocess
 import sys
-import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
-from pathlib import Path
 from typing import Any, ClassVar
 
 from amaranth.back import rtlil, verilog
@@ -26,8 +24,8 @@ type Attrs = Mapping[str, int | str]
 
 class FloatView(data.View):
     """
-    A ZKF value on a float port. Every read of `is_zero`, `is_inf` or `significand` builds logic: take it into a signal
-    if it is used more than once.
+    A ZKF value on a float port. Each read of `is_zero`, `is_inf` or `significand` builds new logic: assign it to a
+    signal if it is used more than once.
     """
 
     frac: Value
@@ -54,7 +52,7 @@ class FloatView(data.View):
 
 
 class FloatLayout(data.StructLayout):
-    """The layout of a float port; in simulation it reads as and accepts `Zkf`."""
+    """The layout of a float port; in simulation its values are read and written as `Zkf`."""
 
     def __init__(self, fmt: ZkfFormat) -> None:
         self.fmt = fmt
@@ -66,7 +64,7 @@ class FloatLayout(data.StructLayout):
     def const(self, init: object) -> data.Const:
         if isinstance(init, Zkf):
             if init.fmt != self.fmt:
-                raise ValueError(f"{init.fmt} is not {self.fmt}")
+                raise ValueError(f"expected {self.fmt}, got {init.fmt}")
             return data.Const(self, init.bits)
         return super().const(init)
 
@@ -83,24 +81,23 @@ class Timing:
 @dataclass(frozen=True, eq=False)
 class Block(ABC):
     """
-    A configuration that compiles to one Verilog top module. Its dataclass fields are its knobs, except those declared
-    `compare=False`, such as the synthesis attributes: no part of `config`, part of `name`. A subclass is declared
-    `@dataclass(frozen=True, kw_only=True, eq=False)`; two instances of one class are equal iff their `config` is,
-    whether a knob was given or defaulted.
+    A configuration that compiles to one Verilog top module. The dataclass fields are its knobs, except those declared
+    `compare=False` (such as synthesis attributes), which are left out of `config` but still change `name`. Subclasses
+    are declared `@dataclass(frozen=True, kw_only=True, eq=False)`; two instances are equal if their `config` is.
     """
 
     operator: ClassVar[str]
 
     def __post_init__(self) -> None:
-        """Refuses a set of registers of another type."""
+        """Rejects a register-set knob of the wrong type."""
         for knob in fields(self):
             value = getattr(self, knob.name)
             if isinstance(knob.default, enum.Flag) and not isinstance(value, type(knob.default)):
-                raise TypeError(f"{knob.name}={value!r}: a set of `{type(knob.default).__qualname__}` is due")
+                raise TypeError(f"{knob.name}={value!r} is not of type `{type(knob.default).__qualname__}`")
 
     @property
     def config(self) -> dict[str, Any]:
-        """The knob values, defaults resolved, in declaration order."""
+        """The knob values, defaults included, in declaration order."""
         return {f.name: getattr(self, f.name) for f in fields(self) if f.compare}
 
     def __eq__(self, other: object) -> bool:
@@ -117,16 +114,16 @@ class Block(ABC):
     @property
     def digest(self) -> str:
         """
-        12 hex digits digesting the operator, `config`, the attributes and the timing, so distinct configurations never
-        share one, nor does one whose latency changes, at a length that keeps `name` within what vendor tools take.
+        A 12-digit hex hash of the operator, `config`, the attributes and the timing, so that different configurations,
+        or a configuration whose latency changes, get different names short enough for vendor tools.
         """
 
         def plain(value: Any) -> Any:
-            if isinstance(value, enum.Flag):  # By its members' names: their values shift when a member is added.
+            if isinstance(value, enum.Flag):  # By name: member values shift when a member is added.
                 return sorted(member.name for member in value)
-            if isinstance(value, Mapping):  # None and {} are no attributes alike.
+            if isinstance(value, Mapping):  # None and {} both mean no attributes.
                 return sorted((key, plain(item)) for key, item in value.items())
-            return int(value) if isinstance(value, bool) else value  # `True` and 1 are one value.
+            return int(value) if isinstance(value, bool) else value  # `True` and 1 are the same value.
 
         knobs = sorted((knob, plain(value)) for knob, value in self.config.items())
         attrs = sorted((f.name, plain(getattr(self, f.name) or {})) for f in fields(self) if not f.compare)
@@ -136,52 +133,45 @@ class Block(ABC):
     @abstractmethod
     def timing(self) -> Timing | Mapping[int, Timing]:
         """
-        A `Timing` if the timing does not depend on the mode (even if a mode input selects the arithmetic); otherwise a
-        mapping from each legal value of the mode-selecting input to its `Timing`. The initiation interval of a mode is
-        the number of cycles from accepting a transaction in that mode to accepting the next one of any mode, with no
-        output back-pressure.
+        A `Timing` if it is the same in every mode, else a mapping from each value of the mode input to its `Timing`.
+        The initiation interval of a mode is the number of cycles from accepting a transaction in that mode until the
+        next one can be accepted, with no output back-pressure.
         """
 
     @property
     def clocked(self) -> bool:
-        """Whether the module has `clk` and `rst`: iff some mode has a nonzero latency."""
+        """Whether the module has `clk` and `rst`: true if any mode has a nonzero latency."""
         timing = self.timing
         return any(t.latency for t in ([timing] if isinstance(timing, Timing) else timing.values()))
 
     @property
     @abstractmethod
     def signature(self) -> wiring.Signature:
-        """The ports, less `clk` and `rst`, which are present iff `clocked`."""
+        """The ports, except `clk` and `rst`, which exist only if `clocked`."""
 
     @abstractmethod
     def component(self) -> wiring.Component:
-        """
-        The hardware, for an Amaranth design or simulation. Converted by Amaranth directly, it lacks the top module that
-        `compile` adds.
-        """
+        """The hardware, for an Amaranth design or simulation; it lacks the top module that `compile` adds."""
 
     @abstractmethod
     def evaluate(self, *args: Any, **kwargs: Any) -> Any:
         """
-        The bit-exact reference. The parameters are the input data ports, by name and in signature order: a `Zkf` of the
-        port's format, an `int`, or the port's enumeration. The result is the output data port, or a named tuple of them
-        if there are several, with flags as `bool`. A float of another format or an integer that its port cannot hold
-        raises `ValueError`, even on a port that a fixed mode ignores.
+        The bit-exact reference. Arguments are the input data ports, in signature order: a `Zkf` of the port's format,
+        an `int`, or the port's enum. Returns the output data port, or a named tuple if there are several, with flags as
+        `bool`. A float of another format or an integer too wide for its port raises `ValueError`, even if unused.
         """
 
     def compile(self, prefix: str = "", *, proc_nomux: bool | None = None) -> str:
         """
-        Verilog of this configuration and every module under it, each named `prefix + self.name` or prefixed by it,
-        headed by a line naming ZKF, its version and its author, and a table of the knobs and the timing. The top
-        module has the ports of `signature` in order, after `clk` and `rst` if `clocked`, with signed ports declared
-        signed, which Amaranth cannot do; it wraps the Amaranth design as the instance `core`, with no initial value of
-        any flip-flop (ROM contents are kept), so that synthesis prunes what constant inputs leave unused. It is printed
-        by the first Yosys that `AMARANTH_USE_YOSYS` names and that is there: by default a system one (`YOSYS`, or
-        `yosys` on the path), then Amaranth's own.
+        The Verilog of this configuration: top module `prefix + self.name`, submodules prefixed with it, and a header
+        with the ZKF version, the knobs and the timing. The top module has the ports of `signature` in order (after
+        `clk` and `rst` if `clocked`), declares signed ports signed, and wraps the Amaranth design as `core`.
+        No flip-flop has an initial value (ROM contents are kept), so synthesis can prune logic that constant inputs
+        leave unused. Yosys is chosen as in Amaranth: by `AMARANTH_USE_YOSYS`, default the system one (`YOSYS`), else
+        the bundled one; `javascript` runs a Pyodide host's.
 
-        `proc_nomux` is `-nomux` of the Yosys `proc` that prints it: with it a switch is printed as an `always @*` with a
-        `case`, without it as comparators feeding a multiplexer, which some tools map better and others worse. None
-        takes the default, on, as Amaranth's `verilog.convert` does. It is not a stable API: it may change or go.
+        `proc_nomux` is Yosys's `proc -nomux`: on (the default, as in Amaranth), switches become `always @*` `case`
+        blocks; off, comparators and multiplexers, which some tools map better. It is not a stable API.
         """
         from . import __version__
 
@@ -207,15 +197,15 @@ class Block(ABC):
 @dataclass(frozen=True, eq=False)
 class Operator(Block):
     """
-    An operator on floats of the format `fmt`, which `Resize` converts to from another. Its `stage_input` and
-    `stage_output` are register stages at its ports; where >0, no combinational path is exposed at that port.
+    An operator on floats of format `fmt` (`Resize` converts between formats). `stage_input` and `stage_output` are
+    register stages at the ports; when nonzero, no combinational path reaches that port.
     """
 
     fmt: ZkfFormat
 
 
 def delay[T: ValueLike](m: Module, name: str, shape: ShapeLike, value: T, stages: int, attrs: Attrs | None = None) -> T:
-    """`value` delayed by `stages` reset-less registers, `attrs` on the last."""
+    """`value` delayed by `stages` registers without reset, `attrs` on the last."""
     for k in range(stages):
         q = Signal(shape, name=f"{name}{k}", reset_less=True, attrs=dict(attrs or {}) if k == stages - 1 else {})
         m.d.sync += q.eq(value)
@@ -226,7 +216,7 @@ def delay[T: ValueLike](m: Module, name: str, shape: ShapeLike, value: T, stages
 def pipe[T: ValueLike](
     m: Module, name: str, valid: ValueLike, shape: ShapeLike, payload: T, stages: int
 ) -> tuple[ValueLike, T]:
-    """`valid` and `payload` delayed by `stages` registers; reset clears only the flags."""
+    """`valid` and `payload` delayed by `stages` registers; reset clears only the valid flags."""
     for k in range(stages):
         flag, q = Signal(name=f"{name}{k}_valid"), Signal(shape, name=f"{name}{k}", reset_less=True)
         m.d.sync += [flag.eq(valid), q.eq(payload)]
@@ -235,27 +225,27 @@ def pipe[T: ValueLike](
 
 
 def zext(value: Value, width: int) -> Value:
-    """With zeros above, unsigned."""
+    """Zero-extended to `width` bits, unsigned."""
     return Cat(value, Const(0, width - len(value)))
 
 
 def sext(value: Value, width: int) -> Value:
-    """With the sign above, signed."""
+    """Sign-extended to `width` bits, signed."""
     return Cat(value, value[-1].replicate(width - len(value))).as_signed()
 
 
 def ge(left: Value, right: Value) -> Value:
-    """`left >= right` as the borrow of a subtraction, which maps onto a carry chain where a comparison may not."""
+    """`left >= right` from the borrow of a subtraction, so that it maps onto a carry chain."""
     return ~(left - right)[-1]
 
 
 def add_carry(a: Value, b: Value, carry: Value) -> Value:
-    """`a + b + carry`, unsigned, as wide as `a + b`, the carry entering below both: one carry chain in every tool."""
+    """`a + b + carry`, unsigned, as wide as `a + b`; built so that every tool makes one carry chain of it."""
     return (Cat(carry, a) + Cat(carry, b))[1:]
 
 
 def bundle(layout: data.StructLayout, **fields: ValueLike) -> data.View:
-    """A view of `layout` built from its fields by name, each as wide as its member."""
+    """A view of `layout` from its fields by name, each exactly as wide as its member."""
     assert all(len(Value.cast(fields[name])) == Shape.cast(shape).width for name, shape in layout.members.items())
     return layout(Cat(*(fields[name] for name in layout.members)))
 
@@ -265,35 +255,42 @@ _STRIPPED = ("generator", "top", "src", "amaranth.hierarchy", "amaranth.decoding
 
 
 def _verilog(component: wiring.Component, name: str, *, nomux: bool) -> str:
-    """
-    `component` as the Verilog module `name` that `Block.compile` describes: with `nomux` printed as `verilog.convert`
-    prints it, less the initial values, which it cannot leave out.
-    """
+    """`component` as Verilog module `name`: with `nomux`, what `verilog.convert` gives, minus the initial values."""
     removed = " ".join(f"-remove {attribute}" for attribute in _STRIPPED)
     script = [
-        "read_rtlil core.il",
+        f"read_rtlil <<rtlil\n{rtlil.convert(component, name=name, emit_src=False)}\nrtlil",
         "proc -norom" + " -nomux" * nomux,
         "memory_collect",
         f"attrmap -remove init {removed}",
         f"attrmap -modattr {removed}",
-        # Without `-nomux`, `-norename` would keep a mux's function named with a `$`, which Icarus takes for a system
-        # function.
-        "write_verilog" + " -norename" * nomux + " core.v",
+        # Without `-nomux`, `-norename` would keep mux functions named `$...`, which Icarus takes for system functions.
+        "write_verilog" + " -norename" * nomux,
     ]
-    with tempfile.TemporaryDirectory() as directory:
-        (Path(directory) / "core.il").write_text(rtlil.convert(component, name=name, emit_src=False))
-        # Amaranth's own Yosys sees its working directory only.
-        done = subprocess.run([*_yosys(), "-q", "-p", "; ".join(script)], cwd=directory, capture_output=True, text=True)
-        if done.returncode:
-            raise verilog.YosysError(done.stderr.strip())
-        return (Path(directory) / "core.v").read_text()
+    code, out, err = _yosys(["-q", "-"], "\n".join(script))
+    if code:
+        raise verilog.YosysError(err.strip())
+    return out
 
 
-def _yosys() -> list[str]:
-    """The command of the Yosys that `Block.compile` takes."""
-    for clause in os.environ.get("AMARANTH_USE_YOSYS", "system,builtin").split(","):
+def _yosys(args: list[str], stdin: str) -> tuple[int, str, str]:
+    """Runs the Yosys that `Block.compile` picks; returns the exit code, stdout and stderr."""
+    clauses = os.environ.get("AMARANTH_USE_YOSYS", "system,builtin")
+    for clause in clauses.split(","):
         if clause == "system" and (found := shutil.which(os.environ.get("YOSYS", "yosys"))):
-            return [os.path.abspath(found)]  # the run's working directory is another
+            return _run([found, *args], stdin)
         if clause == "builtin" and importlib.util.find_spec("amaranth_yosys"):
-            return [sys.executable, "-m", "amaranth_yosys"]
-    raise verilog.YosysError("no Yosys that AMARANTH_USE_YOSYS names is there")
+            # `-P`: files in the current directory cannot shadow its imports.
+            return _run([sys.executable, "-P", "-m", "amaranth_yosys", *args], stdin)
+        if clause == "javascript":
+            try:  # A Pyodide host's `runAmaranthYosys(args, stdin)` returns `[exit_code, stdout, stderr]`.
+                run = importlib.import_module("js").runAmaranthYosys
+            except ImportError, AttributeError:
+                continue
+            code, out, err = run(args, stdin)
+            return code, out, err
+    raise verilog.YosysError(f"no Yosys found for AMARANTH_USE_YOSYS={clauses!r} (system, builtin or javascript)")
+
+
+def _run(command: list[str], stdin: str) -> tuple[int, str, str]:
+    done = subprocess.run(command, input=stdin, capture_output=True, encoding="utf-8")
+    return done.returncode, done.stdout, done.stderr

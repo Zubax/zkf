@@ -2,6 +2,7 @@ import enum
 import re
 import subprocess
 import sys
+import types
 from dataclasses import dataclass, field, fields, replace
 from pathlib import Path
 from collections.abc import Callable
@@ -135,7 +136,10 @@ def test_the_top_of_the_text() -> None:
 def test_the_yosys_is_the_first_of_amaranth_use_yosys_that_is_there(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A system Yosys by `YOSYS`, a relative path too, else Amaranth's; what a failing one says is in the error; none."""
+    """
+    A system Yosys by `YOSYS`, a relative path too, else Amaranth's, or a Pyodide host's; what a failing one says is in
+    the error; none.
+    """
     pipe = Pipe(w=1, n=1)
     ran, system, broken = tmp_path / "ran", tmp_path / "yosys", tmp_path / "broken"
     system.write_text(f'#!/bin/sh\ntouch {ran}\nexec {sys.executable} -m amaranth_yosys "$@"\n')
@@ -157,8 +161,22 @@ def test_the_yosys_is_the_first_of_amaranth_use_yosys_that_is_there(
     monkeypatch.setenv("YOSYS", str(tmp_path / "absent"))
     assert pipe.compile() == text
     monkeypatch.setenv("AMARANTH_USE_YOSYS", "javascript")
-    with pytest.raises(verilog.YosysError, match="^no Yosys"):
+    with pytest.raises(verilog.YosysError, match=r"^no Yosys found for AMARANTH_USE_YOSYS='javascript'"):
         pipe.compile()
+
+    def run(args: list[str], stdin: str) -> list[object]:
+        """As a Pyodide host's `runAmaranthYosys`, the bundled Yosys behind it."""
+        done = subprocess.run(
+            [sys.executable, "-m", "amaranth_yosys", *args], input=stdin, capture_output=True, text=True
+        )
+        return [done.returncode, done.stdout, done.stderr]
+
+    host = types.ModuleType("js")
+    monkeypatch.setitem(sys.modules, "js", host)
+    with pytest.raises(verilog.YosysError, match=r"^no Yosys found for AMARANTH_USE_YOSYS='javascript'"):
+        pipe.compile()
+    host.runAmaranthYosys = run  # type: ignore[attr-defined]
+    assert pipe.compile() == text
 
 
 def test_names_are_distinct() -> None:
@@ -194,9 +212,9 @@ def test_multiplier_width_is_required(cls: type[Operator]) -> None:
 
 def test_a_set_of_another_type_is_refused() -> None:
     """The integer of a former ladder, or another operator's set."""
-    with pytest.raises(TypeError, match=r"^stage_core=3: a set of `Add.CoreStages` is due$"):
+    with pytest.raises(TypeError, match=r"^stage_core=3 is not of type `Add.CoreStages`$"):
         Add(F18, stage_core=3)  # type: ignore[arg-type]
-    with pytest.raises(TypeError, match=r"^stage_core_add=<CoreStages.ALIGN: 1>: a set of `Add.CoreStages` is due$"):
+    with pytest.raises(TypeError, match=r"^stage_core_add=<CoreStages.ALIGN: 1> is not of type `Add.CoreStages`$"):
         Fma(F18, wmultiplier=18, stage_core_add=Log2.CoreStages.ALIGN)  # type: ignore[arg-type]
 
 
