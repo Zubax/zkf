@@ -28,161 +28,66 @@ mul.evaluate(a, b)           # what the hardware gives for these operands exactl
 ```
 
 Most operators are zero-bubble throughput-1 pipelines with the conventional `in_valid`/`out_valid` interface;
-`zkf.Cordic` is FSM-based and adds the `in_ready`/`out_ready` handshake.
+`Cordic` is FSM-based and adds the `in_ready`/`out_ready` handshake.
 Every operator has a fixed data-independent latency, known from its configuration for each mode (see `.timing`).
 
-The two main parameters are wexp and wman setting the bit width of the biased exponent and the significand;
+The two main parameters are `wexp` and `wman` setting the bit width of the biased exponent and the significand;
 the most significant bit of the significand is not stored, but there is a sign bit,
 so the total bit width is simply `wfull=wexp+wman`.
 
-### Caveats
-
-Some of the simple combinational operators may produce non-canonical outputs (namely, a negative zero);
-this however does not affect compatibility with other operators since they always canonicalize inputs.
-
-Assert `rst` for a cycle before the first transaction of the printed Verilog (see `Block.compile`).
-Read as SystemVerilog (Icarus `-g2012`, which cocotb uses), it needs `rst` to rise after time zero.
-
-### Tuning knobs
-
-Operators can be tuned for the target chip with register-stage knobs.
-The default configuration has the least cycle latency; add stages if timing fails to close:
-
-- `stage_input` and `stage_output` -- input and output register stages shielding the operator's internal combinational
-paths from external circuits.
-When zero, internal combinational paths are exposed directly;
-when greater than one, dummy stages are added which helps with retiming or when routing delays dominate.
-
-- `stage_core` -- a set of the operator's own registers, e.g. `zkf.Add.CoreStages.SUM | zkf.Add.CoreStages.PACK`;
-operators made of parts take one knob per part, such as the product's `stage_core_mul`.
-The docstrings describe the knobs of each operator.
-
-The `timing` property gives the latency and the initiation interval (II) of the chosen staging configuration.
-
-Operators that multiply take `wmultiplier`, the operand width of the target's multipliers (16, 18 and 24 bits are
-common in modern FPGAs; in the absence of hard DSP blocks, any value that the library accepts will do).
-
-`rom_attrs` and `mul_attrs` pass synthesis attributes to the lookup tables and to the products' operand registers,
-e.g. `rom_attrs={"rom_style": "block"}`.
-
-Use `zkf.Pipe` to delay your own control or sideband signals by an operator's latency so they land with its output.
-
 ### Catalogue
 
-II - initiation interval (cycles between accepting new inputs; 1 for zero-bubble pipelines).
+Exponent 0 always encodes +0.
+It is not an error to pass a negative zero as an operand; the sign bit of a zero operand is simply ignored.
+This relaxation simplifies certain basic operators which don't have to canonicalize their results.
 
-| Class           | II      | Function                                                                                      | Remarks                     |
-|-----------------|---------|-----------------------------------------------------------------------------------------------|-----------------------------|
-| `zkf.AbsNeg`    | 1       | Absolute value and negation.                                                                  | Does not canonicalize       |
-| `zkf.Finite`    | 1       | Finiteness flag, and ±∞ replaced by the nearest finite value.                                 | Does not canonicalize       |
-| `zkf.Cmp`       | 1       | Compare two values; also outputs their min and max.                                           | Does not canonicalize       |
-| `zkf.Add`       | 1       | `a + b`, also `a - b` when the sign bit of `b` is flipped.                                    |                             |
-| `zkf.Mul`       | 1       | `a⋅b`.                                                                                        |                             |
-| `zkf.MulIlog2`  | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                                                  |                             |
-| `zkf.Ilog2`     | 1       | Raw exponent minus bias; sign-invariant signed integer.                                       | Flags zero, infinity, negative |
-| `zkf.Fma`       | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once.                                 | Larger than separate mul->add; non-finite handling follows mul->add.|
-| `zkf.FromInt`   | 1       | Cast signed two's-complement integer to float.                                                |                             |
-| `zkf.Resize`    | 1       | Cast between different float formats.                                                         |                             |
-| `zkf.Rint`      | 1       | Round to integer, outputs both a float and a saturated integer.                               | RNTE/floor/ceil/trunc       |
-| `zkf.Divsqrt`   | 1       | `a ÷ b` or `√a`; `error` iff /0 or domain error.                                              | Correct rounding, 0.5 ULP   |
-| `zkf.Exp2`      | 1       | `2^x`                                                                                         | Faithful rounding, see below|
-| `zkf.Log2`      | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.                                          | Faithful rounding, see below|
-| `zkf.Cordic`    | latency | `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (-0.5,0.5], `hypot(y,x)`.    | Faithful rounding, see below|
-| `zkf.Pipe`      | 1       | Delay line of N register stages, W bits each.                                                 | No-op                       |
+Here, II means initiation interval (cycles between accepting new inputs; 1 for zero-bubble pipelines).
 
-### Derived functions
+| Class       | II      | Function                                                                                    | Rounding              |
+|-------------|---------|---------------------------------------------------------------------------------------------|-----------------------|
+| `AbsNeg`    | 1       | Absolute value and negation. Does not canonicalize.                                         | exact                 |
+| `Finite`    | 1       | Finiteness flag, and ±∞ replaced by the nearest finite value. Does not canonicalize.        | exact                 |
+| `Cmp`       | 1       | Compare two values; also outputs their min and max. Does not canonicalize.                  | exact                 |
+| `Add`       | 1       | `a + b`, also `a - b` when the sign bit of `b` is flipped.                                  | RNTE                  |
+| `Mul`       | 1       | `a⋅b`.                                                                                      | RNTE                  |
+| `MulIlog2`  | 1       | `a⋅2^k` for signed integer k (ldexp/scalbn).                                                | RNTE                  |
+| `Ilog2`     | 1       | Raw exponent minus bias; sign-invariant signed integer. Flags 0, infinity, negative.        | exact                 |
+| `Fma`       | 1       | `(a⋅b) + c` fused multiply-add, high precision, rounded once; ±∞ handling follows mul->add. | RNTE                  |
+| `FromInt`   | 1       | Cast signed two's-complement integer to float.                                              | RNTE                  |
+| `Resize`    | 1       | Cast between different float formats.                                                       | RNTE                  |
+| `Rint`      | 1       | Round to integer, outputs both a float and a saturated integer.                             | RNTE/floor/ceil/trunc |
+| `Divsqrt`   | 1       | `a ÷ b` or `√a`; `error` iff /0 or domain error.                                            | RNTE                  |
+| `Exp2`      | 1       | `2^x`                                                                                       | faithful              |
+| `Log2`      | 1       | `log2(x)`; `domain_error` if `x<0`, `pole` if `x=0`.                                        | faithful              |
+| `Cordic`    | latency | `sin(2π⋅x)`, `cos(2π⋅x)`, `quadrant`; or `atan2(y,x)` in turns ∈ (-0.5,0.5], `hypot(y,x)`.  | faithful              |
+| `Pipe`      | 1       | Delay line of N register stages, W bits each. No-op.                                        |                       |
 
-The basic modules available enable efficient computation of a large set of derived functions; examples follow.
-Bare angle functions follow the usual radian convention; helpers suffixed `_turns` expose ZKF's native turn
-representation.
+### Rounding
 
-    sin_turns(x), cos_turns(x)  = zkf.Cordic(x)                     ; rotation; x in turns
-    atan2_turns(y,x)            = zkf.Cordic(y, x)                  ; vectoring; angle in turns ∈ (-0.5,0.5]
-    atan_turns(x)               = atan2_turns(x, 1)
+Most operators use rounding to nearest, ties to even (RNTE).
+Below the normal range, finite magnitudes in `(0, min_normal/2)` round to +0;
+magnitudes in `[min_normal/2, min_normal)` round to signed `min_normal`, where:
 
-    normalize_angle(x)          = x - 2π⋅floor((x + π) / (2π))      ; [-π,+π)
-    normalize_angle_turns(t)    = t - floor(t + 0.5)                ; [-0.5,+0.5)
+```
+min_normal  = 2^(1 - bias) = 2^(2 - 2^(wexp-1))
+bias        = 2^(wexp-1) - 1
+```
 
-    INV_TAU = 1 / (2π)
-    radians_to_turns(x) = x⋅INV_TAU
+The subnormal round-to-nearest behavior is illustrated below, compared against the basic flush to zero for any value
+below `min_normal`.
+The timing/area cost of both approaches is similar while the rounding method halves the worst-case error.
 
-    sin(x), cos(x)      = sin_turns(radians_to_turns(x)), cos_turns(radians_to_turns(x))
-    atan2(y,x)          = 2π⋅atan2_turns(y, x)
+<img src="docs/zkf_underflow_rounding.svg">
 
-    sqrt(x)             = zkf.Divsqrt(x)        ; correctly rounded 0.5 ULP
-    exp(x)              = exp2(x⋅log2(e))
-    ln(x)               = log2(x) / log2(e)
-    log10(x)            = log2(x) / log2(10)
-    log_b(x)            = log2(x) / log2(b)     ; x>0, b>0, b≠1
-    pow(a,b)            = exp2(b⋅log2(a))       ; real-valued identity for a>0
-    recip(x)            = 1 / x
-    rsqrt(x)            = exp2(log2(x)⋅-2^-1)   ; x>0; avoids division
-    rsqrt(x)            = sqrt(1 / x)           ; x>0, 1/x normal; faithful, 0.85 ULP max at wman=18
-    cbrt(x)             = sign(x)⋅exp2(log2(abs(x)) / 3)
+The transcendental and trigonometric operators deliver faithful rounding instead of RNTE,
+meaning that every finite result is one of the two representable values bracketing the exact result.
+A result differs from round-to-nearest only near a midpoint between adjacent representable values, as illustrated:
 
-    tan(x)              = sin(x) / cos(x)
-    atan(x)             = atan2(x, 1)
-    asin(x)             = atan2(x, sqrt(1 - x⋅x))                       ; x ∈ [-1,+1]
-    acos(x)             = atan2(sqrt(1 - x⋅x), x)                       ; x ∈ [-1,+1]
-    h                   = max(abs(x), abs(y))
-    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; x, y finite; also see zkf.Cordic
+<img src="docs/zkf_transcendental_accuracy.svg">
 
-    min(a,b), max(a,b)  = zkf.Cmp(a,b)
-    clamp(x, lo, hi)    = min(max(x, lo), hi)
-    lerp(a,b,t)         = fma(t, b - a, a)
-    deadzone(x,d)       = sign(x)⋅max(abs(x) - d, 0)
-    smoothstep(t)       = t⋅t⋅(3 - 2⋅t); where t is clamped to [0,1]
+### Non-finite case handling
 
-    dot(a,b)            = sum_i a[i]⋅b[i]                               ; use zkf.Fma chains
-    norm2(x)            = dot(x, x)
-    norm(x)             = sqrt(norm2(x))
-    normalize(x)        = x⋅rsqrt(norm2(x) + ε)
-    distance(a,b)       = norm(a - b)
-    distance_2d(a,b)    = hypot(a.x - b.x, a.y - b.y)
-
-    db_power(x)         = 10⋅log10(x)                                   ; x>0
-    db_amplitude(x)     = 20⋅log10(abs(x))                              ; x≠0
-    power_from_db(x)    = exp2(x⋅log2(10) / 10)
-    amp_from_db(x)      = exp2(x⋅log2(10) / 20)
-
-    sinc(x)             = sin(π⋅x) / (π⋅x)                              ; normalized, sinc(0)=1
-    rms(x)              = sqrt(mean(x⋅x))
-    ema(y,x,a)          = fma(a, x - y, y)
-
-    complex_abs(re,im)  = hypot(re, im)
-    arg(re,im)          = atan2(im, re)
-    arg_turns(re,im)    = atan2_turns(im, re)
-    unit_complex(t)     = (cos(t), sin(t))                              ; principal counterpart of arg()
-    polar(r,t)          = (r⋅cos(t), r⋅sin(t))                          ; r≥0
-    complex_mul((ar,ai),(br,bi)) = (ar⋅br - ai⋅bi, ar⋅bi + ai⋅br)
-    rotate2(x,y,t)      = (x⋅cos(t) - y⋅sin(t), x⋅sin(t) + y⋅cos(t))
-
-    relu(x)             = max(x, 0)
-    leaky_relu(x)       = x ≥ 0 ? x : α⋅x
-    hard_sigmoid(x)     = clamp(α⋅x + β, 0, 1)
-    hard_swish(x)       = x⋅hard_sigmoid(x)
-
-    sigmoid(x)          = 1 / (1 + exp2(-x⋅log2(e)))
-    tanh(x)             = 2⋅sigmoid(2⋅x) - 1
-    softplus(x)         = max(x, 0) + log2(1 + exp2(-abs(x)⋅log2(e))) / log2(e)
-    silu(x)             = x⋅sigmoid(x)
-
-    m                   = max_i x[i]
-    logsumexp(x[])      = m + log2(sum_i exp2((x[i] - m)⋅log2(e))) / log2(e)
-    softmax_i(x[])      = exp2((x[i] - m)⋅log2(e)) / sum_j exp2((x[j] - m)⋅log2(e))
-    layer_norm(x)       = (x - mean(x))⋅rsqrt(var(x) + ε)
-
-And so on.
-
-Generic floating-point remainder/modulo computation is not included because the general solution requires iterative
-range reduction which maps poorly onto fixed-latency FPGA cores; instead, one can build the iterative solver using
-the existing basic operators: zkf.Fma, zkf.Divsqrt, etc.
-
-## Semantics
-
-Differences from IEEE 754: no NaN, no subnormals (exponent 0 always encodes +0; finite magnitudes in `(0, min_normal/2)`
-round to +0; magnitudes in `[min_normal/2, min_normal)` round to signed min_normal), no -0, no exceptions,
-overflow produces ±∞.
+Overflow produces ±∞.
 
 Infinity cases that would be NaN in IEEE 754:
 
@@ -204,28 +109,50 @@ Non-NaN infinity cases (same intent as IEEE 754):
 | ±∞⋅±∞               | ±∞  (sign = signs XOR)         |
 | finite≠0⋅±∞         | ±∞  (sign = signs XOR)         |
 
-The subnormal round-to-nearest behavior is illustrated below, compared against the basic flush to zero for any value
-below the min normal. The timing/area cost of both approaches is approximately equivalent while the rounding method
-halves the worst-case error.
+### Tuning knobs
 
-ZKF only has a single canonical zero representation -- the positive zero. However, it is not an error to pass a
-negative zero as an operand; the sign bit of a zero operand is simply ignored. This relaxation enables simplification
-of certain basic operators.
+Operators can be tuned for the target chip with register-stage knobs.
+The default configuration has the least cycle latency; add stages if timing fails to close:
 
-<img src="docs/zkf_underflow_rounding.svg">
+- `stage_input` and `stage_output` -- input and output register stages shielding the operator's internal combinational
+paths from external circuits.
+When zero, internal combinational paths are exposed directly;
+when greater than one, dummy stages are added which helps with retiming or when routing delays dominate.
 
-### Accuracy of the transcendental functions
+- `stage_core` -- a set of the operator's own registers, e.g. `Add.CoreStages.SUM | Add.CoreStages.PACK`;
+operators made of parts take one knob per part, such as the product's `stage_core_mul`.
+The docstrings describe the knobs of each operator.
 
-The exp2 and log2 transcendentals deliver faithful rounding: every finite result is one of the two representable
-values bracketing the exact result.
+The `timing` property gives the latency and the initiation interval (II) of the chosen staging configuration.
 
-A result differs from round-to-nearest only near a midpoint between adjacent representable values.
-`zkf.Cordic` carries the same faithful-rounding contract.
+Operators that multiply take `wmultiplier`, the operand width of the target's multipliers (16, 18 and 24 bits are
+common in modern FPGAs; in the absence of hard DSP blocks, any value that the library accepts will do).
 
-<img src="docs/zkf_transcendental_accuracy.svg">
+`rom_attrs` and `mul_attrs` pass synthesis attributes to the lookup tables and to the products' operand registers,
+e.g. `rom_attrs={"rom_style": "block"}`.
 
-**ATTENTION:** the lookup tables of `zkf.Exp2` and `zkf.Log2` must be mapped to ROM; if fabric usage or timing looks
-unreasonable, check the synthesis settings first, and if necessary give `rom_attrs`.
+Use `Pipe` to delay your own control or sideband signals by an operator's latency so they land with its output.
+
+### Guarantees
+
+The numerical accuracy is guaranteed regardless of the chosen options (e.g., stage knobs, `wmultiplier`, `fast`, etc.).
+For the RNTE and exact operators it means that the results stay the same and are strictly reproducible
+since each allows only a single valid result for any operand combination.
+For the faithfully rounded operators, changing any option may produce different but still faithful results.
+
+A mode is computed identically by every build that contains it; a single-mode instance, a both-modes instance and
+`evaluate` always agree bit for bit, provided no other options are changed.
+
+The accuracy guarantees naturally do not extend to options that disable specific outputs;
+for example, `Cordic(hypot=False)` disables the hypotenuse computation, freezing the corresponding output at `-inf`.
+
+### Caveats
+
+The lookup tables of `Exp2` and `Log2` should be mapped to ROM; if fabric usage or timing looks unreasonable,
+check the synthesis settings first, and if necessary give `rom_attrs`.
+
+Assert `rst` for a cycle before the first transaction of the printed Verilog (see `Block.compile`).
+Read as SystemVerilog (Icarus `-g2012`, which cocotb uses), it needs `rst` to rise after time zero.
 
 ## Sizing the exponent and the significand (wexp/wman)
 
@@ -298,6 +225,94 @@ Common non-IEEE formats:
 - wexp=7  wman=17: AMD/ATI fp24-like
 - wexp=8  wman=8:  bfloat16-like
 - wexp=8  wman=11: NVIDIA TF32-like (19 bits)
+
+## Derived functions
+
+The basic modules available enable efficient computation of a large set of derived functions; examples follow.
+Bare angle functions follow the usual radian convention; helpers suffixed `_turns` expose ZKF's native turn
+representation.
+
+    sin_turns(x), cos_turns(x)  = zkf.Cordic(x)                     ; rotation; x in turns
+    atan2_turns(y,x)            = zkf.Cordic(y, x)                  ; vectoring; angle in turns ∈ (-0.5,0.5]
+    atan_turns(x)               = atan2_turns(x, 1)
+
+    normalize_angle(x)          = x - 2π⋅floor((x + π) / (2π))      ; [-π,+π)
+    normalize_angle_turns(t)    = t - floor(t + 0.5)                ; [-0.5,+0.5)
+
+    INV_TAU = 1 / (2π)
+    radians_to_turns(x) = x⋅INV_TAU
+
+    sin(x), cos(x)      = sin_turns(radians_to_turns(x)), cos_turns(radians_to_turns(x))
+    atan2(y,x)          = 2π⋅atan2_turns(y, x)
+
+    sqrt(x)             = zkf.Divsqrt(x)
+    exp(x)              = exp2(x⋅log2(e))
+    ln(x)               = log2(x) / log2(e)
+    log10(x)            = log2(x) / log2(10)
+    log_b(x)            = log2(x) / log2(b)     ; x>0, b>0, b≠1
+    pow(a,b)            = exp2(b⋅log2(a))       ; real-valued identity for a>0
+    recip(x)            = 1 / x
+    rsqrt(x)            = exp2(log2(x)⋅-2^-1)   ; x>0; avoids division
+    rsqrt(x)            = sqrt(1 / x)           ; x>0, 1/x normal; faithful, 0.85 ULP max at wman=18
+    cbrt(x)             = sign(x)⋅exp2(log2(abs(x)) / 3)
+
+    tan(x)              = sin(x) / cos(x)
+    atan(x)             = atan2(x, 1)
+    asin(x)             = atan2(x, sqrt(1 - x⋅x))                       ; x ∈ [-1,+1]
+    acos(x)             = atan2(sqrt(1 - x⋅x), x)                       ; x ∈ [-1,+1]
+    h                   = max(abs(x), abs(y))
+    hypot(x,y)          = h⋅sqrt((x/h)⋅(x/h) + (y/h)⋅(y/h))             ; x, y finite; also see zkf.Cordic
+
+    min(a,b), max(a,b)  = zkf.Cmp(a,b)
+    clamp(x, lo, hi)    = min(max(x, lo), hi)
+    lerp(a,b,t)         = fma(t, b - a, a)
+    deadzone(x,d)       = sign(x)⋅max(abs(x) - d, 0)
+    smoothstep(t)       = t⋅t⋅(3 - 2⋅t); where t is clamped to [0,1]
+
+    dot(a,b)            = sum_i a[i]⋅b[i]                               ; use zkf.Fma chains
+    norm2(x)            = dot(x, x)
+    norm(x)             = sqrt(norm2(x))
+    normalize(x)        = x⋅rsqrt(norm2(x) + ε)
+    distance(a,b)       = norm(a - b)
+    distance_2d(a,b)    = hypot(a.x - b.x, a.y - b.y)
+
+    db_power(x)         = 10⋅log10(x)                                   ; x>0
+    db_amplitude(x)     = 20⋅log10(abs(x))                              ; x≠0
+    power_from_db(x)    = exp2(x⋅log2(10) / 10)
+    amp_from_db(x)      = exp2(x⋅log2(10) / 20)
+
+    sinc(x)             = sin(π⋅x) / (π⋅x)                              ; normalized, sinc(0)=1
+    rms(x)              = sqrt(mean(x⋅x))
+    ema(y,x,a)          = fma(a, x - y, y)
+
+    complex_abs(re,im)  = hypot(re, im)
+    arg(re,im)          = atan2(im, re)
+    arg_turns(re,im)    = atan2_turns(im, re)
+    unit_complex(t)     = (cos(t), sin(t))                              ; principal counterpart of arg()
+    polar(r,t)          = (r⋅cos(t), r⋅sin(t))                          ; r≥0
+    complex_mul((ar,ai),(br,bi)) = (ar⋅br - ai⋅bi, ar⋅bi + ai⋅br)
+    rotate2(x,y,t)      = (x⋅cos(t) - y⋅sin(t), x⋅sin(t) + y⋅cos(t))
+
+    relu(x)             = max(x, 0)
+    leaky_relu(x)       = x ≥ 0 ? x : α⋅x
+    hard_sigmoid(x)     = clamp(α⋅x + β, 0, 1)
+    hard_swish(x)       = x⋅hard_sigmoid(x)
+
+    sigmoid(x)          = 1 / (1 + exp2(-x⋅log2(e)))
+    tanh(x)             = 2⋅sigmoid(2⋅x) - 1
+    softplus(x)         = max(x, 0) + log2(1 + exp2(-abs(x)⋅log2(e))) / log2(e)
+    silu(x)             = x⋅sigmoid(x)
+
+    m                   = max_i x[i]
+    logsumexp(x[])      = m + log2(sum_i exp2((x[i] - m)⋅log2(e))) / log2(e)
+    softmax_i(x[])      = exp2((x[i] - m)⋅log2(e)) / sum_j exp2((x[j] - m)⋅log2(e))
+    layer_norm(x)       = (x - mean(x))⋅rsqrt(var(x) + ε)
+
+And so on.
+
+Generic floating-point remainder/modulo computation is not included because the general solution requires iterative
+range reduction which maps poorly onto fixed-latency FPGA cores; instead, one can build the iterative solver using
+the existing basic operators: Fma, Divsqrt, etc.
 
 ## TODO
 
