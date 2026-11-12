@@ -1,6 +1,7 @@
 """
 The compiled text of every spec of the catalog is the design that the simulations check: Yosys proves the core that it
-wraps equivalent to the Amaranth design, and its top module only hands its ports to the core.
+wraps equivalent to the Amaranth design, and its top module only hands its ports to the core. No register of it has
+an initial value.
 """
 
 import json
@@ -21,16 +22,18 @@ PREPARE = "proc\nmemory\nflatten\nopt_clean\n"
 pytestmark = pytest.mark.skipif(YOSYS is None, reason="no Yosys of the system")
 
 
+@pytest.mark.parametrize("proc_nomux", [True, False], ids=["nomux", "mux"])
 @pytest.mark.parametrize("name", CATALOG)
-def test_the_compiled_text_is_the_design(name: str, tmp_path: Path) -> None:
+def test_the_compiled_text_is_the_design(name: str, proc_nomux: bool, tmp_path: Path) -> None:
     assert YOSYS is not None
     spec = CATALOG[name]
     core = f"{name}_core"
     (tmp_path / "gold.il").write_text(rtlil.convert(spec.component(), name="gold", emit_src=False))
-    (tmp_path / "gate.v").write_text(spec.compile())
+    (tmp_path / "gate.v").write_text(spec.compile(proc_nomux=proc_nomux))
     top = f"select {name}\nwrite_json -selected top.json\nselect -clear\n"
     (tmp_path / "prove.ys").write_text(
-        f"read_verilog gate.v\n{top}hierarchy -check -top {core}\n{PREPARE}write_json gate.json\nrename {core} gate\n"
+        f"read_verilog gate.v\n{top}hierarchy -check -top {core}\nproc\nselect -assert-none a:init\n{PREPARE}"
+        f"write_json gate.json\nrename {core} gate\n"
         "design -stash gate\n"
         f"read_rtlil gold.il\nhierarchy -check -top gold\n{PREPARE}design -copy-from gate -as gate gate\n"
         "equiv_make gold gate equiv\nhierarchy -top equiv\n"

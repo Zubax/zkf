@@ -8,6 +8,7 @@ from collections.abc import Callable
 from typing import Any
 
 import pytest
+from amaranth.back import verilog
 from amaranth.hdl import Shape
 
 import zkf
@@ -102,7 +103,7 @@ def test_the_top_of_the_text() -> None:
     """The ports of the signature, a signed one declared so, behind `clk` and `rst` where the model is clocked."""
     pipe = "my_" + Pipe(w=1).name
     assert Pipe(w=1).compile("my_").splitlines()[:12] == [
-        f"// Produced by ZKF {zkf.__version__}, author: Zubax Robotics",
+        f"// Produced by ZKF {zkf.__version__}, author: Zubax Robotics <sales@zubax.com>",
         "// pipe:",
         "//   w: 1",
         "//   n: 0",
@@ -129,6 +130,35 @@ def test_the_top_of_the_text() -> None:
         "(.clk(clk), .rst(rst), .in_valid(in_valid), .a(a), .k(k), .out_valid(out_valid), .y(y));",
     ]
     assert "  output wire signed [3:0] y;" in Ilog2(ZkfFormat(3, 4), wint=4).compile().splitlines()
+
+
+def test_the_yosys_is_the_first_of_amaranth_use_yosys_that_is_there(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A system Yosys by `YOSYS`, a relative path too, else Amaranth's; what a failing one says is in the error; none."""
+    pipe = Pipe(w=1, n=1)
+    ran, system, broken = tmp_path / "ran", tmp_path / "yosys", tmp_path / "broken"
+    system.write_text(f'#!/bin/sh\ntouch {ran}\nexec {sys.executable} -m amaranth_yosys "$@"\n')
+    broken.write_text("#!/bin/sh\necho no such pass >&2\nexit 1\n")
+    system.chmod(0o755)
+    broken.chmod(0o755)
+    monkeypatch.setenv("AMARANTH_USE_YOSYS", "builtin")
+    text = pipe.compile()
+    monkeypatch.delenv("AMARANTH_USE_YOSYS")
+    monkeypatch.setenv("YOSYS", str(system))
+    assert pipe.compile() == text and ran.exists()
+    ran.unlink()
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("YOSYS", "./yosys")
+    assert pipe.compile() == text and ran.exists()
+    monkeypatch.setenv("YOSYS", str(broken))
+    with pytest.raises(verilog.YosysError, match="^no such pass$"):
+        pipe.compile()
+    monkeypatch.setenv("YOSYS", str(tmp_path / "absent"))
+    assert pipe.compile() == text
+    monkeypatch.setenv("AMARANTH_USE_YOSYS", "javascript")
+    with pytest.raises(verilog.YosysError, match="^no Yosys"):
+        pipe.compile()
 
 
 def test_names_are_distinct() -> None:

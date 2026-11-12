@@ -1,13 +1,20 @@
-"""The configuration base classes, the float port layout, and the register-stage helpers."""
+"""The configuration base classes and their Verilog, the float port layout, and the register-stage helpers."""
 
 import enum
 import hashlib
+import importlib.util
+import os
+import shutil
+import subprocess
+import sys
+import tempfile
 from abc import ABC, abstractmethod
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
+from pathlib import Path
 from typing import Any, ClassVar
 
-from amaranth.back import verilog
+from amaranth.back import rtlil, verilog
 from amaranth.hdl import Cat, Const, Module, Shape, ShapeLike, Signal, Value, ValueLike
 from amaranth.lib import data, wiring
 
@@ -162,12 +169,19 @@ class Block(ABC):
         raises `ValueError`, even on a port that a fixed mode ignores.
         """
 
-    def compile(self, prefix: str = "") -> str:
+    def compile(self, prefix: str = "", *, proc_nomux: bool | None = None) -> str:
         """
         Verilog of this configuration and every module under it, each named `prefix + self.name` or prefixed by it,
         headed by a line naming ZKF, its version and its author, and a table of the knobs and the timing. The top
         module has the ports of `signature` in order, after `clk` and `rst` if `clocked`, with signed ports declared
-        signed, which Amaranth cannot do; it wraps the Amaranth output as the instance `core`.
+        signed, which Amaranth cannot do; it wraps the Amaranth design as the instance `core`, with no initial value of
+        any flip-flop (ROM contents are kept), so that synthesis prunes what constant inputs leave unused. It is printed
+        by the first Yosys that `AMARANTH_USE_YOSYS` names and that is there: by default a system one (`YOSYS`, or
+        `yosys` on the path), then Amaranth's own.
+
+        `proc_nomux` is `-nomux` of the Yosys `proc` that prints it: with it a switch is printed as an `always @*` with a
+        `case`, without it as comparators feeding a multiplexer, which some tools map better and others worse. None
+        takes the default, on, as Amaranth's `verilog.convert` does. It is not a stable API: it may change or go.
         """
         from . import __version__
 
@@ -178,7 +192,7 @@ class Block(ABC):
             kind = ("output" if member.flow == wiring.Out else "input") + " wire" + " signed" * shape.signed
             ports.append((port, kind + f" [{shape.width - 1}:0]" * (shape.width > 1)))
         top = [
-            f"// Produced by ZKF {__version__}, author: Zubax Robotics",
+            f"// Produced by ZKF {__version__}, author: Zubax Robotics <sales@zubax.com>",
             f"// {self.operator}:",
             *(f"//   {knob}: {value}" for knob, value in self.config.items()),
             f"//   timing: {self.timing}",
@@ -186,8 +200,8 @@ class Block(ABC):
         ]
         top += [f"  {kind} {port};" for port, kind in ports]
         top += [f"  {name}_core core ({', '.join(f'.{port}({port})' for port, _ in ports)});", "endmodule", ""]
-        core = verilog.convert(self.component(), name=f"{name}_core", emit_src=False, strip_internal_attrs=True)
-        return "\n".join(top) + core
+        nomux = True if proc_nomux is None else proc_nomux
+        return "\n".join(top) + _verilog(self.component(), f"{name}_core", nomux=nomux)
 
 
 @dataclass(frozen=True, eq=False)
@@ -244,3 +258,42 @@ def bundle(layout: data.StructLayout, **fields: ValueLike) -> data.View:
     """A view of `layout` built from its fields by name, each as wide as its member."""
     assert all(len(Value.cast(fields[name])) == Shape.cast(shape).width for name, shape in layout.members.items())
     return layout(Cat(*(fields[name] for name in layout.members)))
+
+
+_STRIPPED = ("generator", "top", "src", "amaranth.hierarchy", "amaranth.decoding")
+"""The attributes that `verilog.convert(strip_internal_attrs=True)` removes."""
+
+
+def _verilog(component: wiring.Component, name: str, *, nomux: bool) -> str:
+    """
+    `component` as the Verilog module `name` that `Block.compile` describes: with `nomux` printed as `verilog.convert`
+    prints it, less the initial values, which it cannot leave out.
+    """
+    removed = " ".join(f"-remove {attribute}" for attribute in _STRIPPED)
+    script = [
+        "read_rtlil core.il",
+        "proc -norom" + " -nomux" * nomux,
+        "memory_collect",
+        f"attrmap -remove init {removed}",
+        f"attrmap -modattr {removed}",
+        # Without `-nomux`, `-norename` would keep a mux's function named with a `$`, which Icarus takes for a system
+        # function.
+        "write_verilog" + " -norename" * nomux + " core.v",
+    ]
+    with tempfile.TemporaryDirectory() as directory:
+        (Path(directory) / "core.il").write_text(rtlil.convert(component, name=name, emit_src=False))
+        # Amaranth's own Yosys sees its working directory only.
+        done = subprocess.run([*_yosys(), "-q", "-p", "; ".join(script)], cwd=directory, capture_output=True, text=True)
+        if done.returncode:
+            raise verilog.YosysError(done.stderr.strip())
+        return (Path(directory) / "core.v").read_text()
+
+
+def _yosys() -> list[str]:
+    """The command of the Yosys that `Block.compile` takes."""
+    for clause in os.environ.get("AMARANTH_USE_YOSYS", "system,builtin").split(","):
+        if clause == "system" and (found := shutil.which(os.environ.get("YOSYS", "yosys"))):
+            return [os.path.abspath(found)]  # the run's working directory is another
+        if clause == "builtin" and importlib.util.find_spec("amaranth_yosys"):
+            return [sys.executable, "-m", "amaranth_yosys"]
+    raise verilog.YosysError("no Yosys that AMARANTH_USE_YOSYS names is there")
