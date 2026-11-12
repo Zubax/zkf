@@ -108,9 +108,9 @@ CATALOG: dict[str, Block] = {
         # RAM.
         _large(_grade(Divsqrt(ZkfFormat(8, 27), stage_core=Divsqrt.CoreStages.FIRST_DIGIT), ecp5_grade=7)),
         Divsqrt(ZkfFormat(8, 27), fast=False),
-        # On speed grade 6 nextpnr's placements make 91.8 to 97.6 MHz with FIRST_DIGIT; on Cyclone IV E C8 Quartus makes
-        # 94.5, in the digits' loop, 96.0 with FIRST_DIGIT.
-        _large(_grade(Divsqrt(F36), ecp5_grade=7, cyclone4_grade=7)),
+        # On speed grade 6 nextpnr's placements make 91.8 to 97.6 MHz with FIRST_DIGIT, and on grade 7 its seeds 98.8 to
+        # 106.4 without; on Cyclone IV E C8 Quartus makes 94.5, in the digits' loop, 96.0 with FIRST_DIGIT.
+        _large(_grade(Divsqrt(F36), ecp5_grade=8, cyclone4_grade=7)),
         # Folded, nextpnr's placements make 99.9 to 107.3 MHz.
         _large(Divsqrt(F36, stage_core=Divsqrt.CoreStages.FIRST_DIGIT, fast=False)),
         # Folded, nextpnr's placements make 99.3 to 101.1 MHz; on Cyclone IV E C8 Quartus makes 99.4, in the digits'
