@@ -357,7 +357,7 @@ def vectored(model: Cordic, y: int, x: int) -> tuple[float, bool, bool]:
 def turns(vectoring: bool, fmt: ZkfFormat, operands: Any) -> tuple[float, int, int, int, object]:
     """The worst error, the results that are wrong, those that are not nearest, the count, and the first wrong."""
     worst, wrong, differing, count, first = 0.0, 0, 0, 0, None
-    model = Cordic(fmt, stage_core_mul=3, wmultiplier=18, mode=int(vectoring))
+    model = Cordic(fmt, stage_core_mul=3, wmultiplier=18).specialized(vectoring=vectoring)
     for operand in operands:
         error, ok, differs = vectored(model, *operand) if vectoring else rotated(model, operand)
         count += 1

@@ -20,16 +20,26 @@ ZKF is written in Amaranth and can be integrated into Amaranth designs as well a
 import zkf
 
 mul = zkf.Mul(zkf.ZkfFormat(8, 24), wmultiplier=18, stage_core_mul=2)  # 8b exponent, 24b mantissa, 18b multipliers
-mul.timing.latency           # cycles from in_valid to out_valid
+latency = mul.timing.latency # cycles from in_valid to out_valid
 verilog = mul.compile()      # generate Verilog source
 component = mul.component()  # or the Amaranth component, for an Amaranth design or its simulator
 a, b = mul.fmt.encode(1.5), mul.fmt.encode(-2)
 mul.evaluate(a, b)           # what the hardware gives for these operands exactly
+
+cordic = zkf.Cordic(zkf.ZkfFormat(6, 18), wmultiplier=18) # rotation and vectoring, chosen at runtime per transaction
+latency = cordic.timing                                   # the latency of each mode, by the value of `vectoring`
+atan2 = cordic.specialized(vectoring=True, length=False)  # the angle alone, at the latency of cordic.timing[1]
+atan2.compile()                                           # without the rotation and the length, and their ports
 ```
 
 Most operators are zero-bubble throughput-1 pipelines with the conventional `in_valid`/`out_valid` interface;
 `Cordic` is FSM-based and adds the `in_ready`/`out_ready` handshake.
 Every operator has a fixed data-independent latency, known from its configuration for each mode (see `.timing`).
+
+Some complex operators (e.g., `Cordic`, `Divsqrt`, etc) compute one of several modes,
+chosen per transaction by an input port; `specialized(...)` builds fewer of them.
+A specialized single-mode build has no mode select port, nor any port that the selected modes neither read nor drive.
+A mode's latency does not depend on which other modes are built.
 
 The two main parameters are `wexp` and `wman` setting the bit width of the biased exponent and the significand;
 the most significant bit of the significand is not stored, but there is a sign bit,
@@ -140,11 +150,9 @@ For the RNTE and exact operators it means that the results stay the same and are
 since each allows only a single valid result for any operand combination.
 For the faithfully rounded operators, changing any option may produce different but still faithful results.
 
-A mode is computed identically by every build that contains it; a single-mode instance, a both-modes instance and
-`evaluate` always agree bit for bit, provided no other options are changed.
-
-The accuracy guarantees naturally do not extend to options that disable specific outputs;
-for example, `Cordic(hypot=False)` disables the hypotenuse computation, freezing the corresponding output at `-inf`.
+A mode is computed identically by every build that contains it and by `evaluate`, provided no other options are changed.
+The accuracy guarantees naturally do not extend to an output that the transaction's mode does not drive,
+such as `r1` of a vectoring without the length (see `Cordic.specialized`).
 
 ### Caveats
 

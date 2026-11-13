@@ -33,6 +33,7 @@ from zkf import (
     Pipe,
     Resize,
     Rint,
+    RoundMode,
     Timing,
     UnsupportedFormat,
     ZkfFormat,
@@ -244,14 +245,12 @@ def test_refusals() -> None:
     formats: tuple[Callable[[], Operator], ...] = (
         lambda: Exp2(ZkfFormat(6, 9), wmultiplier=18),
         lambda: Log2(ZkfFormat(20, 18), wmultiplier=18),
-        lambda: Cordic(ZkfFormat(4, 18), wmultiplier=18, stage_core_mul=3, mode=1),
         lambda: MulIlog2(F18, wk=0),
         lambda: FromInt(F18, wint=1),
     )
     for build in formats:
         with pytest.raises(UnsupportedFormat):
             build()
-    Cordic(ZkfFormat(4, 18), stage_core_mul=3, wmultiplier=18, mode=0)
 
 
 def widths(model: Block) -> dict[str, tuple[str, int, bool]]:
@@ -313,6 +312,31 @@ def test_ports() -> None:
         "r1": (o, f, False),
         "quadrant": (o, 2, False),
     }
+
+
+def test_specialized() -> None:
+    """
+    A specialization lacks the selecting input and the ports that it leaves unread or undriven; each call starts from
+    the default, and each build has its name.
+    """
+    cordic, divsqrt, rint = Cordic(F18, stage_core_mul=3, wmultiplier=18), Divsqrt(F18), Rint(F18)
+
+    def lacks(model: Block, alone: Block, *ports: str) -> bool:
+        return widths(alone) == {name: port for name, port in widths(model).items() if name not in ports}
+
+    assert lacks(cordic, cordic.specialized(vectoring=False), "vectoring", "b")
+    assert lacks(cordic, cordic.specialized(vectoring=True), "vectoring", "quadrant")
+    assert lacks(cordic, cordic.specialized(vectoring=True, length=False), "vectoring", "r1", "quadrant")
+    assert lacks(cordic, cordic.specialized(length=False))
+    assert lacks(divsqrt, divsqrt.specialized(op_sqrt=False), "op_sqrt")
+    assert lacks(divsqrt, divsqrt.specialized(op_sqrt=True), "op_sqrt", "b")
+    assert lacks(rint, rint.specialized(round_mode=RoundMode.CEIL), "round_mode")
+    assert cordic.specialized(vectoring=True).specialized() == cordic
+    rotation = cordic.specialized(vectoring=False)
+    assert cordic.specialized(vectoring=False, length=False) == rotation
+    assert cordic.specialized(vectoring=0, length=False) == rotation  # type: ignore[arg-type]
+    builds = {cordic.specialized(vectoring=v, length=n) for v in (None, False, True) for n in (False, True)}
+    assert len(builds) == len({build.name for build in builds}) == 5
 
 
 def test_one_configuration_is_one_model() -> None:

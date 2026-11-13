@@ -1,9 +1,9 @@
 import enum
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
-from amaranth.hdl import Cat, Const, Module, Mux, Signal, signed
+from amaranth.hdl import Cat, Const, Module, Mux, Signal, signed, Value
 from amaranth.lib import data, wiring
 from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
@@ -30,8 +30,9 @@ class RintResult(NamedTuple):
 @dataclass(frozen=True, kw_only=True, eq=False)
 class Rint(Operator):
     """
-    `a` rounded to an integer by `round_mode`, as `y_float` of the format of `a` and as `y_int`, a signed `wint`-bit
-    integer. An infinity and a zero result come out canonical, and a rounded value beyond the format gives `+-inf`;
+    `a` rounded to an integer by `round_mode` unless `specialized`, as `y_float` of the format of `a` and as `y_int`,
+    a signed `wint`-bit integer.
+    An infinity and a zero result come out canonical, and a rounded value beyond the format gives `+-inf`;
     `y_int` saturates on an infinity and on overflow.
     """
 
@@ -49,6 +50,7 @@ class Rint(Operator):
     stage_core: CoreStages = CoreStages.NONE
     """See `Rint.CoreStages`."""
     stage_output: int = 0
+    _round_mode: RoundMode | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -58,6 +60,10 @@ class Rint(Operator):
             raise ValueError(f"stage_output={self.stage_output} is negative")
         if self.wint < 2:
             raise UnsupportedFormat(f"WINT={self.wint} is below 2")
+
+    def specialized(self, *, round_mode: RoundMode) -> Rint:
+        """This configuration built for one rounding."""
+        return replace(self, _round_mode=RoundMode(round_mode))
 
     @property
     def timing(self) -> Timing:
@@ -70,7 +76,7 @@ class Rint(Operator):
             {
                 "in_valid": In(1),
                 "a": In(f),
-                "round_mode": In(RoundMode),
+                **({"round_mode": In(RoundMode)} if self._round_mode is None else {}),
                 "out_valid": Out(1),
                 "y_float": Out(f),
                 "y_int": Out(signed(self.wint)),
@@ -83,8 +89,8 @@ class Rint(Operator):
     def evaluate(self, a: Zkf, round_mode: RoundMode) -> RintResult:
         if a.fmt != self.fmt:
             raise ValueError(f"an operand of {a.fmt} where {self.fmt} is due")
-        if not 0 <= round_mode <= 3:
-            raise ValueError(f"round_mode={round_mode} is outside 0..3")
+        if round_mode not in (RoundMode if self._round_mode is None else (self._round_mode,)):
+            raise ValueError(f"round_mode={round_mode} is not served")
         int_max = (1 << (self.wint - 1)) - 1
         int_min = -int_max - 1
         if a.is_inf:
@@ -96,7 +102,8 @@ class Rint(Operator):
 class _Rint(wiring.Component):
     in_valid: Signal
     a: FloatView
-    round_mode: Signal
+    round_mode: Value
+    """The port, or the rounding that the model is specialized to."""
     out_valid: Signal
     y_float: FloatView
     y_int: Signal
@@ -104,6 +111,8 @@ class _Rint(wiring.Component):
     def __init__(self, model: Rint) -> None:
         self._model = model
         super().__init__(model.signature)
+        if model._round_mode is not None:
+            self.round_mode = Const(model._round_mode, RoundMode)
 
     def elaborate(self, platform: object) -> Module:
         m = Module()

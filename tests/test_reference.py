@@ -24,7 +24,7 @@ import test_mul
 from _ieee import BINARY32, BINARY64, of_numpy, to_numpy
 from _operands import SEED
 from zkf import AbsNeg, Add, Cmp, Cordic, Divsqrt, Exp2, Finite, Fma, FromInt, Ilog2, Log2, Mul, MulIlog2, Pipe
-from zkf import Resize, Rint, RoundMode, UnsupportedFormat, Zkf, ZkfFormat
+from zkf import Operator, Resize, Rint, RoundMode, UnsupportedFormat, Zkf, ZkfFormat
 from zkf.__main__ import main
 from zkf._cordic import _atan2_canon_half
 
@@ -322,7 +322,7 @@ def test_a_float_of_another_format_is_refused() -> None:
         Cordic(fmt, stage_core_mul=3, wmultiplier=18),
     )
     divsqrt, mul_ilog2, rint = Divsqrt(fmt), MulIlog2(fmt), Rint(fmt)
-    root, rotation = Divsqrt(fmt, mode=1), Cordic(fmt, stage_core_mul=3, wmultiplier=18, mode=0)
+    root, rotation = divsqrt.specialized(op_sqrt=True), cordic.specialized(vectoring=False)
     evaluations: list[tuple[Callable[..., object], int]] = [
         (AbsNeg(fmt).evaluate, 1),
         (Add(fmt).evaluate, 2),
@@ -343,8 +343,8 @@ def test_a_float_of_another_format_is_refused() -> None:
         (lambda a, b: cordic.evaluate(1, a, b, oracle=True), 2),
         (lambda a, b: divsqrt.evaluate(0, a, b), 2),
         (lambda a, b: divsqrt.evaluate(1, a, b), 2),
-        (lambda a, b: root.evaluate(0, a, b), 2),
-        (lambda a, b: rotation.evaluate(1, a, b), 2),
+        (lambda a, b: root.evaluate(1, a, b), 2),
+        (lambda a, b: rotation.evaluate(0, a, b), 2),
     ]
     for evaluate, arity in evaluations:
         evaluate(*[fmt.encode(3)] * arity)
@@ -380,22 +380,27 @@ def test_an_integer_that_its_port_does_not_hold_is_refused() -> None:
     assert (pipe.evaluate(0), pipe.evaluate(31)) == (0, 31)
 
 
-def test_a_port_that_a_fixed_mode_ignores() -> None:
+def test_a_specialization() -> None:
     """
-    `op_sqrt` and `vectoring` at a fixed mode, and `b` of a root and of a rotation: what the port cannot hold is
-    refused, and what it holds changes no result.
+    A specialization gives what the operator gives in what it builds and refuses the rest; `b` of a root and of a
+    rotation changes no result.
     """
     fmt = ZkfFormat(6, 18)
     a, b, c = fmt.encode(Fraction(3, 8)), fmt.encode(5), fmt.encode(-7)
-    for mode in (0, 1):
-        for fixed, either in (
-            (Divsqrt(fmt, mode=mode), Divsqrt(fmt)),
-            (Cordic(fmt, stage_core_mul=3, wmultiplier=18, mode=mode), Cordic(fmt, stage_core_mul=3, wmultiplier=18)),
-        ):
-            assert fixed.evaluate(0, a, b) == fixed.evaluate(1, a, b) == either.evaluate(mode, a, b)
-            with pytest.raises(ValueError):
-                fixed.evaluate(2, a, b)
-    divsqrt, cordic = Divsqrt(fmt), Cordic(fmt, stage_core_mul=3, wmultiplier=18)
+    divsqrt, cordic, rint = Divsqrt(fmt), Cordic(fmt, stage_core_mul=3, wmultiplier=18), Rint(fmt)
+    for code in (0, 1):
+        fixed: list[tuple[Operator, Operator, str]] = [
+            (divsqrt.specialized(op_sqrt=bool(code)), divsqrt, "op_sqrt"),
+            (cordic.specialized(vectoring=bool(code)), cordic, "vectoring"),
+        ]
+        for alone, either, port in fixed:
+            assert alone.evaluate(code, a, b) == either.evaluate(code, a, b)
+            with pytest.raises(ValueError, match=f"^{port}={1 - code} is not served$"):
+                alone.evaluate(1 - code, a, b)
+    for mode in RoundMode:
+        assert rint.specialized(round_mode=mode).evaluate(a, mode) == rint.evaluate(a, mode)
+        with pytest.raises(ValueError, match=f"^round_mode={(mode + 1) % 4} is not served$"):
+            rint.specialized(round_mode=mode).evaluate(a, RoundMode((mode + 1) % 4))
     assert divsqrt.evaluate(1, a, b) == divsqrt.evaluate(1, a, c)
     assert cordic.evaluate(0, a, b) == cordic.evaluate(0, a, c)
     assert cordic.evaluate(0, a, b, oracle=True) == cordic.evaluate(0, a, c, oracle=True)

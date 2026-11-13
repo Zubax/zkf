@@ -27,6 +27,7 @@ from zkf._cordic import (
     _constants,
     _geometry,
     _iterate,
+    _mode,
     _vector_residual,
 )
 from zkf._pmul import positions
@@ -37,6 +38,8 @@ ROTATION = (
 )
 VECTORING = Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.SHIFTED | Cordic.CoreStages.ANGLE
 LACKED = (VECTORING, ROTATION, Cordic.CoreStages.NONE)
+SPECIALIZED: tuple[dict[str, Any], ...] = ({"vectoring": False}, {"vectoring": True}, {})
+"""What the rows' `mode` builds: a rotation, a vectoring, both."""
 
 SHORT = {
     "si": "stage_input",
@@ -45,7 +48,6 @@ SHORT = {
     "so": "stage_output",
     "fa": "fast",
     "rs": "rotation_seed",
-    "hy": "hypot",
 }
 """The knobs as the rows name them."""
 
@@ -58,11 +60,11 @@ def synthesized(wman: int, mode: int = 2) -> dict[str, Any]:
     """
     width = 18 if wman <= 24 else 36
     found = [model for model in CATALOG.values() if isinstance(model, Cordic) and model.fmt.wman == width]
-    own = [model for model in found if model.mode == mode] or found
+    own = [model for model in found if _mode(model) == mode] or found
     (sm,) = {model.stage_core_mul for model in own}
     fa = any(model.fast for model in own)
     sm = min(sm, len(positions(*_geometry(wman).operands(mode), signed=mode != 1, wmultiplier=18)))
-    (rs,) = {model.rotation_seed for model in own if model.mode != 1} or {0}
+    (rs,) = {model.rotation_seed for model in own if _mode(model) != 1} or {0}
     sc = reduce(or_, (model.stage_core for model in found))
     return {"sm": sm, "fa": fa, "rs": rs, "sc": sc}
 
@@ -266,20 +268,24 @@ def operands(
     return [(x, random_bits(fmt.wfull, rng)) for x in xs]
 
 
-def case(model: Cordic, vectoring: bool, a: int, b: int, noise: int = 0) -> Case:
-    """Of one mode; where the model has one mode only, `vectoring` is noise."""
-    fmt, timing = model.fmt, model.timing
+def case(model: Cordic, vectoring: bool, a: int, b: int) -> Case:
+    """Of one mode, on the ports that the model has."""
+    fmt, timing, ports = model.fmt, model.timing, model.signature.members
     latency = (timing if isinstance(timing, Timing) else timing[int(vectoring)]).latency
-    selected = int(vectoring) if model.mode == 2 else noise
-    found = model.evaluate(selected, Zkf(fmt, a), Zkf(fmt, b))
-    return Case({"a": a, "b": b, "vectoring": selected}, found._asdict(), latency)
+    found = model.evaluate(int(vectoring), Zkf(fmt, a), Zkf(fmt, b))
+    taken = {"a": a, "b": b, "vectoring": int(vectoring)}
+    given = {name: value for name, value in found._asdict().items() if name in ports}
+    return Case({name: value for name, value in taken.items() if name in ports}, given, latency)
 
 
 def build(fmt: ZkfFormat, mode: int = 2, **short: Any) -> Cordic:
-    """The model, its knobs in short; `wm` is a multiplier width other than 18."""
-    width = short.pop("wm", 18)
+    """
+    The model, its knobs in short; `mode` names `SPECIALIZED`, `hy` is the length, and `wm` a multiplier width other
+    than 18.
+    """
+    width, length = short.pop("wm", 18), short.pop("hy", True)
     knobs = {SHORT[name]: value for name, value in short.items()}
-    return Cordic(fmt, mode=mode, wmultiplier=width, **knobs)
+    return Cordic(fmt, wmultiplier=width, **knobs).specialized(**SPECIALIZED[mode], length=length)
 
 
 def cases(
@@ -288,12 +294,9 @@ def cases(
     """Of every mode that the model has, shuffled, or under `alternate` one of each mode in turn while both last."""
     rng = np.random.default_rng(seed + 2)
     by_mode = [
-        [
-            case(model, vectoring, a, b, int(rng.integers(0, 2)))
-            for a, b in operands(model.fmt, vectoring, kind, shard, shards, seed)
-        ]
+        [case(model, vectoring, a, b) for a, b in operands(model.fmt, vectoring, kind, shard, shards, seed)]
         for vectoring in (False, True)
-        if model.mode in (2, int(vectoring))
+        if _mode(model) in (2, int(vectoring))
     ]
     if alternate:
         return [found for turn in zip_longest(*by_mode) for found in turn if found is not None]
@@ -319,15 +322,12 @@ def cut(model: Cordic) -> None:
     fmt = model.fmt
     numbers = directed_numbers(fmt)
     # The two of a mode differ in exponent, significand, octant and path, so that what one left shows in the other.
-    rotations = [(Fraction(13, 32), numbers["two"], 0), (Fraction(-75, 64), numbers["one"], 1)]
-    vectorings = [(Fraction(11, 8), Fraction(-5, 2), 0), (Fraction(-3, 16), Fraction(7, 2), 1)]
-    turned = [case(model, False, fmt.encode(x).bits, b, noise) for x, b, noise in rotations if model.mode != 1]
-    angled = [
-        case(model, True, fmt.encode(y).bits, fmt.encode(x).bits, noise)
-        for y, x, noise in vectorings
-        if model.mode != 0
-    ]
-    first, then = (turned[0], angled[0]) if model.mode == 2 else (turned or angled)
+    rotations = [(Fraction(13, 32), numbers["two"]), (Fraction(-75, 64), numbers["one"])]
+    vectorings = [(Fraction(11, 8), Fraction(-5, 2)), (Fraction(-3, 16), Fraction(7, 2))]
+    mode = _mode(model)
+    turned = [case(model, False, fmt.encode(x).bits, b) for x, b in rotations if mode != 1]
+    angled = [case(model, True, fmt.encode(y).bits, fmt.encode(x).bits) for y, x in vectorings if mode != 0]
+    first, then = (turned[0], angled[0]) if mode == 2 else (turned or angled)
     run_cuts(model.component(), [(first, then), (then, first)])
 
 

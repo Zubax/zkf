@@ -17,6 +17,7 @@ from _cordic import (
     LACKED,
     REACHED,
     ROTATION,
+    SPECIALIZED,
     VECTORING,
     build,
     case,
@@ -273,7 +274,7 @@ def test_every_width_at_radix_4(wman: int) -> None:
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_the_attributes_reach_the_tables(mode: int) -> None:
-    model = Cordic(ZkfFormat(5, 16), wmultiplier=18, mode=mode, stage_core_mul=3)
+    model = Cordic(ZkfFormat(5, 16), wmultiplier=18, stage_core_mul=3).specialized(**SPECIALIZED[mode])
     attribute = '(* syn_romstyle = "logic" *)'
     styled = replace(model, rom_attrs={"syn_romstyle": "logic"})
     lines = styled.compile().replace(styled.name, model.name).splitlines()  # the attributes name the module too
@@ -295,7 +296,7 @@ def test_cut_with_a_combinational_product() -> None:
 
 
 @pytest.mark.parametrize("mode", [1, 2])
-def test_cut_without_hypot(mode: int) -> None:
+def test_cut_without_the_length(mode: int) -> None:
     cut(build(ZkfFormat(5, 16), mode, hy=False))
 
 
@@ -371,13 +372,15 @@ def test_timing() -> None:
     for seed in (1, 2):
         assert timings(Cordic(fmt, **plain | {"rotation_seed": seed})) == [(15 - seed,) * 2, (25, 25)]
     # The radix-4 division skips a digit of the quotient's zeros where the engine leaves two of them.
-    wide: dict[str, Any] = {"stage_core_mul": 4, "wmultiplier": 18, "mode": 1}
-    assert [timings(Cordic(ZkfFormat(8, 36), **wide, fast=fast)) for fast in (False, True)] == [[(42, 42)], [(35, 35)]]
+    wide: dict[str, Any] = {"stage_core_mul": 4, "wmultiplier": 18}
+    fasts = [timings(Cordic(ZkfFormat(8, 36), **wide, fast=fast).specialized(vectoring=True)) for fast in (False, True)]
+    assert fasts == [[(42, 42)], [(35, 35)]]
     # No effect in the mode that does not take it.
     one: dict[str, Any] = {"stage_core_mul": 2, "wmultiplier": 18}
-    assert Cordic(fmt, **one, mode=1, rotation_seed=2).timing == Cordic(fmt, **one, mode=1, rotation_seed=0).timing
+    vectoring = Cordic(fmt, **one, rotation_seed=2).specialized(vectoring=True)
+    assert vectoring.timing == replace(vectoring, rotation_seed=0).timing
     # A vectoring's product is behind its division.
-    vectorings = [timings(Cordic(fmt, stage_core_mul=count, wmultiplier=18, mode=1)) for count in (0, 1, 3)]
+    vectorings = [timings(Cordic(fmt, stage_core_mul=n, wmultiplier=18).specialized(vectoring=True)) for n in (0, 1, 3)]
     assert vectorings == [[(21, 21)]] * 3
 
 
@@ -402,28 +405,43 @@ def test_seed_tables(wman: int) -> None:
 
 def test_refusals() -> None:
     fmt = ZkfFormat(6, 18)
-    refused: tuple[dict[str, Any], ...] = ({"rotation_seed": -1}, {"rotation_seed": 3}, {"mode": 3})
+    refused: tuple[dict[str, Any], ...] = ({"rotation_seed": -1}, {"rotation_seed": 3})
     for knobs in refused:
         with pytest.raises(ValueError):
             Cordic(fmt, wmultiplier=18, **knobs)
+    with pytest.raises(ValueError, match=r"^stage_core_mul=-1 is negative$"):
+        Cordic(fmt, wmultiplier=18, stage_core_mul=-1)
     with pytest.raises(ValueError, match=r"^wmultiplier=15 is below 16$"):
         Cordic(fmt, wmultiplier=15)
-    for mode in (0, 1, 2):
-        with pytest.raises(ValueError, match=r"^stage_core_mul=-1 is negative$"):
-            Cordic(fmt, wmultiplier=18, stage_core_mul=-1, mode=mode, hypot=False)
-    for mode in (0, 2):
-        with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1, which a rotation takes$"):
-            Cordic(fmt, wmultiplier=36, stage_core_mul=0, mode=mode)
     Cordic(fmt, wmultiplier=36)  # the default, the fastest configuration
-    for wexp, wman, mode in ((4, 16, 1), (4, 16, 2), (8, 15, 0), (8, 54, 2)):
+    for wexp, wman in ((8, 15), (8, 54)):
         with pytest.raises(UnsupportedFormat):
-            Cordic(ZkfFormat(wexp, wman), wmultiplier=18, mode=mode)
+            Cordic(ZkfFormat(wexp, wman), wmultiplier=18)
+
+
+def test_what_a_mode_does_not_take_is_refused_as_it_is_built() -> None:
+    """A rotation's count of 0 and a vectoring's WEXP below 5; `timing` takes them."""
+    rotations = Cordic(ZkfFormat(6, 18), wmultiplier=36, stage_core_mul=0)
+    vectorings = Cordic(ZkfFormat(4, 16), wmultiplier=18)
+    for mode in (0, 2):
+        rotating = rotations.specialized(**SPECIALIZED[mode])
+        assert rotating.timing
+        with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1, which a rotation takes$"):
+            Fragment.get(rotating.component(), None)
+    for mode in (1, 2):
+        vectoring = vectorings.specialized(**SPECIALIZED[mode])
+        assert vectoring.timing
+        with pytest.raises(UnsupportedFormat, match=r"^WEXP=4 is below 5, which a vectoring takes$"):
+            Fragment.get(vectoring.component(), None)
+    Fragment.get(rotations.specialized(vectoring=True).component(), None)
+    Fragment.get(vectorings.specialized(vectoring=False).component(), None)
 
 
 def test_a_count_above_the_product_is_refused_as_it_is_built() -> None:
     """
-    At 5/16 on 18-bit multipliers the product has 4 registers, 3 at `mode=1`, and one multiplier's 3 at 6/18 on 36 bits;
-    `timing` takes a count past them, 6 at `mode=0` past the iterations of the angle's product issued ahead too.
+    At 5/16 on 18-bit multipliers the product has 4 registers, 3 of a vectoring alone, and one multiplier's 3 at 6/18 on
+    36 bits; `timing` takes a count past them, 6 of a rotation alone past the iterations of the angle's product issued
+    ahead too.
     """
     for fmt, wmultiplier, mode, count, top in (
         (ZkfFormat(5, 16), 18, 0, 5, 4),
@@ -432,7 +450,7 @@ def test_a_count_above_the_product_is_refused_as_it_is_built() -> None:
         (ZkfFormat(5, 16), 18, 0, 6, 4),
         (ZkfFormat(6, 18), 36, 2, 4, 3),
     ):
-        model = Cordic(fmt, wmultiplier=wmultiplier, stage_core_mul=count, mode=mode)
+        model = Cordic(fmt, wmultiplier=wmultiplier, stage_core_mul=count).specialized(**SPECIALIZED[mode])
         assert model.timing
         with pytest.raises(ValueError, match=rf"^stages={count} is outside 0\.\.{top}$"):
             model.compile()
@@ -440,24 +458,24 @@ def test_a_count_above_the_product_is_refused_as_it_is_built() -> None:
     both = Cordic(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=5)
     both.compile()
     with pytest.raises(ValueError, match=r"^stages=5 is outside 0\.\.4$"):
-        replace(both, hypot=False).compile()
+        both.specialized(length=False).compile()
 
 
-def test_without_hypot(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_without_the_length(monkeypatch: pytest.MonkeyPatch) -> None:
     """
-    Of a vectoring, the angle and its timing are as with the length, `r1` is `-inf` and the length's product is not
-    built: at `mode=1` no multiplier, whose count is then ignored; at `mode=0` the flag is ignored.
+    Of a vectoring, the angle and its timing are as with the length, `r1` is `-inf` where a rotation keeps the port,
+    and the length's product is not built: without a rotation no multiplier, whose count is then ignored.
     """
     fmt = ZkfFormat(6, 18)
     a, b = fmt.encode(Fraction(3, 4)), fmt.encode(-2)
     for mode in (1, 2):
-        given = Cordic(fmt, wmultiplier=18, stage_core_mul=3, mode=mode)
-        model = replace(given, hypot=False)
+        given = Cordic(fmt, wmultiplier=18, stage_core_mul=3).specialized(**SPECIALIZED[mode])
+        model = given.specialized(**SPECIALIZED[mode], length=False)
         assert model.timing == given.timing
         assert model.evaluate(1, a, b) == given.evaluate(1, a, b)._replace(r1=fmt.inf(1))
         assert model.evaluate(1, a, b, oracle=True) == given.evaluate(1, a, b, oracle=True)._replace(r1=-mpmath.inf)
-    assert model.evaluate(0, a, b) == given.evaluate(0, a, b)  # a rotation at `mode=2`
-    alone = Cordic(fmt, wmultiplier=18, mode=1, hypot=False)
+    assert model.evaluate(0, a, b) == given.evaluate(0, a, b)  # a rotation beside it
+    alone = Cordic(fmt, wmultiplier=18).specialized(vectoring=True, length=False)
     built: list[Pmul] = []
 
     def counted(*args: Any, **kwargs: Any) -> Pmul:
@@ -471,19 +489,16 @@ def test_without_hypot(monkeypatch: pytest.MonkeyPatch) -> None:
         Fragment.get(model.component(), None)
         return bool(built)
 
-    assert multiplies(replace(alone, hypot=True)) and not multiplies(alone)
+    assert multiplies(alone.specialized(vectoring=True)) and not multiplies(alone)
     assert verilog.convert(replace(alone, stage_core_mul=4).component(), name="core") == verilog.convert(
         alone.component(), name="core"
-    )
-    rotation = Cordic(fmt, wmultiplier=18, mode=0)
-    assert verilog.convert(replace(rotation, hypot=False).component(), name="core") == verilog.convert(
-        rotation.component(), name="core"
     )
 
 
 def test_a_register_of_a_mode_lacked_is_ignored() -> None:
     for mode in (0, 1):
-        built = Cordic(ZkfFormat(6, 18), wmultiplier=18, stage_core_mul=3, mode=mode, stage_core=~LACKED[mode])
+        built = Cordic(ZkfFormat(6, 18), wmultiplier=18, stage_core_mul=3, stage_core=~LACKED[mode])
+        built = built.specialized(**SPECIALIZED[mode])
         for member in LACKED[mode]:
             given = replace(built, stage_core=built.stage_core | member)
             assert given.timing == built.timing

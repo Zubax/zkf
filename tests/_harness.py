@@ -6,14 +6,14 @@ to a flip-flop and none is lost to an unconstrained pin. The registers are count
 import dataclasses
 import shlex
 import subprocess
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
 from amaranth.hdl import Shape
 from amaranth.lib import wiring
 
-from zkf import Attrs, Block, Cordic, Divsqrt, Exp2, Log2, Timing
+from zkf import Attrs, Block, Exp2, Log2, Timing
 
 type Row = dict[str, str]
 """What a flow found of a spec, as its report shows it."""
@@ -51,25 +51,20 @@ def harness(
     ports: Sequence[Port],
     *,
     clocked: bool,
-    unused: Mapping[str, int | None] | None = None,
 ) -> str:
     """
     A module `top` that holds `dut` with a register on every port; reset clears the registers of the stream control
-    only. `clocked` is whether the DUT has `clk` and `rst`. A port in `unused` gets no pin and no register, as an
-    instance that does not use it would have it: an input is tied to the constant given, an output (None) is left
-    open.
+    only. `clocked` is whether the DUT has `clk` and `rst`.
     """
-    unused = unused or {}
-    shown = [p for p in ports if p.name not in unused]
-    captured, driven = [p for p in shown if not p.output], [p for p in shown if p.output]
-    control = [p for p in shown if p.name in HANDSHAKE]
+    captured, driven = [p for p in ports if not p.output], [p for p in ports if p.output]
+    control = [p for p in ports if p.name in HANDSHAKE]
 
     def source(p: Port) -> str:
         return f"dut_{p.name}" if p.output else p.name
 
     lines = ["`default_nettype none", "", f"module {top} ("]
     lines += ["    input  wire clk,", "    input  wire rst,"]
-    lines += [f"    {'output' if p.output else 'input '} wire {p.kind}{p.name}," for p in shown]
+    lines += [f"    {'output' if p.output else 'input '} wire {p.kind}{p.name}," for p in ports]
     lines[-1] = lines[-1].rstrip(",")
     lines.append(");")
     for p in captured:
@@ -81,12 +76,7 @@ def harness(
 
     connections = [".clk(clk)", ".rst(rst)"] if clocked else []
     for p in ports:
-        if p.name in unused:
-            tie = unused[p.name]
-            net = "" if tie is None else f"{p.width}'d{tie % (1 << p.width)}"
-        else:
-            net = f"dut_{p.name}" if p.output else f"r_{p.name}"
-        connections.append(f".{p.name}({net})")
+        connections.append(f".{p.name}({f'dut_{p.name}' if p.output else f'r_{p.name}'})")
     lines.append(f"    {dut} dut (")
     lines += [f"        {c}," for c in connections]
     lines[-1] = lines[-1].rstrip(",")
@@ -99,22 +89,9 @@ def harness(
         lines.append("        end else begin")
         lines += [f"            r_{p.name} <= {source(p)};" for p in control]
         lines.append("        end")
-    lines += [f"        r_{p.name} <= {source(p)};" for p in shown if p not in control]
+    lines += [f"        r_{p.name} <= {source(p)};" for p in ports if p not in control]
     lines += ["    end", "endmodule", "", "`default_nettype wire", ""]
     return "\n".join(lines)
-
-
-def unused(model: Block) -> Mapping[str, int | None]:
-    """
-    The ports that a spec of one fixed mode leaves out of its harness, as an instance of that mode in a design ties
-    the inputs off and leaves the outputs open: the constant an input is tied to, None for an output.
-    """
-    ties: Mapping[str, int | None] = {}
-    if isinstance(model, Divsqrt):
-        ties = ({"op_sqrt": 0}, {"op_sqrt": 0, "b": 0}, {})[model.mode]
-    if isinstance(model, Cordic):
-        ties = ({"vectoring": 0, "b": 0}, {"vectoring": 1, "quadrant": None}, {})[model.mode]
-    return ties
 
 
 @dataclass(frozen=True)
@@ -174,8 +151,7 @@ class Design:
             model = dataclasses.replace(model, rom_attrs=rom_attrs)
         sources = Sources(directory / "rtl.v", directory / "harness.v")
         sources.rtl.write_text(model.compile())
-        pins, ties = ports(model.signature), unused(model)
-        text = harness(self.top, model.name, pins, clocked=model.clocked, unused=ties)
+        text = harness(self.top, model.name, ports(model.signature), clocked=model.clocked)
         sources.harness.write_text(text)
         return sources
 

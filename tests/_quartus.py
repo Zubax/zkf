@@ -8,7 +8,7 @@ import shutil
 from dataclasses import dataclass
 from pathlib import Path
 
-from _harness import FREQ_MHZ, Design, Device, Row, Sources, ports, run, unused
+from _harness import FREQ_MHZ, Design, Device, Row, Sources, ports, run
 
 TOOLS = ("quartus_map", "quartus_fit", "quartus_sta")
 TIMEOUT_S = 3600
@@ -28,8 +28,7 @@ def settings(target: Target, design: Design, sources: Sources) -> str:
     and timed out of context, as Vivado's and nextpnr's are.
     """
     model = design.model
-    shown = [p for p in ports(model.signature) if p.name not in unused(model)]
-    pins = ["rst", *(f"{p.name}[*]" if p.width > 1 else p.name for p in shown)]
+    pins = ["rst", *(f"{p.name}[*]" if p.width > 1 else p.name for p in ports(model.signature))]
     lines = [
         f'set_global_assignment -name FAMILY "{target.family}"',
         f"set_global_assignment -name DEVICE {target.part(design)}",

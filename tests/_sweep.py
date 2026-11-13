@@ -7,7 +7,7 @@ from itertools import combinations
 
 import zkf._cordic
 import zkf._log2
-from zkf import Block, Cordic, Fma, Log2, Mul, Operator, Resize, ZkfFormat
+from zkf import Block, Cordic, Fma, Log2, Mul, Operator, Resize, RoundMode, ZkfFormat
 from zkf._pmul import positions
 
 WIDTHS = {"fmt", "wmultiplier", "w", "wk", "wint", "fmt_in"}
@@ -18,11 +18,13 @@ KNOBS: Mapping[str, tuple[object, ...]] = {
     "stage_output": (0, 1, 3),
     "stage_core_mul": (0, 1, 2, 3, 4, 5),
     "stage_core_kernel_level": (0, 1, 2, 3, 4, 5, 6, 7, 8),
-    "mode": (0, 1, 2),
     "rotation_seed": (0, 1, 2),
     "n": (0, 1, 7),
     "fast": (False, True),
-    "hypot": (False, True),
+    "_vectoring": (None, False, True),
+    "_length": (False, True),
+    "_op_sqrt": (None, False, True),
+    "_round_mode": (None, *RoundMode),
 }
 
 
@@ -35,21 +37,25 @@ def make(cls: type[Block], fmt: ZkfFormat, **knobs: object) -> Block:
 
 def admits(model: Block) -> bool:
     """
-    Whether the product of a model has the registers that its count asks for, which only elaboration refuses. Cordic's
-    rotation widens its product's angle only where that keeps the slices, so the product's top is that of its operands.
+    Whether the product of a model has the registers that its count asks for, and Cordic's modes take its knobs, which
+    only elaboration refuses. Cordic's rotation widens its product's angle only where that keeps the slices, so the
+    product's top is that of its operands.
     """
     if isinstance(model, (Mul, Fma)):
         wa = wb = model.fmt.wman
     elif isinstance(model, Log2):
         wa, wb = zkf._log2._last(model._spec, model.fmt)
     elif isinstance(model, Cordic):
+        mode = zkf._cordic._mode(model)
+        if (mode != 1 and model.stage_core_mul < 1) or (mode and model.fmt.wexp < 5):
+            return False
         served = zkf._cordic._served(model)
         if served is None:
             return True
         wa, wb = zkf._cordic._geometry(model.fmt.wman).operands(served)
     else:
         return True
-    signed = isinstance(model, Cordic) and model.mode != 1
+    signed = isinstance(model, Cordic) and zkf._cordic._mode(model) != 1
     return model.stage_core_mul <= len(positions(wa, wb, signed=signed, wmultiplier=model.wmultiplier))
 
 
