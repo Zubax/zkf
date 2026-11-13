@@ -1,6 +1,6 @@
 import enum
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import NamedTuple
 
 from amaranth.hdl import Cat, Const, Module, Mux, Signal, signed, Value
@@ -20,9 +20,9 @@ class DivsqrtResult(NamedTuple):
 @dataclass(frozen=True, kw_only=True, eq=False)
 class Divsqrt(Operator):
     """
-    `y = a / b` at `mode=0`, `y = sqrt(a)` at `mode=1`, either by `op_sqrt` per transaction at `mode=2`, correctly
-    rounded, at one latency; a fixed mode builds only its operation, and a root does not read `b`. `error` flags
-    `b = 0`, where `0 / 0 = +0`, or `a < 0` for a root, which gives `-inf`.
+    `y = a / b` and `y = sqrt(a)`, which does not read `b`, either by `op_sqrt` per transaction unless `specialized`,
+    correctly rounded, at one latency.
+    `error` flags `b = 0`, where `0 / 0 = +0`, or `a < 0` for a root, which gives `-inf`.
 
     Both run the digit recurrence `w' = r * w - F_digit` of radix `r` 4, or 8 under `fast`, on the partial remainder
     `w`, in one fixed-point frame and a digit per register stage: each digit is the largest whose subtrahend fits, found
@@ -51,9 +51,9 @@ class Divsqrt(Operator):
     stage_core: CoreStages = CoreStages.NONE
     """See `Divsqrt.CoreStages`; the other digits have a stage each, fixed."""
     stage_output: int = 0
-    mode: int = 2
     fast: bool = True
     """A digit of radix 8 a stage, a third fewer stages, where radix 4 builds less fabric and a shorter stage."""
+    _op_sqrt: bool | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -65,8 +65,10 @@ class Divsqrt(Operator):
             raise UnsupportedFormat(f"WMAN={self.fmt.wman} is below 5")
         if self.fast and self.fmt.wman < 9:
             raise UnsupportedFormat(f"fast: WMAN={self.fmt.wman} is below 9; set fast=False")
-        if not 0 <= self.mode <= 2:
-            raise ValueError(f"mode={self.mode} is outside 0..2")
+
+    def specialized(self, *, op_sqrt: bool) -> Divsqrt:
+        """This configuration built for the root alone or the division alone."""
+        return replace(self, _op_sqrt=op_sqrt)
 
     @property
     def timing(self) -> Timing:
@@ -77,15 +79,11 @@ class Divsqrt(Operator):
     def signature(self) -> wiring.Signature:
         f = FloatLayout(self.fmt)
         return wiring.Signature(
-            {
-                "in_valid": In(1),
-                "op_sqrt": In(1),
-                "a": In(f),
-                "b": In(f),
-                "out_valid": Out(1),
-                "y": Out(f),
-                "error": Out(1),
-            }
+            {"in_valid": In(1)}
+            | ({"op_sqrt": In(1)} if _mode(self) == 2 else {})
+            | {"a": In(f)}
+            | ({"b": In(f)} if _mode(self) != 1 else {})
+            | {"out_valid": Out(1), "y": Out(f), "error": Out(1)}
         )
 
     def component(self) -> _Divsqrt:
@@ -94,11 +92,11 @@ class Divsqrt(Operator):
     def evaluate(self, op_sqrt: int, a: Zkf, b: Zkf) -> DivsqrtResult:
         if a.fmt != self.fmt or b.fmt != self.fmt:
             raise ValueError(f"an operand is not of {self.fmt}")
-        if not 0 <= op_sqrt <= 1:
-            raise ValueError(f"op_sqrt={op_sqrt} is not 0 or 1")
+        mode = _mode(self)
+        if op_sqrt not in ((0, 1) if mode == 2 else (mode,)):
+            raise ValueError(f"op_sqrt={op_sqrt} is not served")
         fmt = self.fmt
-        root = bool(op_sqrt) if self.mode == 2 else self.mode == 1
-        if root:
+        if op_sqrt:
             if a.is_zero:
                 return DivsqrtResult(Zkf(fmt, 0), False)
             if a.negative:
@@ -366,18 +364,25 @@ class _Divsqrt(wiring.Component):
 
     def elaborate(self, platform: object) -> Module:
         m = Module()
-        model, fmt, mode = self._model, self._model.fmt, self._model.mode
+        model, fmt, mode = self._model, self._model.fmt, _mode(self._model)
         wexp, weu = fmt.wexp, fmt.wexp + 2
         divides, roots = mode != 1, mode != 0
         layout = FloatLayout(fmt)
 
-        operands = data.StructLayout({"a": layout, "b": layout, "op_sqrt": 1})
-        taken = bundle(operands, a=self.a, b=self.b, op_sqrt=self.op_sqrt)
-        valid, q = pipe(m, "in", self.in_valid, operands, taken, model.stage_input)
-        a, b, op = q.a, q.b, q.op_sqrt
+        both = mode == 2
+        operands = data.StructLayout(
+            {"a": layout} | ({"b": layout} if divides else {}) | ({"op_sqrt": 1} if both else {})
+        )
+        given = {"a": self.a} | ({"b": self.b} if divides else {}) | ({"op_sqrt": self.op_sqrt} if both else {})
+        valid, q = pipe(m, "in", self.in_valid, operands, bundle(operands, **given), model.stage_input)
+        a, op = q.a, q.op_sqrt if both else Const(mode, 1)
 
         m.submodules.digits = digits = _Digits.of(model)(model)
-        m.d.comb += [digits.a.eq(a), digits.b.eq(b), digits.op.eq(op)]
+        m.d.comb += digits.a.eq(a)
+        if divides:
+            b = q.b
+            m.d.comb += digits.b.eq(b)
+        m.d.comb += digits.op.eq(op)
 
         a_zero = Signal(name="a_zero")
         m.d.comb += a_zero.eq(a.is_zero)
@@ -478,7 +483,7 @@ class _Digits(wiring.Component):
         m.submodules.div0 = div0 = _Div0(self._model.fmt.wman, fold)
         m.d.comb += [div0.sa.eq(self.a.significand), div0.sb.eq(self.b.significand)]
         lowered = Signal(name="lowered", reset_less=True)
-        m.d.sync += lowered.eq(div0.h & ~self.op if self._model.mode == 2 else div0.h)
+        m.d.sync += lowered.eq(div0.h & ~self.op if _mode(self._model) == 2 else div0.h)
         m.d.comb += self.lowered.eq(lowered)
         return div0
 
@@ -495,7 +500,7 @@ class _Radix4(_Digits):
 
     def elaborate(self, platform: object) -> Module:
         m = Module()
-        model, fmt, mode = self._model, self._model.fmt, self._model.mode
+        model, fmt, mode = self._model, self._model.fmt, _mode(self._model)
         wman, wfrac = fmt.wman, fmt.wfrac
         even = wman % 2 == 0
         fold = self.folds(model)
@@ -626,7 +631,7 @@ class _Radix8(_Digits):
 
     def elaborate(self, platform: object) -> Module:
         m = Module()
-        model, fmt, mode = self._model, self._model.fmt, self._model.mode
+        model, fmt, mode = self._model, self._model.fmt, _mode(self._model)
         wman, wfrac = fmt.wman, fmt.wfrac
         layout, stages = self.layout(model), self.stages(model)
         divides, roots = mode != 1, mode != 0
@@ -709,8 +714,13 @@ class _Radix8(_Digits):
         return m
 
 
+def _mode(model: Divsqrt) -> int:
+    """0 where only the division is built, 1 where only the root is, 2 where both are."""
+    return 2 if model._op_sqrt is None else int(model._op_sqrt)
+
+
 def _either(op: Value, root: tuple[Value, ...] | None, quotient: tuple[Value, ...] | None) -> tuple[Value, ...]:
-    """The values of the operation `op` selects, or of the one a fixed mode builds."""
+    """The values of the operation `op` selects, or of the one built alone."""
     if root is None or quotient is None:
         found = root or quotient
         assert found is not None

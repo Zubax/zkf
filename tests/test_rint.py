@@ -66,20 +66,22 @@ def run(wexp: int, wman: int, wint: int, count: int, **knobs: Any) -> None:
 
 
 def simulate(model: Rint, count: int) -> None:
-    """Every operand in every rounding mode; `count` 0 is every operand, otherwise the directed and random ones."""
-    fmt, wint = model.fmt, model.wint
+    """Every operand in every rounding built; `count` 0 is every operand, otherwise the directed and random ones."""
+    fmt, wint, ports = model.fmt, model.wint, model.signature.members
+    modes = list(RoundMode) if model._round_mode is None else [model._round_mode]
     operands = list(dict.fromkeys(directed(fmt, wint))) if count else list(range(1 << fmt.wfull))
     rng = np.random.default_rng(SEED)
     seen = set(operands)
-    while len(operands) * len(RoundMode) < count:
+    while len(operands) * len(modes) < count:
         operand = drawn(fmt, wint, rng)
         if operand not in seen:
             seen.add(operand)
             operands.append(operand)
     cases = []
     for bits in operands:
-        for mode in RoundMode:
-            cases.append(Case({"a": bits, "round_mode": int(mode)}, model.evaluate(Zkf(fmt, bits), mode)._asdict()))
+        for mode in modes:
+            taken = {"a": bits} | ({"round_mode": int(mode)} if "round_mode" in ports else {})
+            cases.append(Case(taken, model.evaluate(Zkf(fmt, bits), mode)._asdict()))
     run_pipeline(model.component(), model.timing.latency, cases)
 
 
@@ -127,6 +129,12 @@ EVERY: dict[str, Any] = {"stage_input": 1, "stage_core": Rint.CoreStages.MASK, "
 )
 def test_stages(knobs: dict[str, Any]) -> None:
     run(3, 4, 8, 0, **knobs)
+
+
+@pytest.mark.parametrize("stage_input", [0, 1])
+@pytest.mark.parametrize("mode", RoundMode, ids=lambda mode: mode.name)
+def test_one_rounding(mode: RoundMode, stage_input: int) -> None:
+    simulate(Rint(ZkfFormat(3, 4), wint=8, stage_input=stage_input).specialized(round_mode=mode), 0)
 
 
 @pytest.mark.parametrize("model", [pytest.param(m, id=n) for n, m in CATALOG.items() if isinstance(m, Rint)])

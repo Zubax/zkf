@@ -19,6 +19,7 @@ from _operands import (
     random_zero,
 )
 from zkf import Divsqrt, UnsupportedFormat, Zkf, ZkfFormat
+from zkf._divsqrt import _mode
 
 # Operands, the result and the error, worked by hand at 8/24: IEEE's, and ZKF's own for its zeros and infinities.
 DIVISIONS = [
@@ -196,22 +197,23 @@ def operands(
 
 
 def run(wexp: int, wman: int, kind: str | int, mode: int, shard: int = 0, shards: int = 1, **knobs: Any) -> None:
-    simulate(Divsqrt(ZkfFormat(wexp, wman), mode=mode, **knobs), kind, shard, shards)
+    """`mode` is that of `_mode`: the division, the root, both."""
+    model = Divsqrt(ZkfFormat(wexp, wman), **knobs)
+    simulate(model if mode == 2 else model.specialized(op_sqrt=bool(mode)), kind, shard, shards)
 
 
 def simulate(model: Divsqrt, kind: str | int, shard: int = 0, shards: int = 1) -> None:
-    """In the runtime mode the two operations come mixed; a root's `b` is noise, a zero exponent among it."""
-    fmt, mode = model.fmt, model.mode
+    """Where both are built the two operations come mixed; a root's `b` is noise, a zero exponent among it."""
+    fmt, ports = model.fmt, model.signature.members
     rng = np.random.default_rng(SEED)
     cases = []
-    for root in (False, True):
-        if mode == 2 or mode == root:
-            for a, b in operands(fmt, kind, root, rng, shard, shards):
-                op = int(root) if mode == 2 else int(rng.integers(0, 2))
-                if root:
-                    b = random_bits(fmt.wfull, rng) if rng.integers(0, 3) else int(rng.integers(0, 1 << fmt.wfrac))
-                found = model.evaluate(op, Zkf(fmt, a), Zkf(fmt, b))
-                cases.append(Case({"a": a, "b": b, "op_sqrt": op}, found._asdict()))
+    for root in (False, True) if _mode(model) == 2 else (bool(_mode(model)),):
+        for a, b in operands(fmt, kind, root, rng, shard, shards):
+            if root:
+                b = random_bits(fmt.wfull, rng) if rng.integers(0, 3) else int(rng.integers(0, 1 << fmt.wfrac))
+            found = model.evaluate(int(root), Zkf(fmt, a), Zkf(fmt, b))
+            taken = {"a": a, "b": b, "op_sqrt": int(root)}
+            cases.append(Case({name: value for name, value in taken.items() if name in ports}, found._asdict()))
     cases = [cases[i] for i in rng.permutation(len(cases))]
     run_pipeline(model.component(), model.timing.latency, cases)
 
@@ -275,8 +277,6 @@ def test_a_digit_that_the_format_cannot_unfold_is_ignored() -> None:
 
 
 def test_refusals() -> None:
-    with pytest.raises(ValueError):
-        Divsqrt(ZkfFormat(6, 18), mode=3)
     with pytest.raises(UnsupportedFormat, match="^fast: WMAN=8 is below 9; set fast=False$"):
         Divsqrt(ZkfFormat(3, 8))
     with pytest.raises(UnsupportedFormat, match="^WMAN=4 is below 5$"):

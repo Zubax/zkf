@@ -14,7 +14,7 @@ from amaranth.hdl import Fragment, Shape
 from amaranth.lib import wiring
 
 from _catalog import CATALOG
-from _cordic import LACKED
+from _cordic import LACKED, SPECIALIZED
 from _sweep import admits, configurations, make
 from zkf import (
     AbsNeg,
@@ -34,6 +34,7 @@ from zkf import (
     Pipe,
     Resize,
     Rint,
+    RoundMode,
     ZkfFormat,
 )
 
@@ -102,12 +103,12 @@ MODELS: list[tuple[type[Block], ZkfFormat, dict[str, object]]] = [
     (Log2, ZkfFormat(11, 53), {"wmultiplier": 18}),
     (Log2, ZkfFormat(8, 40), {"wmultiplier": 27}),
     (Cordic, ZkfFormat(5, 16), {"wmultiplier": 18}),
-    (Cordic, ZkfFormat(5, 16), {"wmultiplier": 18, "mode": 0}),
-    (Cordic, ZkfFormat(5, 16), {"wmultiplier": 18, "mode": 1}),
+    (Cordic, ZkfFormat(5, 16), {"wmultiplier": 18, "_vectoring": False}),
+    (Cordic, ZkfFormat(5, 16), {"wmultiplier": 18, "_vectoring": True}),
     (Cordic, ZkfFormat(5, 17), {"wmultiplier": 18}),
     (Cordic, ZkfFormat(8, 36), {"wmultiplier": 18}),
     (Cordic, ZkfFormat(11, 53), {"wmultiplier": 18}),
-    (Cordic, ZkfFormat(2, 16), {"wmultiplier": 18, "mode": 0}),
+    (Cordic, ZkfFormat(2, 16), {"wmultiplier": 18, "_vectoring": False}),
 ]
 
 
@@ -117,11 +118,8 @@ def models(cls: type[Block], fmt: ZkfFormat, fixed: dict[str, object], every_pai
         try:
             model = make(cls, fmt, **(knobs | fixed))
         except ValueError as refusal:
-            # A rotation's count of 0, and a kernel's level that adds no register or is past the last.
-            expected = (
-                r"stage_core_mul=0 is below 1, which a rotation takes"
-                r"|level=\d+ (is outside 0\.\.\d+|adds no register here; take \d+ or \d+)"
-            )
+            # A kernel's level that adds no register or is past the last.
+            expected = r"level=\d+ (is outside 0\.\.\d+|adds no register here; take \d+ or \d+)"
             assert re.fullmatch(expected, str(refusal)), refusal
             continue
         if admits(model):
@@ -158,14 +156,15 @@ def test_lint(linter: str, proc_nomux: bool, tmp_path: Path) -> None:
         if os.environ.get("CI"):
             pytest.fail(f"no {linter} in CI")
         pytest.skip(f"no {linter}")
-    # The catalog, each format of the sweep at its first configuration, every register of `cordic` in each mode, and
-    # its vectorings without the length.
+    # The catalog, each format of the sweep at its first configuration, every register of `cordic` in each mode, its
+    # vectorings without the length, and a rounding alone behind an input stage.
     specs = list(CATALOG.values()) + [next(models(cls, fmt, fixed)) for cls, fmt, fixed in MODELS]
     for mode in (0, 1, 2):
-        specs.append(
-            make(Cordic, ZkfFormat(5, 17), wmultiplier=18, mode=mode, stage_core_mul=3, stage_core=~LACKED[mode])
-        )
-    specs += [make(Cordic, ZkfFormat(5, 17), wmultiplier=18, mode=mode, hypot=False) for mode in (1, 2)]
+        registers = Cordic(ZkfFormat(5, 17), wmultiplier=18, stage_core_mul=3, stage_core=~LACKED[mode])
+        specs.append(registers.specialized(**SPECIALIZED[mode]))
+    cordic = Cordic(ZkfFormat(5, 17), wmultiplier=18)
+    specs += [cordic.specialized(vectoring=True, length=False), cordic.specialized(length=False)]
+    specs.append(Rint(ZkfFormat(5, 17), stage_input=1).specialized(round_mode=RoundMode.FLOOR))
     texts = [spec.compile(proc_nomux=proc_nomux) for spec in {spec.name: spec for spec in specs}.values()]
     # Without `-nomux` Yosys prints a one-hot select as a `casez` of overlapping patterns.
     command = LINTERS[linter] + (["-Wno-CASEOVERLAP"] if linter == "verilator" and not proc_nomux else [])

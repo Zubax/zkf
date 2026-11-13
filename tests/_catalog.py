@@ -97,9 +97,9 @@ CATALOG: dict[str, Block] = {
         Fma(F36, stage_input=1, stage_core_add=~Add.CoreStages.NONE, **_FMA36),
         # Folded, nextpnr's placements make 99.4 to 106.3 MHz.
         Divsqrt(F18, stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
-        Divsqrt(F18, mode=0),
+        Divsqrt(F18).specialized(op_sqrt=False),
         # Without FIRST_DIGIT Diamond makes 99.5 MHz, from the operand into the first digit.
-        Divsqrt(F18, mode=1, stage_core=Divsqrt.CoreStages.FIRST_DIGIT),
+        Divsqrt(F18, stage_core=Divsqrt.CoreStages.FIRST_DIGIT).specialized(op_sqrt=True),
         Divsqrt(F18, fast=False),
         # On speed grade 6 nextpnr's placements make 93.3 to 98.0 MHz, 98.8 to 105.9 with FIRST_DIGIT.
         _large(_grade(Divsqrt(F24), ecp5_grade=7)),
@@ -115,11 +115,13 @@ CATALOG: dict[str, Block] = {
         _large(Divsqrt(F36, stage_core=Divsqrt.CoreStages.FIRST_DIGIT, fast=False)),
         # Folded, nextpnr's placements make 99.3 to 101.1 MHz; on Cyclone IV E C8 Quartus makes 99.4, in the digits'
         # loop.
-        _large(_grade(Divsqrt(F36, mode=0, stage_core=Divsqrt.CoreStages.FIRST_DIGIT), cyclone4_grade=7)),
-        _large(Divsqrt(F36, mode=0, fast=False)),
+        _large(
+            _grade(Divsqrt(F36, stage_core=Divsqrt.CoreStages.FIRST_DIGIT).specialized(op_sqrt=False), cyclone4_grade=7)
+        ),
+        _large(Divsqrt(F36, fast=False).specialized(op_sqrt=False)),
         # On speed grade 6 nextpnr's placements make 92.4 to 96.8 MHz, 89.6 to 100.6 with FIRST_DIGIT.
-        _large(_grade(Divsqrt(F36, mode=1), ecp5_grade=7)),
-        Divsqrt(F36, mode=1, fast=False),
+        _large(_grade(Divsqrt(F36).specialized(op_sqrt=True), ecp5_grade=7)),
+        Divsqrt(F36, fast=False).specialized(op_sqrt=True),
         Cmp(F18),
         Cmp(F36),
         MulIlog2(F18, wk=7),
@@ -154,16 +156,11 @@ CATALOG: dict[str, Block] = {
         Log2(F36, stage_core_kernel_level=6, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
         # Without PACK nextpnr's seeds make 81.6 to 87.5 MHz, from the normalizer's count into the result; without
         # FOLDED nextpnr's seeds make 99.7 to 103.5, from the reduced coordinate into the engine.
-        Cordic(
-            F18,
-            mode=0,
-            stage_core_mul=3,
-            stage_core=_CORDIC_ROTATION,
-            rotation_seed=0,
-            wmultiplier=18,
+        Cordic(F18, stage_core_mul=3, stage_core=_CORDIC_ROTATION, rotation_seed=0, wmultiplier=18).specialized(
+            vectoring=False
         ),
         # At stage_core_mul=2 nextpnr's seeds make 89.7 to 93.0 MHz, in the length's product.
-        Cordic(F18, mode=1, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18),
+        Cordic(F18, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18).specialized(vectoring=True),
         # Without NORMALIZE_INPUT Vivado on Artix-7 -1 misses by 0.093 ns, from the sine's sum into the normalizer.
         # Grade 7 is closed too, but thinly: Diamond makes 100.8 to 110.4 MHz there, from the engine's adds of an
         # iteration, and nextpnr's seeds 104.3 to 114.5; without the attribute Diamond puts the tables in block RAM and
@@ -172,12 +169,11 @@ CATALOG: dict[str, Block] = {
             _grade(
                 Cordic(
                     F36,
-                    mode=0,
                     stage_core_mul=4,
                     stage_core=_CORDIC_ROTATION | Cordic.CoreStages.NORMALIZE_INPUT,
                     wmultiplier=18,
                     rom_attrs={"syn_romstyle": "logic"},
-                ),
+                ).specialized(vectoring=False),
                 ecp5_grade=8,
                 cyclone4_grade=7,
             )
@@ -188,7 +184,7 @@ CATALOG: dict[str, Block] = {
         # RAM into `z`.
         _large(
             _grade(
-                Cordic(F36, mode=1, stage_core_mul=4, stage_core=_CORDIC_VECTORING, wmultiplier=18),
+                Cordic(F36, stage_core_mul=4, stage_core=_CORDIC_VECTORING, wmultiplier=18).specialized(vectoring=True),
                 ecp5_grade=8,
                 artix7_grade=2,
                 cyclone4_grade=7,

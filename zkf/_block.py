@@ -121,6 +121,8 @@ class Block(ABC):
         def plain(value: Any) -> Any:
             if isinstance(value, enum.Flag):  # By name: member values shift when a member is added.
                 return sorted(member.name for member in value)
+            if isinstance(value, enum.Enum):
+                return value.name
             if isinstance(value, Mapping):  # None and {} both mean no attributes.
                 return sorted((key, plain(item)) for key, item in value.items())
             return int(value) if isinstance(value, bool) else value  # `True` and 1 are the same value.
@@ -156,9 +158,10 @@ class Block(ABC):
     @abstractmethod
     def evaluate(self, *args: Any, **kwargs: Any) -> Any:
         """
-        The bit-exact reference. Arguments are the input data ports, in signature order: a `Zkf` of the port's format,
-        an `int`, or the port's enum. Returns the output data port, or a named tuple if there are several, with flags as
-        `bool`. A float of another format or an integer too wide for its port raises `ValueError`, even if unused.
+        The bit-exact reference. Arguments are the input data ports of the operator before it is specialized, in
+        signature order: a `Zkf` of the port's format, an `int`, or the port's enum. Returns its output data ports: one,
+        or a named tuple if there are several, with flags as `bool`. A float of another format or an integer too wide
+        for its port raises `ValueError`, even if unused; so does an operation that a specialization left out.
         """
 
     def compile(self, prefix: str = "", *, proc_nomux: bool | None = None) -> str:
