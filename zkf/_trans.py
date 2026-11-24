@@ -20,7 +20,7 @@ from amaranth.lib.wiring import In, Out
 
 from ._block import Attrs, delay, pipe
 from ._pack import pack_reference
-from ._pmul import Pmul, positions, slices
+from ._pmul import Pmul, PmulWith, latency, levels, registers, slices
 from ._value import UnsupportedFormat, Zkf, ZkfFormat
 
 _ERR_GUARD = 8
@@ -153,20 +153,11 @@ def pack_fixed(fmt: ZkfFormat, sign: int, exp: int, v: int, point: int) -> Zkf:
     return pack_reference(fmt, sign, 0, 0, exp + v.bit_length() - 1 - point, v >> drop, (v >> (drop - 1)) & 1, 1, 0)
 
 
-def kernel_levels(spec: Spec, wmultiplier: int) -> list[int]:
-    """The levels of `Exp2.stage_core_kernel_level` that `Kernel` takes: 0 and each that adds a register."""
-    return list(_ladder(spec, wmultiplier))
-
-
-def kernel_depth(spec: Spec, wmultiplier: int, level: int) -> int:
-    """Register stages of `Kernel` after the table's own; refuses a level that adds no register or is past the last."""
+def kernel_depth(spec: Spec, wmultiplier: int, level: int, knob: str = "level") -> int:
+    """Register stages of `Kernel` after the table's own; refuses a level outside its range, naming the knob."""
     ladder = _ladder(spec, wmultiplier)
-    if level not in ladder:
-        taken = list(ladder)
-        if not 0 <= level <= taken[-1]:
-            raise ValueError(f"level={level} is outside 0..{taken[-1]}")
-        below, above = max(at for at in taken if at < level), min(at for at in taken if at > level)
-        raise ValueError(f"level={level} adds no register here; take {below} or {above}")
+    if not 0 <= level < len(ladder):
+        raise ValueError(f"{knob}={level} is outside 0..{len(ladder) - 1}")
     return ladder[level].total
 
 
@@ -180,8 +171,7 @@ class Kernel(wiring.Component):
     The table is addressed by the combinational argument, and the first register is its own, `w` beside it; `depth`
     more follow, the terms of the sum added as they are formed, and the last sum is combinational. `level` is
     `Exp2.stage_core_kernel_level`; each product builds its own capture.
-    `c[2i+1]*w` of one multiplier has its output after its pair's sum. `rom_attrs` goes on the table, `mul_attrs` on
-    the products' captures.
+    `rom_attrs` goes on the table, `mul_attrs` on the products' captures.
     """
 
     in_valid: Signal
@@ -217,15 +207,15 @@ class Kernel(wiring.Component):
         rows, half = spec.coeffs, d // 2
         cw, fields = _widths(spec)
 
-        def product(name: str, a: Value, b: Value, stages: int | None = None) -> Value:
-            m.submodules[name] = multiplier = Pmul(
-                len(a),
-                len(b),
-                signed=False,
-                wmultiplier=self._wmultiplier,
-                stages=at.stages[name] if stages is None else stages,
-                attrs=self._mul_attrs,
-            )
+        def product(name: str, a: Value, b: Value) -> Value:
+            wa, wb, width = len(a), len(b), self._wmultiplier
+            if name in at.post:
+                multiplier: Pmul = PmulWith(
+                    wa, wb, at.post[name], signed=False, wmultiplier=width, attrs=self._mul_attrs
+                )
+            else:
+                multiplier = Pmul(wa, wb, signed=False, wmultiplier=width, level=at.levels[name], attrs=self._mul_attrs)
+            m.submodules[name] = multiplier
             m.d.comb += multiplier.a.eq(a)
             m.d.comb += multiplier.b.eq(b)
             return multiplier.p
@@ -261,14 +251,8 @@ class Kernel(wiring.Component):
             if j > d:
                 pair[i] = delay(m, f"c{2 * i}_s", cw[2 * i], c[2 * i], at.turn[i])
                 continue
-            name, a, b, formed = f"p{j}", c[j], w[rw - t[i] :], at.ready[f"p{j}"]
-            if name in at.post:
-                # Its output after the pair's sum, for a multiplier's post-adder: the capture held, the register behind.
-                attrs = self._mul_attrs
-                a, b = delay(m, f"{name}_a", len(a), a, formed, attrs), delay(m, f"{name}_b", len(b), b, formed, attrs)
-                pj = product(name, a, b, 0)
-            else:
-                pj = product(name, a, b)
+            name, formed = f"p{j}", at.ready[f"p{j}"]
+            pj = product(name, c[j], w[rw - t[i] :])
             even = delay(m, f"c{2 * i}_d", cw[2 * i], c[2 * i], formed)
             term = pj[t[i] - (cw[j] - fields[j]) :]
             first = (even + term if exp2 else even - term)[: pair_bits[i]]
@@ -587,9 +571,10 @@ def _shortest(compact: Spec, wmultiplier: int) -> Spec:
 
     def rank(spec: Spec) -> tuple[int, int, int, int]:
         products = (slices(*size, signed=False, wmultiplier=wmultiplier) for size in _sizes(spec).values())
-        caps, sides = _caps(spec, wmultiplier), _sides(spec, wmultiplier)
-        depth = _schedule(spec, wmultiplier, {name: min(3, cap) for name, cap in caps.items()}).total
-        wide = _schedule(spec, wmultiplier, {name: min(2 + (sides[name] > 2), cap) for name, cap in caps.items()})
+        # C+G+O, level 10 of `Pmul`, and C+O, level 6: on a lone multiplier, and for `wide` on a 2-wide grid too.
+        sides = _sides(spec, wmultiplier)
+        depth = _schedule(spec, wmultiplier, {name: 6 if side == 1 else 10 for name, side in sides.items()}).total
+        wide = _schedule(spec, wmultiplier, {name: 10 if side > 2 else 6 for name, side in sides.items()})
         return depth, wide.total, _rom_bits(spec), sum(a * b for a, b in products)
 
     def table(d: int, k: int, cut: bool, probe: bool) -> Spec | None:
@@ -649,93 +634,91 @@ def _sizes(spec: Spec) -> dict[str, tuple[int, int]]:
     return sizes | {f"p{2 * (i + 1)}": (chain[i + 1], spec.q[i]) for i in range(half)}
 
 
-def _caps(spec: Spec, wmultiplier: int) -> dict[str, int]:
-    """The positions of each product of the kernel: those of `Pmul`, the output and the operands of one multiplier."""
-    sides = _sides(spec, wmultiplier)
-    return {
-        name: 2 if sides[name] == 1 else len(positions(a, b, signed=False, wmultiplier=wmultiplier))
-        for name, (a, b) in _sizes(spec).items()
-    }
-
-
 def _sides(spec: Spec, wmultiplier: int) -> dict[str, int]:
     """The widest side of each product's grid of multipliers, 1 for one multiplier."""
     return {name: max(slices(a, b, signed=False, wmultiplier=wmultiplier)) for name, (a, b) in _sizes(spec).items()}
 
 
+_KERNEL = (
+    (0, 0, 0),
+    (0, 2, 0),
+    (0, 2, 2),
+    (1, 2, 2),
+    (1, 2, 8),
+    (1, 4, 8),
+    (6, 4, 8),
+    (6, 4, 11),
+    (6, 10, 11),
+    (6, 10, 12),
+    (6, 13, 12),
+    (10, 13, 12),
+    (10, 13, 13),
+    (13, 13, 13),
+)
+"""`Exp2.stage_core_kernel_level`'s table: in each row, the levels of `Pmul` of each class of product."""
+
+
 def _staging(spec: Spec, wmultiplier: int, level: int) -> dict[str, int]:
-    """Each product's count at a level of `Exp2.stage_core_kernel_level`."""
-    caps, sides, out = _caps(spec, wmultiplier), _sides(spec, wmultiplier), {}
-    for name, cap in caps.items():
-        if sides[name] == 1:
-            count = 0 if level < 3 else 1 if level < 6 else 2
-        else:
-            count = (0, 1, 2, 2, 2 + (sides[name] > 2), 3, 3)[level] if level < 7 else level - 3
-        out[name] = min(count, cap)
+    """Each product's level of `Pmul` at a level of `Exp2.stage_core_kernel_level`, at most its last."""
+    sides, out, last = _sides(spec, wmultiplier), {}, len(_KERNEL) - 1
+    for name, (a, b) in _sizes(spec).items():
+        at = _KERNEL[min(level, last)][min(sides[name], 3) - 1] + max(0, level - last)
+        out[name] = min(at, len(levels(a, b, signed=False, wmultiplier=wmultiplier)) - 1)
     return out
 
 
 @functools.cache
-def _ladder(spec: Spec, wmultiplier: int) -> dict[int, "_Schedule"]:
-    """The schedule at 0 and at each level that adds a register to the one below, up to the last."""
-    out: dict[int, _Schedule] = {}
-    for level in range(max(6, max(_caps(spec, wmultiplier).values()) + 3) + 1):
-        at = _schedule(spec, wmultiplier, _staging(spec, wmultiplier, level))
-        if not out or _adds(out[max(out)], at):
-            out[level] = at
-    return out
-
-
-def _adds(below: "_Schedule", above: "_Schedule") -> bool:
-    """
-    Whether a schedule has a register that the one below lacks. The first register of a `post` product is its pair's
-    sum register, which a pair that already waits for the chain has: the top pair until the chain begins, the others
-    until they join it.
-    """
-    half = max(below.turn, default=0)
-
-    def waits(name: str) -> bool:
-        i = int(name[1:]) // 2
-        return below.begin[i - 1] >= 1 if i == half else below.turn[i] >= 1
-
-    changed = [name for name, count in above.stages.items() if count != below.stages[name]]
-    return not all(
-        name in below.post and (below.stages[name], above.stages[name]) == (0, 1) and waits(name) for name in changed
-    )
+def _ladder(spec: Spec, wmultiplier: int) -> tuple["_Schedule", ...]:
+    """The schedule at each level, from 0 through the table's rows and on while a product's level of `Pmul` changes."""
+    out = [_schedule(spec, wmultiplier, _staging(spec, wmultiplier, 0))]
+    while True:
+        at = _schedule(spec, wmultiplier, _staging(spec, wmultiplier, len(out)))
+        if len(out) >= len(_KERNEL) and at.levels == out[-1].levels:
+            return tuple(out)
+        out.append(at)
 
 
 @dataclass(frozen=True)
 class _Schedule:
-    """
-    The kernel's products in stages after the table's register: the count of each, by name; the odd ones whose output
-    follows the pair's sum; when the result of each is formed (`sq` the square's, `sqn` the narrow one's); when pair
-    `i` joins the chain, the top one at its start; when the chain's product below pair `i + 1` takes its operands; the
-    total.
-    """
+    """The kernel's products in stages after the table's register, each by name, and its pairs by index."""
 
+    levels: dict[str, int]
+    """Of each product, its level of `Pmul`."""
     stages: dict[str, int]
-    post: frozenset[str]
+    """Of each product, its latency."""
+    post: dict[str, frozenset[str]]
+    """Of each odd one whose output follows the pair's sum, the registers that its `Pmul` builds."""
     ready: dict[str, int]
+    """When each result is formed: `sq` the square's, `sqn` the narrow one's."""
     turn: dict[int, int]
+    """When each pair joins the chain, the top one at its start."""
     begin: dict[int, int]
+    """When the chain's product below pair `i + 1` takes its operands."""
     total: int
 
 
-def _schedule(spec: Spec, wmultiplier: int, counts: Mapping[str, int]) -> _Schedule:
-    d, half, caps, n = spec.d, spec.d // 2, _caps(spec, wmultiplier), dict(counts)
+def _schedule(spec: Spec, wmultiplier: int, at: Mapping[str, int]) -> _Schedule:
+    """The schedule of the kernel whose products take the levels of `Pmul` given by name."""
+    d, half, sizes, sides = spec.d, spec.d // 2, _sizes(spec), _sides(spec, wmultiplier)
+    n = {name: latency(at[name], *sizes[name], signed=False, wmultiplier=wmultiplier) for name in sizes}
     odd = [f"p{2 * i + 1}" for i in range(1, half + 1) if 2 * i + 1 <= d]
-    post = frozenset(name for name in odd if caps[name] == 2)
-    ready = {name: n[name] for name in caps if name in ("p1", "pl", *odd)}
-    ready |= {name: max(0, n[name] - 1) for name in post}
+    post = {
+        name: registers(at[name], *sizes[name], signed=False, wmultiplier=wmultiplier) - {"output", "grid2"}
+        for name in odd
+        if sides[name] == 1
+    }
+    ready = {name: n[name] for name in sizes if name in ("p1", "pl", *odd)}
+    ready |= {name: len(own) for name, own in post.items()}
     turn: dict[int, int] = {}
     begin: dict[int, int] = {}
     if half:
-        squares = [name for name in caps if name in ("sq", "sq_hh", "sq_hl")]
+        squares = [name for name in sizes if name in ("sq", "sq_hh", "sq_hl")]
         assert len({n[name] for name in squares}) == 1, "the square's products are of one size"
         ready["sq"] = n[squares[0]]
         ready["sqn"] = n["sqn"] if spec.tn else ready["sq"]
-        # A pair forms at its product's count, a `post` one in its register; the chain starts at its top pair, a product
-        # takes its operands once the pair above and its square are formed; a pair joins once it and that product are.
+        # A pair forms at its product's latency, a `post` one in its register; the chain starts at its top pair, a
+        # product takes its operands once the pair above and its square are formed; a pair joins once it and that
+        # product are.
         formed = {i: n.get(f"p{2 * i + 1}", 0) for i in range(1, half + 1)}
         turn = {half: formed[half]}
         for i in range(half - 1, -1, -1):
@@ -745,4 +728,4 @@ def _schedule(spec: Spec, wmultiplier: int, counts: Mapping[str, int]) -> _Sched
                 turn[i] = max(done, formed[i])
         ready["p2"] = done
     total = max(ready[name] for name in ("p1", "pl", "p2") if name in ready)
-    return _Schedule(n, post, ready, turn, begin, total)
+    return _Schedule(dict(at), n, post, ready, turn, begin, total)

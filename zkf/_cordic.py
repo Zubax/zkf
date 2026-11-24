@@ -16,7 +16,7 @@ from amaranth.utils import ceil_log2
 
 from ._fixed_to_float import FixedToFloat, fixed_to_float_reference
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, add_carry, bundle, pipe, sext, zext
-from ._pmul import Pmul, slices
+from ._pmul import PmulWith, latency, registers, slices, sum_cuts
 from ._txn import Txn
 from ._divsqrt import DivideStep8, DivsqrtStep
 from ._value import UnsupportedFormat, Zkf, ZkfFormat, context
@@ -119,8 +119,12 @@ class Cordic(Operator):
 
     operator = "cordic"
     stage_input: int = 0
-    stage_core_mul: int = 1
-    """As `Mul`'s, from 1 up where a rotation is built; a rotation passes the product twice in series."""
+    stage_core_mul_level: int = 2
+    """
+    As `Mul`'s, from 1 up where a rotation is built; a rotation passes the product twice in series. Every build that
+    rotates takes the levels of the rotation's own product: a wider product of both modes builds them as if its sum
+    had only the rotation's levels to cut, at the same latencies.
+    """
     stage_core: CoreStages = CoreStages.NONE
     """See `Cordic.CoreStages`."""
     stage_output: int = 0
@@ -152,8 +156,8 @@ class Cordic(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
-        if self.stage_core_mul < 0:
-            raise ValueError(f"stage_core_mul={self.stage_core_mul} is negative")
+        if self.stage_core_mul_level < 0:
+            raise ValueError(f"stage_core_mul_level={self.stage_core_mul_level} is negative")
         if self.wmultiplier < 16:
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 16")
         _geometry(self.fmt.wman)  # refuses a WMAN that has no constants
@@ -217,17 +221,17 @@ class Cordic(Operator):
 
     def _timing_of(self, mode: int) -> Timing:
         g = _geometry(self.fmt.wman)
-        product = self.stage_core_mul
-        registers = len(self.stage_core & ~_LACKED[mode])
+        own = len(self.stage_core & ~_LACKED[mode])
         iterations = g.n - _SEED - (self.rotation_seed if mode == 0 else 0)
         if mode == 0:
             # The load; the cosine a cycle behind the sine into the multiplier, and into the packer unless `fast`.
-            latency = 2 + (not self.fast) + iterations + 2 * product - max(_ahead(self) - 1, 0)
+            product = _rotation(self)
+            cycles = 2 + (not self.fast) + iterations + 2 * product - max(_ahead(self) - 1, 0)
         else:
             # The engine's load, the division's, and the last digit into the angle.
-            latency = 3 + iterations + g.digits(_radix(self))
-        latency += registers + self.stage_input + self.stage_output
-        return Timing(latency, latency)
+            cycles = 3 + iterations + g.digits(_radix(self))
+        cycles += own + self.stage_input + self.stage_output
+        return Timing(cycles, cycles)
 
 
 _ROTATION = (
@@ -456,20 +460,42 @@ def _radix(model: Cordic) -> int:
 
 def _ahead(model: Cordic) -> int:
     """
-    How many iterations ahead of the engine's end a rotation issues the angle's product, `stage_core_mul + 1`, so that
+    How many iterations ahead of the engine's end a rotation issues the angle's product, its latency plus 1, so that
     the angle, less a constant of the signs taken since, is held by the end; 0 where the wider angle would take another
-    slice, or the product would start ahead of the rotation's first iteration.
+    slice.
     """
     if _mode(model) == 1:
         return 0
-    k = model.stage_core_mul + 1
+    k = _rotation(model) + 1
     c = _constants(model.fmt.wman)
-    if c.n - k < _SEED + model.rotation_seed:
-        return 0
-    # The rotation's own operands, whose `wb` the both-modes product shares: the latency is the same in every build.
+    assert c.n - k >= _SEED + model.rotation_seed, "the product's deepest latency is within the iterations"
+    # The rotation's own operands, whose `wb` the both-modes product shares.
     wa, wb = c.operands(0)
     grid = functools.partial(slices, wa, signed=True, wmultiplier=model.wmultiplier)
     return k if grid(max(wb, _angle_bits(c, k))) == grid(wb) else 0
+
+
+def _product(model: Cordic, wa: int, wb: int) -> frozenset[str]:
+    """The registers of the product of `wa` and `wb` bits, of the knob's level."""
+    rotates, wmultiplier = _mode(model) != 1, model.wmultiplier
+    cuts = sum_cuts(*_constants(model.fmt.wman).operands(0), signed=True, wmultiplier=wmultiplier) if rotates else None
+    return registers(
+        model.stage_core_mul_level,
+        wa,
+        wb,
+        signed=rotates,
+        wmultiplier=wmultiplier,
+        knob="stage_core_mul_level",
+        cuts=cuts,
+    )
+
+
+def _rotation(model: Cordic) -> int:
+    """The latency of the rotation's own product at `stage_core_mul_level`."""
+    wa, wb = _constants(model.fmt.wman).operands(0)
+    return latency(
+        model.stage_core_mul_level, wa, wb, signed=True, wmultiplier=model.wmultiplier, knob="stage_core_mul_level"
+    )
 
 
 def _mode(model: Cordic) -> int:
@@ -822,8 +848,8 @@ class _Cordic(wiring.Component):
         rotates, vectors, both = mode != 1, mode != 0, mode == 2
         if vectors and wexp < 5:
             raise UnsupportedFormat(f"WEXP={wexp} is below 5, which a vectoring takes")
-        if rotates and model.stage_core_mul < 1:
-            raise ValueError(f"stage_core_mul={model.stage_core_mul} is below 1, which a rotation takes")
+        if rotates and model.stage_core_mul_level < 1:
+            raise ValueError(f"stage_core_mul_level={model.stage_core_mul_level} is below 1, which a rotation takes")
         m = Module()
         f = FloatLayout(fmt)
         ahead = _ahead(model)
@@ -889,12 +915,12 @@ class _Cordic(wiring.Component):
             seed=_SEED + model.rotation_seed,
         )
         if served is not None:
-            m.submodules.pmul = pmul = Pmul(
+            m.submodules.pmul = pmul = PmulWith(
                 wa_pm,
                 wb_pm,
+                _product(model, wa_pm, wb_pm),
                 signed=rotates,
                 wmultiplier=model.wmultiplier,
-                stages=model.stage_core_mul,
                 sideband=_Product if rotates else None,
                 attrs=model.mul_attrs,
             )

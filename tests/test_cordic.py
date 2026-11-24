@@ -29,17 +29,20 @@ from _cordic import (
 )
 from _operands import SEED
 import zkf._cordic
-from zkf import Cordic, Pmul, Timing, UnsupportedFormat, ZkfFormat
+from zkf import Cordic, Timing, UnsupportedFormat, ZkfFormat
 
 from zkf._cordic import (
     _GUARD_ZF,
     _SEED,
     _ahead,
     _constants,
+    _geometry,
     _iterate,
     _radix,
+    _rotation,
     _seed,
 )
+from zkf._pmul import PmulWith, levels
 
 CoreStages = Cordic.CoreStages
 SHARED = CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK
@@ -50,13 +53,17 @@ ROTATIONS = [(3, 16, 512), (5, 16, 512), (8, 24, 1024), (8, 32, 768), (11, 53, 3
 # the difference of the exponents is short.
 VECTORINGS = [(6, 18, 1536), (8, 24, 1024), (8, 36, 768), (11, 53, 384), (5, 16, 512), (5, 53, 384)]
 # The knobs at 5/16 unless a row has a format, where they change no result; of every mode unless it has one; the
-# product's count 1 unless a row has one. The input and output stages, which no mode changes, in both modes; the seeds
-# off and in part, of the modes that rotate. The product combinational in a vectoring, and from its one register at a
-# width where it is one multiplier to the pairs of rows of a grid on narrower multipliers, all the registers of the rest
-# (one by one in the deep tier), without `fast` (one packer, the division at radix 4), and a rotation whose angle,
-# issued ahead, would take another slice; the catalog's rotation at 6/18 with CORRECTIONS, which no spec of the catalog
-# takes; and without the length: by default, and without `fast` with every register.
+# product's level the default unless a row has one. The input and output stages, which no mode changes, in both modes;
+# the seeds off and in part, of the modes that rotate. The product combinational in a vectoring, and from its one
+# register at a width where it is one multiplier to the pairs of rows of a grid on narrower multipliers, all the
+# registers of the rest (one by one in the deep tier), without `fast` (one packer, the division at radix 4), and a
+# rotation whose angle, issued ahead, would take another slice, and one whose angle is issued at the engine's first
+# iteration, the deepest product at the most seed, and both modes' product at a lower level of its own than the
+# rotation's at the same latency; the catalog's rotation at 6/18 with CORRECTIONS, which no spec of the catalog takes;
+# and without the length: by default, and without `fast` with every register.
 KNOBS: list[dict[str, Any]] = [
+    {"sm": 13, "rs": 2},
+    {"sm": 13, "wm": 24, "mode": 2},
     {"wexp": 6, "wman": 18},
     {
         "wexp": 6,
@@ -72,25 +79,25 @@ KNOBS: list[dict[str, Any]] = [
     {"si": 2, "mode": 2},
     {"so": 3, "mode": 2},
     {"sm": 1, "wm": 32},
-    {"sm": 3},
-    {"sm": 4, "mode": 2},
-    {"sm": 4, "wm": 16, "mode": 0},
-    {"sm": 2, "wm": 26, "mode": 0},
-    {"sm": 3, "wm": 26, "mode": 2},
-    {"sm": 3, "wm": 16, "mode": 1},
-    {"sm": 4, "wm": 16, "mode": 2},
-    {"sm": 4, "mode": 0},
-    {"sm": 3, "wexp": 6, "wman": 18, "mode": 1},
+    {"sm": 10},
+    {"sm": 12, "mode": 2},
+    {"sm": 12, "wm": 16, "mode": 0},
+    {"sm": 6, "wm": 26, "mode": 0},
+    {"sm": 10, "wm": 26, "mode": 2},
+    {"sm": 10, "wm": 16, "mode": 1},
+    {"sm": 12, "wm": 16, "mode": 2},
+    {"sm": 12, "mode": 0},
+    {"sm": 10, "wexp": 6, "wman": 18, "mode": 1},
     {"sm": 0, "mode": 1},
     {"sm": 0, "fa": False, "mode": 1},
     {"fa": False, "mode": 1},
-    {"fa": False, "sm": 3, "wm": 16, "mode": 1},
+    {"fa": False, "sm": 10, "wm": 16, "mode": 1},
     *({"sc": ~LACKED[mode], "sm": 1, "wm": 32, "mode": mode} for mode in (0, 1, 2)),
-    {"sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE, "sm": 4, "wm": 16, "mode": 0},
-    {"si": 1, "sm": 3, "sc": SHARED | CoreStages.TAKEN | CoreStages.ORDERED, "so": 1, "mode": 1},
+    {"sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE, "sm": 12, "wm": 16, "mode": 0},
+    {"si": 1, "sm": 10, "sc": SHARED | CoreStages.TAKEN | CoreStages.ORDERED, "so": 1, "mode": 1},
     {
         "si": 1,
-        "sm": 3,
+        "sm": 10,
         "sc": SHARED
         | CoreStages.REDUCED
         | CoreStages.FOLDED
@@ -100,14 +107,14 @@ KNOBS: list[dict[str, Any]] = [
         "so": 1,
         "mode": 2,
     },
-    {"si": 1, "sm": 4, "sc": ~CoreStages.NONE, "so": 2, "mode": 2},
+    {"si": 1, "sm": 12, "sc": ~CoreStages.NONE, "so": 2, "mode": 2},
     {"fa": False, "mode": 0},
-    {"fa": False, "sm": 4, "mode": 2},
+    {"fa": False, "sm": 12, "mode": 2},
     {"fa": False, "si": 1, "sm": 1, "wm": 32, "sc": ~LACKED[0], "so": 2, "mode": 0},
     {"fa": False, "sc": ~LACKED[2], "mode": 2},
     {"fa": False, "sc": ~LACKED[2] & ~CoreStages.CORRECTIONS, "mode": 2},
     {"hy": False},
-    {"hy": False, "sm": 4, "fa": False, "sc": ~LACKED[2], "mode": 2},
+    {"hy": False, "sm": 12, "fa": False, "sc": ~LACKED[2], "mode": 2},
 ]
 # In a rotation at 5/18 the sine reaches the packer's underflow, the bias being below the fraction; at 8/48 the
 # width of what the modes share crosses a power of two; 4 is an exponent that a rotation alone takes; and without
@@ -116,7 +123,7 @@ BOTH = [(5, 16, {}), (5, 18, {}), (8, 48, {}), (4, 16, {"mode": 0}), (8, 36, {"f
 
 
 # The deep tier: the formats of the default one and others at more operands, under the knobs one by one.
-DEEP_KNOBS: list[dict[str, Any]] = [{}, {"rs": 1}, {"sm": 3}, {"sm": 4}, {"sm": 4, "wm": 16}]
+DEEP_KNOBS: list[dict[str, Any]] = [{}, {"rs": 1}, {"sm": 10}, {"sm": 12}, {"sm": 12, "wm": 16}]
 DEEP_KNOBS += [
     {"si": 1, "so": 1, "sc": CoreStages.REDUCED | CoreStages.NORMALIZE_INPUT | CoreStages.NORMALIZE | CoreStages.PACK}
 ]
@@ -134,8 +141,8 @@ DEEP: list[tuple[int, int, int | str, dict[str, Any]]] = [
     (5, 16, 512, {"mode": 0, "sc": ~LACKED[0]}),
     (5, 16, 1000, {"sm": 1, "wm": 32}),
     (8, 24, 768, {"mode": 0}),
-    (8, 27, 256, {"mode": 2, "sm": 5, "wm": 16}),
-    (8, 48, 256, {"mode": 1, "sm": 5, "wm": 16}),
+    (8, 27, 256, {"mode": 2, "sm": 13, "wm": 16}),
+    (8, 48, 256, {"mode": 1, "sm": 14, "wm": 16}),
     *((wexp, wman, count, {"mode": 2}) for wexp, wman, count in VECTORINGS[:4]),
     (
         5,
@@ -274,7 +281,7 @@ def test_every_width_at_radix_4(wman: int) -> None:
 
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_the_attributes_reach_the_tables(mode: int) -> None:
-    model = Cordic(ZkfFormat(5, 16), wmultiplier=18, stage_core_mul=3).specialized(**SPECIALIZED[mode])
+    model = Cordic(ZkfFormat(5, 16), wmultiplier=18, stage_core_mul_level=10).specialized(**SPECIALIZED[mode])
     attribute = '(* syn_romstyle = "logic" *)'
     styled = replace(model, rom_attrs={"syn_romstyle": "logic"})
     lines = styled.compile().replace(styled.name, model.name).splitlines()  # the attributes name the module too
@@ -283,7 +290,7 @@ def test_the_attributes_reach_the_tables(mode: int) -> None:
     assert [line for line in lines if line.strip() != attribute] == model.compile().splitlines()
 
 
-@pytest.mark.parametrize("stages", [{}, {"sm": 3, "sc": ~CoreStages.NONE, "so": 2}, {"si": 1}], ids=str)
+@pytest.mark.parametrize("stages", [{}, {"sm": 10, "sc": ~CoreStages.NONE, "so": 2}, {"si": 1}], ids=str)
 @pytest.mark.parametrize("mode", [0, 1, 2])
 def test_cut_by_reset(mode: int, stages: dict[str, Any]) -> None:
     cut(build(ZkfFormat(5, 16), mode, **stages))
@@ -361,26 +368,28 @@ def test_cut_each_register(mode: int) -> None:
 def test_timing() -> None:
     """A register is a cycle of the modes on whose path it is; a seed takes its iterations off the engine."""
     fmt = ZkfFormat(6, 18)
-    plain: dict[str, Any] = {"rotation_seed": 0, "stage_core_mul": 3, "wmultiplier": 18, "fast": False}
+    plain: dict[str, Any] = {"rotation_seed": 0, "stage_core_mul_level": 10, "wmultiplier": 18, "fast": False}
     assert timings(Cordic(fmt, **plain)) == [(15, 15), (25, 25)]
     steps = {member: (1, 0) for member in ROTATION} | {member: (0, 1) for member in VECTORING}
     for member in CoreStages:
         rot, vec = steps.get(member, (1, 1))
         found = timings(Cordic(fmt, **plain, stage_core=member))
         assert found == [(15 + rot, 15 + rot), (25 + vec, 25 + vec)], member
-    assert timings(Cordic(fmt, rotation_seed=0, stage_core_mul=3, wmultiplier=18)) == [(14, 14), (21, 21)]
+    assert timings(Cordic(fmt, rotation_seed=0, stage_core_mul_level=10, wmultiplier=18)) == [(14, 14), (21, 21)]
     for seed in (1, 2):
         assert timings(Cordic(fmt, **plain | {"rotation_seed": seed})) == [(15 - seed,) * 2, (25, 25)]
     # The radix-4 division skips a digit of the quotient's zeros where the engine leaves two of them.
-    wide: dict[str, Any] = {"stage_core_mul": 4, "wmultiplier": 18}
+    wide: dict[str, Any] = {"stage_core_mul_level": 12, "wmultiplier": 18}
     fasts = [timings(Cordic(ZkfFormat(8, 36), **wide, fast=fast).specialized(vectoring=True)) for fast in (False, True)]
     assert fasts == [[(42, 42)], [(35, 35)]]
     # No effect in the mode that does not take it.
-    one: dict[str, Any] = {"stage_core_mul": 2, "wmultiplier": 18}
+    one: dict[str, Any] = {"stage_core_mul_level": 6, "wmultiplier": 18}
     vectoring = Cordic(fmt, **one, rotation_seed=2).specialized(vectoring=True)
     assert vectoring.timing == replace(vectoring, rotation_seed=0).timing
     # A vectoring's product is behind its division.
-    vectorings = [timings(Cordic(fmt, stage_core_mul=n, wmultiplier=18).specialized(vectoring=True)) for n in (0, 1, 3)]
+    vectorings = [
+        timings(Cordic(fmt, stage_core_mul_level=n, wmultiplier=18).specialized(vectoring=True)) for n in (0, 1, 9)
+    ]
     assert vectorings == [[(21, 21)]] * 3
 
 
@@ -409,8 +418,8 @@ def test_refusals() -> None:
     for knobs in refused:
         with pytest.raises(ValueError):
             Cordic(fmt, wmultiplier=18, **knobs)
-    with pytest.raises(ValueError, match=r"^stage_core_mul=-1 is negative$"):
-        Cordic(fmt, wmultiplier=18, stage_core_mul=-1)
+    with pytest.raises(ValueError, match=r"^stage_core_mul_level=-1 is negative$"):
+        Cordic(fmt, wmultiplier=18, stage_core_mul_level=-1)
     with pytest.raises(ValueError, match=r"^wmultiplier=15 is below 16$"):
         Cordic(fmt, wmultiplier=15)
     Cordic(fmt, wmultiplier=36)  # the default, the fastest configuration
@@ -420,13 +429,13 @@ def test_refusals() -> None:
 
 
 def test_what_a_mode_does_not_take_is_refused_as_it_is_built() -> None:
-    """A rotation's count of 0 and a vectoring's WEXP below 5; `timing` takes them."""
-    rotations = Cordic(ZkfFormat(6, 18), wmultiplier=36, stage_core_mul=0)
+    """A rotation's level 0 and a vectoring's WEXP below 5; `timing` takes them."""
+    rotations = Cordic(ZkfFormat(6, 18), wmultiplier=36, stage_core_mul_level=0)
     vectorings = Cordic(ZkfFormat(4, 16), wmultiplier=18)
     for mode in (0, 2):
         rotating = rotations.specialized(**SPECIALIZED[mode])
         assert rotating.timing
-        with pytest.raises(ValueError, match=r"^stage_core_mul=0 is below 1, which a rotation takes$"):
+        with pytest.raises(ValueError, match=r"^stage_core_mul_level=0 is below 1, which a rotation takes$"):
             Fragment.get(rotating.component(), None)
     for mode in (1, 2):
         vectoring = vectorings.specialized(**SPECIALIZED[mode])
@@ -437,52 +446,81 @@ def test_what_a_mode_does_not_take_is_refused_as_it_is_built() -> None:
     Fragment.get(vectorings.specialized(vectoring=False).component(), None)
 
 
-def test_a_count_above_the_product_is_refused_as_it_is_built() -> None:
+def test_a_level_past_the_product_is_refused() -> None:
     """
-    At 5/16 on 18-bit multipliers the product has 4 registers, 3 of a vectoring alone, and one multiplier's 3 at 6/18 on
-    36 bits; `timing` takes a count past them, 6 of a rotation alone past the iterations of the angle's product issued
-    ahead too.
+    Every build that rotates takes the levels of the rotation's own product, its `timing` refusing one past them, also
+    where both modes share a wider product; a vectoring alone takes the length's product's, refused as it is built.
     """
-    for fmt, wmultiplier, mode, count, top in (
-        (ZkfFormat(5, 16), 18, 0, 5, 4),
-        (ZkfFormat(5, 16), 18, 1, 4, 3),
-        (ZkfFormat(5, 16), 18, 2, 5, 4),
-        (ZkfFormat(5, 16), 18, 0, 6, 4),
-        (ZkfFormat(6, 18), 36, 2, 4, 3),
+    for fmt, wmultiplier, mode in (
+        (ZkfFormat(5, 16), 18, 0),
+        (ZkfFormat(5, 16), 18, 1),
+        (ZkfFormat(5, 16), 18, 2),
+        (ZkfFormat(6, 18), 36, 2),
+        (ZkfFormat(8, 36), 18, 2),
     ):
-        model = Cordic(fmt, wmultiplier=wmultiplier, stage_core_mul=count).specialized(**SPECIALIZED[mode])
+        operands = _geometry(fmt.wman).operands(int(mode == 1))
+        top = len(levels(*operands, signed=mode != 1, wmultiplier=wmultiplier)) - 1
+        model = Cordic(fmt, wmultiplier=wmultiplier, stage_core_mul_level=top).specialized(**SPECIALIZED[mode])
         assert model.timing
-        with pytest.raises(ValueError, match=rf"^stages={count} is outside 0\.\.{top}$"):
-            model.compile()
-    # At 8/36 the rotation's product alone has 4 registers, 5 with the length's.
-    both = Cordic(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=5)
-    both.compile()
-    with pytest.raises(ValueError, match=r"^stages=5 is outside 0\.\.4$"):
-        both.specialized(length=False).compile()
+        past = replace(model, stage_core_mul_level=top + 1)
+        with pytest.raises(ValueError, match=rf"^stage_core_mul_level={top + 1} is outside 0\.\.{top}$"):
+            past.compile() if mode == 1 else past.timing
+
+
+def test_both_modes_take_the_rotations_levels(monkeypatch: pytest.MonkeyPatch) -> None:
+    """
+    Where both modes share a wider product, each level builds it as the rotation's own, cut only where that one's sum
+    is, at its latency: at 6/18 on 24-bit multipliers only the shared one has a level of its sum to cut, and takes the
+    rotation's registers; on 27-bit ones the rotation's is one multiplier, whose O and G are one register, and the
+    shared one a grid, which tells them apart.
+    """
+    built: list[PmulWith] = []
+
+    def recorded(*args: Any, **kwargs: Any) -> PmulWith:
+        built.append(PmulWith(*args, **kwargs))
+        return built[-1]
+
+    monkeypatch.setattr(zkf._cordic, "PmulWith", recorded)
+
+    def product(model: Cordic) -> PmulWith:
+        built.clear()
+        Fragment.get(model.component(), None)
+        (found,) = built
+        return found
+
+    for wmultiplier in (24, 27):
+        placed = []
+        for level in range(1, 14):
+            both = Cordic(ZkfFormat(6, 18), wmultiplier=wmultiplier, stage_core_mul_level=level)
+            shared, alone = product(both), product(both.specialized(vectoring=False))
+            assert shared.latency == alone.latency == _rotation(both), (wmultiplier, level)
+            assert wmultiplier == 27 or shared._registers == alone._registers, level
+            placed.append(shared._registers)
+        assert wmultiplier == 24 or placed[:2] == [{"output"}, {"grid"}]
 
 
 def test_without_the_length(monkeypatch: pytest.MonkeyPatch) -> None:
     """
     Of a vectoring, the angle and its timing are as with the length, `r1` is `-inf` where a rotation keeps the port,
-    and the length's product is not built: without a rotation no multiplier, whose count is then ignored.
+    and the length's product is not built: without a rotation no multiplier, whose level is then ignored.
     """
     fmt = ZkfFormat(6, 18)
     a, b = fmt.encode(Fraction(3, 4)), fmt.encode(-2)
     for mode in (1, 2):
-        given = Cordic(fmt, wmultiplier=18, stage_core_mul=3).specialized(**SPECIALIZED[mode])
+        given = Cordic(fmt, wmultiplier=18, stage_core_mul_level=10).specialized(**SPECIALIZED[mode])
         model = given.specialized(**SPECIALIZED[mode], length=False)
         assert model.timing == given.timing
         assert model.evaluate(1, a, b) == given.evaluate(1, a, b)._replace(r1=fmt.inf(1))
         assert model.evaluate(1, a, b, oracle=True) == given.evaluate(1, a, b, oracle=True)._replace(r1=-mpmath.inf)
     assert model.evaluate(0, a, b) == given.evaluate(0, a, b)  # a rotation beside it
     alone = Cordic(fmt, wmultiplier=18).specialized(vectoring=True, length=False)
-    built: list[Pmul] = []
+    built: list[PmulWith] = []
 
-    def counted(*args: Any, **kwargs: Any) -> Pmul:
-        built.append(Pmul(*args, **kwargs))
+    def counted(*args: Any, **kwargs: Any) -> PmulWith:
+        built.append(PmulWith(*args, **kwargs))
         return built[-1]
 
-    monkeypatch.setattr(zkf._cordic, "Pmul", counted)
+    monkeypatch.setattr(zkf._cordic, "PmulWith", counted)
 
     def multiplies(model: Cordic) -> bool:
         built.clear()
@@ -490,14 +528,14 @@ def test_without_the_length(monkeypatch: pytest.MonkeyPatch) -> None:
         return bool(built)
 
     assert multiplies(alone.specialized(vectoring=True)) and not multiplies(alone)
-    assert verilog.convert(replace(alone, stage_core_mul=4).component(), name="core") == verilog.convert(
+    assert verilog.convert(replace(alone, stage_core_mul_level=12).component(), name="core") == verilog.convert(
         alone.component(), name="core"
     )
 
 
 def test_a_register_of_a_mode_lacked_is_ignored() -> None:
     for mode in (0, 1):
-        built = Cordic(ZkfFormat(6, 18), wmultiplier=18, stage_core_mul=3, stage_core=~LACKED[mode])
+        built = Cordic(ZkfFormat(6, 18), wmultiplier=18, stage_core_mul_level=10, stage_core=~LACKED[mode])
         built = built.specialized(**SPECIALIZED[mode])
         for member in LACKED[mode]:
             given = replace(built, stage_core=built.stage_core | member)

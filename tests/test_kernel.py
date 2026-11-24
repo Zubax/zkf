@@ -1,5 +1,4 @@
 import re
-from collections import Counter
 from dataclasses import replace
 
 import numpy as np
@@ -8,9 +7,10 @@ from amaranth.back import rtlil
 
 from _bench import Case, run_pipeline
 from _operands import SEED, random_bits
-from _trans import INSTRUMENTS, OTHERS, TABLES, every_row, instrument
+from _trans import INSTRUMENTS, OTHERS, TABLES, every_row, instrument, kernel_top, taken
 from zkf import Exp2, Log2, ZkfFormat
-from zkf._trans import Kernel, _schedule, _staging, kernel_levels, spec as table
+from zkf._pmul import levels
+from zkf._trans import Kernel, _ladder, _sizes, _staging, spec as table
 
 
 def arguments(width: int, rw: int, count: int) -> list[int]:
@@ -43,8 +43,8 @@ def run(function: str, wman: int, level: int, count: int = 400, wmultiplier: int
 
 @pytest.mark.parametrize("function, wman, fast", [(f, w, fast) for f, w, _, fast in TABLES])
 def test_every_table(function: str, wman: int, fast: bool) -> None:
-    """At every level, the last of which cuts every product as far as it goes."""
-    for level in kernel_levels(table(function, wman, 18, fast), 18):
+    """At every level that builds other registers than the one below, the last of which builds every one."""
+    for level in taken(table(function, wman, 18, fast), 18):
         run(function, wman, level, 200, fast=fast)
 
 
@@ -52,20 +52,21 @@ def test_every_table(function: str, wman: int, fast: bool) -> None:
 @pytest.mark.parametrize("wmultiplier", [8, 12, 24])
 @pytest.mark.parametrize("function", ["exp2", "log2"])
 def test_other_multipliers(function: str, wmultiplier: int) -> None:
-    for level in kernel_levels(table(function, 18, wmultiplier, False), wmultiplier):
+    for level in taken(table(function, 18, wmultiplier, False), wmultiplier):
         run(function, 18, level, 200, wmultiplier)
 
 
 def test_the_levels() -> None:
     """
-    At 8/36 on 18-bit multipliers `p1` is cut into 3x2 multipliers and `p2` into 2x2, the rest single multipliers;
-    each level adds their registers in its order, to the sums last.
+    At 8/36 on 18-bit multipliers `p1` is cut into 3x2 multipliers and `p2` into 2x2, the rest single multipliers: each
+    takes the level of `Pmul` of its column of `Exp2.stage_core_kernel_level`'s table.
     """
     spec = table("exp2", 36, 18, True)
-    p1 = (0, 1, 2, 2, 3, 3, 3, 4)
-    p2 = (0, 1, 2, 2, 2, 3, 3, 3)
-    single = (0, 0, 0, 1, 1, 1, 2, 2)
-    for level in range(8):
+    p1 = (0, 0, 2, 2, 8, 8, 8, 11, 11, 12, 12, 12, 13, 13)
+    p2 = (0, 2, 2, 2, 2, 4, 4, 4, 10, 10, 13, 13, 13, 13)
+    single = (0, 0, 0, 1, 1, 1, 6, 6, 6, 6, 6, 10, 10, 13)
+    assert kernel_top(spec, 18) == 13
+    for level in range(14):
         assert _staging(spec, 18, level) == {
             "p1": p1[level],
             "p3": single[level],
@@ -75,67 +76,46 @@ def test_the_levels() -> None:
         }
 
 
-def test_the_levels_that_add_registers() -> None:
-    """
-    Of single multipliers alone, of one 2x2 grid alone, of grids of 3x3 and 2x2 without single multipliers, of every
-    kind; and at 53 bits compact, where the only single multiplier's output is its pair's sum register, which the
-    pair, waiting for the chain, has already at level 2.
-    """
-    for function, wman, wmultiplier, fast, levels in (
-        ("exp2", 18, 18, True, [0, 3, 6]),
-        ("exp2", 18, 17, True, [0, 1, 2, 5]),
-        ("log2", 47, 18, False, [0, 1, 2, 4, 5, 7]),
-        ("exp2", 36, 18, True, [0, 1, 2, 3, 4, 5, 6, 7]),
-        ("exp2", 53, 18, False, [0, 1, 2, 4, 5, 6, 7]),
-    ):
-        assert kernel_levels(table(function, wman, wmultiplier, fast), wmultiplier) == levels
+@pytest.mark.parametrize("function, wman, width, fast", TABLES + OTHERS)
+def test_no_level_takes_fewer_cycles_than_the_one_below(function: str, wman: int, width: int, fast: bool) -> None:
+    """Nor does any product; the last level builds every register of every product."""
+    spec = table(function, wman, width, fast)
+    ladder = _ladder(spec, width)
+    for below, above in zip(ladder, ladder[1:]):
+        assert below.total <= above.total and all(below.stages[name] <= above.stages[name] for name in below.stages)
+    last = {name: len(levels(*size, signed=False, wmultiplier=width)) - 1 for name, size in _sizes(spec).items()}
+    assert _staging(spec, width, kernel_top(spec, width)) == last
 
 
 @pytest.mark.deep
-@pytest.mark.parametrize("function, wman, fast", [(f, w, fast) for f, w, _, fast in TABLES + OTHERS])
-def test_every_level_adds_a_register(function: str, wman: int, fast: bool, width: int = 18) -> None:
-    """Each level builds other cells than the one below, and no fewer register bits."""
+@pytest.mark.parametrize("function, wman, width, fast", TABLES + OTHERS)
+def test_no_level_takes_fewer_register_bits_than_the_one_below(
+    function: str, wman: int, width: int, fast: bool
+) -> None:
+    """And one that `taken` skips builds the text of the level below."""
     spec = table(function, wman, width, fast)
-
-    def built(level: int) -> tuple[Counter[tuple[str, tuple[str, ...]]], int]:
-        text = rtlil.convert(Kernel(spec, wmultiplier=width, level=level))
-        found = re.findall(r"cell (\S+) \S+\n(.*?)  end", text, re.S)
-        cells = Counter((kind, tuple(sorted(re.findall(r"parameter (.*)", body)))) for kind, body in found)
-        bits = sum(int(n) for n in re.findall(r"cell \$dff \S+\n\s+parameter \\WIDTH (\d+)", text))
-        return cells, bits
-
-    levels = [built(level) for level in kernel_levels(spec, width)]
-    for (cells_below, bits_below), (cells_above, bits_above) in zip(levels, levels[1:]):
-        assert cells_below != cells_above and bits_above >= bits_below
-    # A refused level, built anyway from its counts, is the level below it.
-    taken = kernel_levels(spec, width)
-    for level in range(taken[-1]):
-        if level not in taken:
-            below = max(at for at in taken if at < level)
-            kernel = Kernel(spec, wmultiplier=width, level=below)
-            kernel._schedule = _schedule(spec, width, _staging(spec, width, level))
-            text = rtlil.convert(kernel)
-            found = re.findall(r"cell (\S+) \S+\n(.*?)  end", text, re.S)
-            refused = Counter((kind, tuple(sorted(re.findall(r"parameter (.*)", body)))) for kind, body in found)
-            assert refused == levels[taken.index(below)][0], level
+    texts = [rtlil.convert(Kernel(spec, wmultiplier=width, level=k)) for k in range(kernel_top(spec, width) + 1)]
+    bits = [sum(int(n) for n in re.findall(r"cell \$dff \S+\n\s+parameter \\WIDTH (\d+)", text)) for text in texts]
+    assert bits == sorted(bits)
+    for level in set(range(len(texts))) - set(taken(spec, width)):
+        assert texts[level] == texts[level - 1], level
 
 
-def test_what_the_kernel_lacks_is_refused() -> None:
-    for function, wman, fast, level, message in (
-        ("exp2", 36, True, 8, r"level=8 is outside 0\.\.7"),
-        ("exp2", 36, True, -1, r"level=-1 is outside 0\.\.7"),
-        ("exp2", 18, True, 1, r"level=1 adds no register here; take 0 or 3"),
-        ("exp2", 53, False, 3, r"level=3 adds no register here; take 2 or 4"),
-    ):
-        with pytest.raises(ValueError, match=f"^{message}$"):
-            Kernel(table(function, wman, 18, fast), wmultiplier=18, level=level)
+def test_a_level_past_the_last_is_refused() -> None:
+    for function, wman, fast in (("exp2", 36, True), ("exp2", 18, True), ("log2", 53, False)):
+        spec = table(function, wman, 18, fast)
+        top = kernel_top(spec, 18)
+        Kernel(spec, wmultiplier=18, level=top)
+        for level in (-1, top + 1):
+            with pytest.raises(ValueError, match=rf"^level={level} is outside 0\.\.{top}$"):
+                Kernel(spec, wmultiplier=18, level=level)
 
 
 @pytest.mark.parametrize("name", INSTRUMENTS)
 def test_instruments(name: str) -> None:
     """Every row of each structure that formats reach only where no test can enumerate, at every level."""
     spec, wmultiplier = instrument(name), INSTRUMENTS[name][1]
-    for level in kernel_levels(spec, wmultiplier):
+    for level in taken(spec, wmultiplier):
         every_row(spec, Kernel(spec, wmultiplier=wmultiplier, level=level))
 
 
@@ -149,7 +129,7 @@ def test_every_row(function: str, wman: int, fast: bool) -> None:
     "model",
     [
         Exp2(ZkfFormat(6, 18), wmultiplier=18, stage_core_kernel_level=6),
-        Log2(ZkfFormat(6, 18), wmultiplier=18, stage_core_kernel_level=6, stage_core_mul=2),
+        Log2(ZkfFormat(6, 18), wmultiplier=18, stage_core_kernel_level=6, stage_core_mul_level=6),
     ],
 )
 def test_the_attributes_reach_the_text(model: Exp2 | Log2) -> None:

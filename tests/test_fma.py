@@ -156,16 +156,16 @@ def test_formats(row: tuple[int, int, int]) -> None:
     "knobs",
     [
         {"stage_input": 1},
-        {"stage_core_mul": 1},
+        {"stage_core_mul_level": 1},
         {"stage_core_add": Add.CoreStages.SUM},
         {"stage_output": 1},
         {
             "stage_input": 2,
-            "stage_core_mul": 2,
+            "stage_core_mul_level": 6,
             "stage_core_add": Add.CoreStages.SUM | Add.CoreStages.OPERANDS,
             "stage_output": 2,
         },
-        {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages.NONE},
+        {"stage_core_mul_level": 10, "stage_core_add": ~Add.CoreStages.NONE},
     ],
     ids=str,
 )
@@ -179,22 +179,22 @@ def test_registers(stage_core: Add.CoreStages) -> None:
     run(4, 7, 256, stage_core_add=stage_core)
 
 
-# The product cut in two and in three by 8-bit multipliers, at the ends of the counts that each takes, and every stage
+# The product cut in two and in three by 8-bit multipliers, at the ends of the levels that each takes, and every stage
 # at once.
 @pytest.mark.parametrize(
     "row",
     [
-        (4, 12, 256, 8, {"stage_core_mul": 0}),
-        (4, 12, 256, 8, {"stage_core_mul": 3}),
-        (4, 17, 256, 8, {"stage_core_mul": 0}),
-        (4, 17, 256, 8, {"stage_core_mul": 4}),
-        (6, 18, 384, 18, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages.NONE}),
+        (4, 12, 256, 8, {"stage_core_mul_level": 0}),
+        (4, 12, 256, 8, {"stage_core_mul_level": 13}),
+        (4, 17, 256, 8, {"stage_core_mul_level": 0}),
+        (4, 17, 256, 8, {"stage_core_mul_level": 13}),
+        (6, 18, 384, 18, {"stage_core_mul_level": 6, "stage_core_add": ~Add.CoreStages.NONE}),
         (
             6,
             18,
             384,
             18,
-            {"stage_input": 1, "stage_core_mul": 3, "stage_core_add": ~Add.CoreStages.NONE, "stage_output": 1},
+            {"stage_input": 1, "stage_core_mul_level": 10, "stage_core_add": ~Add.CoreStages.NONE, "stage_output": 1},
         ),
     ],
     ids=str,
@@ -215,12 +215,12 @@ def test_every_triple(shard: int) -> None:
 
 def test_refusals() -> None:
     """
-    The product refuses a count past its registers as it is built: one multiplier's 3, a 2x2 grid's 3 at 12 bits on
-    8-bit ones, a 3x3 grid's 4 at 17.
+    A level outside the product's range is refused as the model is made, by the knob's name: one multiplier's, a 2x2
+    grid's at 12 bits on 8-bit ones, a 3x3's.
     """
-    for wman, wmultiplier, count, top in ((6, 18, 4, 3), (6, 18, -1, 3), (12, 8, 4, 3), (17, 8, 5, 4)):
-        with pytest.raises(ValueError, match=rf"^stages={count} is outside 0\.\.{top}$"):
-            Fma(ZkfFormat(4, wman), wmultiplier=wmultiplier, stage_core_mul=count).compile()
+    for wman, wmultiplier, level, top in ((6, 18, 14, 13), (6, 18, -1, 13), (12, 8, 14, 13), (17, 8, 14, 13)):
+        with pytest.raises(ValueError, match=rf"^stage_core_mul_level={level} is outside 0\.\.{top}$"):
+            Fma(ZkfFormat(4, wman), wmultiplier=wmultiplier, stage_core_mul_level=level)
 
 
 @pytest.mark.deep
@@ -241,7 +241,7 @@ def test_deep_stages(stages: int) -> None:
         | Add.CoreStages.NORMALIZE
         | Add.CoreStages.NORMALIZED
     )
-    values: dict[str, Any] = {"stage_core_mul": 2, "stage_input": 1, "stage_core_add": core, "stage_output": 1}
+    values: dict[str, Any] = {"stage_core_mul_level": 6, "stage_input": 1, "stage_core_add": core, "stage_output": 1}
     run(4, 6, 256, **{name: value for bit, (name, value) in enumerate(values.items()) if (stages >> bit) & 1})
 
 
@@ -251,26 +251,26 @@ def test_deep_stages(stages: int) -> None:
     [
         (7, 12, 512, {}),
         (9, 24, 512, {}),
-        (8, 36, 768, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages.NONE}),
-        (8, 36, 768, {"stage_core_mul": 3, "stage_core_add": ~Add.CoreStages.NONE}),
+        (8, 36, 768, {"stage_core_mul_level": 6, "stage_core_add": ~Add.CoreStages.NONE}),
+        (8, 36, 768, {"stage_core_mul_level": 10, "stage_core_add": ~Add.CoreStages.NONE}),
         (
             2,
             4,
             0,
             {
                 "stage_input": 1,
-                "stage_core_mul": 2,
+                "stage_core_mul_level": 6,
                 "stage_core_add": ~Add.CoreStages.NONE,
                 "stage_output": 1,
             },
         ),
-        (3, 4, 4096, {"stage_core_mul": 2, "stage_core_add": ~Add.CoreStages.NONE, "stage_output": 1}),
+        (3, 4, 4096, {"stage_core_mul_level": 6, "stage_core_add": ~Add.CoreStages.NONE, "stage_output": 1}),
         (
             6,
             18,
             1024,
             {
-                "stage_core_mul": 2,
+                "stage_core_mul_level": 6,
                 "stage_core_add": Add.CoreStages.SUM | Add.CoreStages.NORMALIZE | Add.CoreStages.PACK,
             },
         ),

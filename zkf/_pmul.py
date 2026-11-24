@@ -1,5 +1,6 @@
+import re
 from collections.abc import Collection
-from functools import reduce
+from functools import cache, reduce
 from operator import add, or_
 
 from amaranth.hdl import Cat, Const, Module, Shape, ShapeLike, Signal, Value
@@ -8,6 +9,10 @@ from amaranth.lib.wiring import In, Out
 from amaranth.utils import ceil_log2
 
 from ._block import Attrs, pipe, zext
+
+_RUNGS = ("O", "G", "S", "GO", "CS", "CO", "GG2", "GS", "GSO", "CGO", "CGS", "CGSO", "CGG2SO")
+"""The registers of levels 1 to 13, as `Mul.stage_core_mul_level` lists them."""
+_NAMES = {"C": "capture", "G": "grid", "G2": "grid2", "O": "output"}
 
 
 class Pmul(wiring.Component):
@@ -18,7 +23,7 @@ class Pmul(wiring.Component):
 
     The operands are cut into slices that fit `wmultiplier`-bit multipliers, one row of the grid per slice of `a`,
     and the products are summed: unsigned ones by the diagonals of the grid, signed ones by rows, then the rows.
-    `stages` turns on as many registers, in the order that `Mul.stage_core_mul` takes them, and is the latency;
+    `level` takes the registers as `Mul.stage_core_mul_level` does; `latency` follows from them.
     `attrs` go as `Mul.mul_attrs` do.
 
     This component is used to efficiently implement more complex floating-point arithmetic that uses integer
@@ -38,20 +43,14 @@ class Pmul(wiring.Component):
         *,
         signed: bool,
         wmultiplier: int,
-        stages: int,
+        level: int,
         sideband: ShapeLike | None = None,
         attrs: Attrs | None = None,
     ) -> None:
-        if wmultiplier < 2:
-            raise ValueError(f"wmultiplier={wmultiplier} is below 2")
-        top = len(positions(wa, wb, signed=signed, wmultiplier=wmultiplier))
-        if not 0 <= stages <= top:
-            raise ValueError(f"stages={stages} is outside 0..{top}")
         self._ga, self._gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
         self._attrs = dict(attrs or {})
         self._wa, self._wb, self._signed, self._sideband = wa, wb, signed, sideband
-        self._stages = stages
-        self._capture = stages >= 2
+        self._registers = registers(level, wa, wb, signed=signed, wmultiplier=wmultiplier)
         members = {"in_valid": In(1), "a": In(wa), "b": In(wb), "out_valid": Out(1), "p": Out(wa + wb)}
         if sideband is not None:
             members |= {"sb_in": In(sideband), "sb_out": Out(sideband)}
@@ -59,12 +58,12 @@ class Pmul(wiring.Component):
 
     @property
     def latency(self) -> int:
-        return self._stages
+        return len(self._registers)
 
     def elaborate(self, platform: object) -> Module:
         m = Module()
-        wp, ga, gb, stages = self._wa + self._wb, self._ga, self._gb, self._stages
-        cuts = range(stages - 3)
+        wp, ga, gb, at = self._wa + self._wb, self._ga, self._gb, self._registers
+        cuts = sorted(int(name[3:]) - 1 for name in at if name.startswith("sum"))
         if self._sideband is None:
             valid = self.in_valid
             for k in range(self.latency):
@@ -77,7 +76,7 @@ class Pmul(wiring.Component):
         m.d.comb += self.out_valid.eq(valid)
 
         c_a, c_b = self.a, self.b
-        if self._capture:
+        if "capture" in at:
             c_a = Signal(self._wa, name="c_a", reset_less=True, attrs=self._attrs)
             c_b = Signal(self._wb, name="c_b", reset_less=True, attrs=self._attrs)
             m.d.sync += [c_a.eq(self.a), c_b.eq(self.b)]
@@ -102,9 +101,12 @@ class Pmul(wiring.Component):
             for j in range(gb):
                 bits = high[i][j] - low[i][j]
                 shape = Shape(bits, signed=self._signed)
-                product = a_s[i] * b_s[j]
                 q = Signal(shape, name=f"m{i}_{j}", reset_less=True)
-                m.d["sync" if stages >= 3 else "comb"] += q.eq(product)
+                m.d["sync" if "grid" in at else "comb"] += q.eq(a_s[i] * b_s[j])
+                if "grid2" in at:
+                    q2 = Signal(shape, name=f"m{i}_{j}_r2", reset_less=True)
+                    m.d.sync += q2.eq(q)
+                    q = q2
                 above = (q[-1] if self._signed else Const(0, 1)).replicate(max(0, wp - high[i][j]))
                 placed = Signal(wp, name=f"pp{i}_{j}")
                 m.d.comb += placed.eq(Cat(Const(0, low[i][j]), q, above))
@@ -131,10 +133,13 @@ class Pmul(wiring.Component):
         else:
             # Sign-extended products overlap: they are summed by rows, then the rows.
             split = _levels(gb)
-            rows = [self._sum(m, f"row{i}", pp[i], low[i], high[i], high[i][gb - 1], cuts[:split]) for i in range(ga)]
+            rows = [
+                self._sum(m, f"row{i}", pp[i], low[i], high[i], high[i][gb - 1], [c for c in cuts if c < split])
+                for i in range(ga)
+            ]
             lows, highs = [low[i][0] for i in range(ga)], [high[i][gb - 1] for i in range(ga)]
-            total = self._sum(m, "sum", rows, lows, highs, wp, range(len(cuts) - split))
-        if stages:
+            total = self._sum(m, "sum", rows, lows, highs, wp, [c - split for c in cuts if c >= split])
+        if "output" in at:
             p_r = Signal(wp, name="p_r0", reset_less=True)
             m.d.sync += p_r.eq(total)
             total = p_r
@@ -211,11 +216,35 @@ class Pmul(wiring.Component):
         return joined(f"{name}_last", nodes, top, _levels(count) - 1 in registered)[0]
 
 
+class PmulWith(Pmul):
+    """
+    A product of the registers given, not those of a level: Cordic's, and a kernel's whose output follows its pair's
+    sum.
+    """
+
+    def __init__(
+        self,
+        wa: int,
+        wb: int,
+        placed: frozenset[str],
+        *,
+        signed: bool,
+        wmultiplier: int,
+        sideband: ShapeLike | None = None,
+        attrs: Attrs | None = None,
+    ) -> None:
+        assert placed <= levels(wa, wb, signed=signed, wmultiplier=wmultiplier)[-1], placed
+        super().__init__(wa, wb, signed=signed, wmultiplier=wmultiplier, level=0, sideband=sideband, attrs=attrs)
+        self._registers = placed
+
+
 def slices(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> tuple[int, int]:
     """
     How many slices `Pmul` cuts each operand into: the fewest of `wmultiplier` bits, or of `wmultiplier - 1` if signed
     since every slice but the top one is zero-extended; e.g. 66x41 gives 4x3 at 18.
     """
+    if wmultiplier < 2:
+        raise ValueError(f"wmultiplier={wmultiplier} is below 2")
 
     def count(width: int) -> int:
         return 1 if width <= wmultiplier else -(-width // (wmultiplier - signed))
@@ -223,11 +252,48 @@ def slices(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> tuple[int, in
     return count(wa), count(wb)
 
 
-def positions(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> tuple[str, ...]:
-    """The registers of `Pmul` in the order that `stages` takes them, each only where it splits something."""
+@cache
+def levels(wa: int, wb: int, *, signed: bool, wmultiplier: int, cuts: int | None = None) -> tuple[frozenset[str], ...]:
+    """
+    The registers of `Pmul` at each level of `Mul.stage_core_mul_level`, from 0; with `cuts`, as if its sum had only
+    that many levels to cut.
+    """
     ga, gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
-    levels = _levels(gb) + _levels(ga) if signed else _levels(ga + gb - 1)
-    return ("output", "capture", "grid") + tuple(f"sum{k}" for k in range(1, levels))
+    sums = sum_cuts(wa, wb, signed=signed, wmultiplier=wmultiplier) if cuts is None else cuts
+    out: list[frozenset[str]] = [frozenset()]
+    for rung in _RUNGS:
+        tokens = re.findall("G2|.", rung)
+        built = frozenset(("sum1" if sums else "output") if token == "S" else _NAMES[token] for token in tokens)
+        if ga == gb == 1:
+            chain = len(built & {"grid", "grid2", "output"})
+            built = (built - {"grid", "grid2", "output"}) | frozenset(("output", "grid", "grid2")[:chain])
+        out.append(built)
+    top = out[-1]
+    for k in range(2, sums + 1):
+        deeper = {f"sum{n}" for n in range(2, k + 1)}
+        out += [top - {"grid2"} | deeper, top | deeper]
+    return tuple(out)
+
+
+def registers(
+    level: int, wa: int, wb: int, *, signed: bool, wmultiplier: int, knob: str = "level", cuts: int | None = None
+) -> frozenset[str]:
+    """The registers of `levels` at the level, which it refuses outside their range, naming the knob that gave it."""
+    out = levels(wa, wb, signed=signed, wmultiplier=wmultiplier, cuts=cuts)
+    if not 0 <= level < len(out):
+        raise ValueError(f"{knob}={level} is outside 0..{len(out) - 1}")
+    return out[level]
+
+
+def latency(level: int, wa: int, wb: int, *, signed: bool, wmultiplier: int, knob: str = "level") -> int:
+    """The latency of `Pmul` at the level, refused as `registers` refuses it."""
+    return len(registers(level, wa, wb, signed=signed, wmultiplier=wmultiplier, knob=knob))
+
+
+def sum_cuts(wa: int, wb: int, *, signed: bool, wmultiplier: int) -> int:
+    """The levels of the sum of `Pmul`'s grid that a register can cut: all but the last."""
+    ga, gb = slices(wa, wb, signed=signed, wmultiplier=wmultiplier)
+    return max(0, (_levels(gb) + _levels(ga) if signed else _levels(ga + gb - 1)) - 1)
 
 
 def _levels(count: int) -> int:

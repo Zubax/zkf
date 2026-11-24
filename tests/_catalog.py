@@ -27,7 +27,7 @@ from zkf import (
 )
 
 F18, F24, F36 = ZkfFormat(6, 18), ZkfFormat(8, 24), ZkfFormat(8, 36)
-_FMA36: dict[str, Any] = dict(stage_core_mul=3, wmultiplier=18)
+_FMA36: dict[str, Any] = dict(stage_core_mul_level=10, wmultiplier=18)
 _CORDIC_SHARED = Cordic.CoreStages.NORMALIZE | Cordic.CoreStages.PACK
 _CORDIC_ROTATION = _CORDIC_SHARED | Cordic.CoreStages.REDUCED | Cordic.CoreStages.FOLDED
 _CORDIC_VECTORING = _CORDIC_SHARED | Cordic.CoreStages.TAKEN | Cordic.CoreStages.ORDERED | Cordic.CoreStages.ANGLE
@@ -54,14 +54,14 @@ CATALOG: dict[str, Block] = {
         Ilog2(F24, stage_input=1),
         Ilog2(ZkfFormat(11, 53), wint=64),
         # At 0 Diamond makes 79.9 MHz: the product and its rounding in one cycle.
-        Mul(F18, stage_core_mul=1, wmultiplier=18),
-        Mul(F18, stage_core_mul=2, wmultiplier=18),
-        Mul(F18, stage_core_mul=1, stage_output=1, wmultiplier=18),
-        # At 2 Vivado on Artix-7 sums the DSP tiles' products in fabric in their cycle: 122.1 to 148.3 MHz.
-        Mul(F36, stage_core_mul=3, stage_output=1, wmultiplier=18),
-        Mul(F36, stage_core_mul=3, wmultiplier=18),
-        Mul(F36, stage_input=1, stage_core_mul=3, wmultiplier=18),
-        Mul(ZkfFormat(8, 25), stage_core_mul=3, wmultiplier=18),
+        Mul(F18, stage_core_mul_level=1, wmultiplier=18),
+        Mul(F18, stage_core_mul_level=6, wmultiplier=18),
+        Mul(F18, stage_core_mul_level=1, stage_output=1, wmultiplier=18),
+        # At level 6 Vivado on Artix-7 sums the DSP tiles' products in fabric in their cycle: 122.1 to 148.3 MHz.
+        Mul(F36, stage_core_mul_level=10, stage_output=1, wmultiplier=18),
+        Mul(F36, stage_core_mul_level=10, wmultiplier=18),
+        Mul(F36, stage_input=1, stage_core_mul_level=10, wmultiplier=18),
+        Mul(ZkfFormat(8, 25), stage_core_mul_level=10, wmultiplier=18),
         # Without ALIGN Diamond's placements make 98.2 to 105.6 MHz, from the operands through the alignment into the
         # sum; without OPERANDS nextpnr's seeds make 73.1 to 75.9.
         Add(
@@ -82,7 +82,7 @@ CATALOG: dict[str, Block] = {
         # the sum into the count.
         Fma(
             F18,
-            stage_core_mul=1,
+            stage_core_mul_level=1,
             stage_core_add=Add.CoreStages.DECODE
             | Add.CoreStages.OPERANDS
             | Add.CoreStages.ALIGNED
@@ -146,21 +146,21 @@ CATALOG: dict[str, Block] = {
         Rint(F18, stage_core=Rint.CoreStages.MASK),
         # On Cyclone IV E C8 Quartus makes 95.7 MHz, from the mask into the integer.
         _grade(Rint(F36, wint=44, stage_core=Rint.CoreStages.MASK), cyclone4_grade=7),
-        Exp2(F18, stage_core_kernel_level=6, wmultiplier=18),
-        Log2(F18, stage_core_kernel_level=6, stage_core_mul=2, wmultiplier=18),
-        Log2(F18, stage_core_kernel_level=6, stage_core_mul=2, stage_output=1, wmultiplier=18),
-        Exp2(F24, stage_core_kernel_level=6, wmultiplier=18),
-        Log2(F24, stage_core_kernel_level=6, stage_core_mul=3, wmultiplier=18),
-        Exp2(F36, stage_core_kernel_level=6, wmultiplier=18),
-        # Without ALIGN Vivado on Artix-7 misses by 0.634 ns, in the shift into the last product.
-        Log2(F36, stage_core_kernel_level=6, stage_core_mul=3, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
+        Exp2(F18, stage_core_kernel_level=8, wmultiplier=18),
+        Log2(F18, stage_core_kernel_level=8, stage_core_mul_level=6, wmultiplier=18),
+        Log2(F18, stage_core_kernel_level=8, stage_core_mul_level=6, stage_output=1, wmultiplier=18),
+        Exp2(F24, stage_core_kernel_level=8, wmultiplier=18),
+        Log2(F24, stage_core_kernel_level=8, stage_core_mul_level=10, wmultiplier=18),
+        Exp2(F36, stage_core_kernel_level=8, wmultiplier=18),
+        # Without ALIGN Vivado on Artix-7 misses by 0.358 ns, in the shift into the last product.
+        Log2(F36, stage_core_kernel_level=8, stage_core_mul_level=10, stage_core=Log2.CoreStages.ALIGN, wmultiplier=18),
         # Without PACK nextpnr's seeds make 81.6 to 87.5 MHz, from the normalizer's count into the result; without
         # FOLDED nextpnr's seeds make 99.7 to 103.5, from the reduced coordinate into the engine.
-        Cordic(F18, stage_core_mul=3, stage_core=_CORDIC_ROTATION, rotation_seed=0, wmultiplier=18).specialized(
+        Cordic(F18, stage_core_mul_level=10, stage_core=_CORDIC_ROTATION, rotation_seed=0, wmultiplier=18).specialized(
             vectoring=False
         ),
-        # At stage_core_mul=2 nextpnr's seeds make 89.7 to 93.0 MHz, in the length's product.
-        Cordic(F18, stage_core_mul=3, stage_core=_CORDIC_VECTORING, wmultiplier=18).specialized(vectoring=True),
+        # At level 6 nextpnr's seeds make 89.7 to 93.0 MHz, in the length's product.
+        Cordic(F18, stage_core_mul_level=10, stage_core=_CORDIC_VECTORING, wmultiplier=18).specialized(vectoring=True),
         # Without NORMALIZE_INPUT Vivado on Artix-7 -1 misses by 0.093 ns, from the sine's sum into the normalizer.
         # Grade 7 is closed too, but thinly: Diamond makes 100.8 to 110.4 MHz there, from the engine's adds of an
         # iteration, and nextpnr's seeds 104.3 to 114.5; without the attribute Diamond puts the tables in block RAM and
@@ -169,7 +169,7 @@ CATALOG: dict[str, Block] = {
             _grade(
                 Cordic(
                     F36,
-                    stage_core_mul=4,
+                    stage_core_mul_level=12,
                     stage_core=_CORDIC_ROTATION | Cordic.CoreStages.NORMALIZE_INPUT,
                     wmultiplier=18,
                     rom_attrs={"syn_romstyle": "logic"},
@@ -184,7 +184,9 @@ CATALOG: dict[str, Block] = {
         # RAM into `z`.
         _large(
             _grade(
-                Cordic(F36, stage_core_mul=4, stage_core=_CORDIC_VECTORING, wmultiplier=18).specialized(vectoring=True),
+                Cordic(F36, stage_core_mul_level=12, stage_core=_CORDIC_VECTORING, wmultiplier=18).specialized(
+                    vectoring=True
+                ),
                 ecp5_grade=8,
                 artix7_grade=2,
                 cyclone4_grade=7,
@@ -200,7 +202,7 @@ CATALOG: dict[str, Block] = {
             _grade(
                 Cordic(
                     F36,
-                    stage_core_mul=4,
+                    stage_core_mul_level=12,
                     stage_core=~(
                         Cordic.CoreStages.SHIFT
                         | Cordic.CoreStages.CORRECTIONS

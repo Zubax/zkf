@@ -6,7 +6,7 @@ from amaranth.lib.wiring import In, Out
 
 from ._add import Add, AddCore
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, ge, pipe, zext
-from ._pmul import Pmul
+from ._pmul import Pmul, latency, registers
 from ._value import Zkf
 
 
@@ -16,7 +16,7 @@ class Fma(Operator):
 
     operator = "fma"
     stage_input: int = 0
-    stage_core_mul: int = 0
+    stage_core_mul_level: int = 0
     """As `Mul`'s."""
     stage_core_add: Add.CoreStages = Add.CoreStages.NONE
     """See `Add.CoreStages`; the sum's decoded operands are the product and `c`."""
@@ -32,10 +32,20 @@ class Fma(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
+        self.timing  # refuses a level outside the product's range
 
     @property
     def timing(self) -> Timing:
-        return Timing(self.stage_input + self.stage_core_mul + len(self.stage_core_add) + self.stage_output, 1)
+        wman = self.fmt.wman
+        product = latency(
+            self.stage_core_mul_level,
+            wman,
+            wman,
+            signed=False,
+            wmultiplier=self.wmultiplier,
+            knob="stage_core_mul_level",
+        )
+        return Timing(self.stage_input + product + len(self.stage_core_add) + self.stage_output, 1)
 
     @property
     def signature(self) -> wiring.Signature:
@@ -112,7 +122,7 @@ class _Fma(wiring.Component):
             wman,
             signed=False,
             wmultiplier=model.wmultiplier,
-            stages=model.stage_core_mul,
+            level=model.stage_core_mul_level,
             sideband=side,
             attrs=model.mul_attrs,
         )
@@ -120,7 +130,9 @@ class _Fma(wiring.Component):
         # A non-finite operand enters as a zero magnitude, so that no mask of the product or of `c` is needed behind the
         # multiplier, where its flag would fan out over the whole magnitude; the factors only where the capture register
         # takes the mask off the multiplier's path.
-        masked = model.stage_core_mul >= 2
+        masked = "capture" in registers(
+            model.stage_core_mul_level, wman, wman, signed=False, wmultiplier=model.wmultiplier
+        )
         m.d.comb += pmul.a.eq(Mux(a_zero | a_inf, Const(0, wman), a.significand) if masked else a.significand)
         m.d.comb += pmul.b.eq(Mux(b_zero | b_inf, Const(0, wman), b.significand) if masked else b.significand)
         waiting = bundle(

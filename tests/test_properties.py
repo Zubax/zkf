@@ -27,7 +27,7 @@ STAGES: dict[str, list[dict[str, Any]]] = {
         },
         {"stage_core": ~Add.CoreStages.NONE},
     ],
-    "mul": [{"stage_core_mul": count} for count in (2, 3)],
+    "mul": [{"stage_core_mul_level": level} for level in (6, 10)],
 }
 
 

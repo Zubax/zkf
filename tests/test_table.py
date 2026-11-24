@@ -8,8 +8,8 @@ import pytest
 
 from zkf import Exp2, Log2, UnsupportedFormat, ZkfFormat
 from _certificate import certify
-from _trans import OTHERS, TABLES, build, every_row, simulate
-from zkf._trans import Kernel, Spec, _arith_range, kernel_levels, spec as table
+from _trans import OTHERS, TABLES, build, every_row, kernel_top, simulate
+from zkf._trans import Kernel, Spec, _arith_range, spec as table
 
 
 @pytest.mark.parametrize("key", TABLES + OTHERS, ids=str)
@@ -40,7 +40,7 @@ def test_every_width(function: str, wman: int, fast: bool) -> None:
     for spec in set(found.values()):
         certify(spec)
     for width, spec in found.items():
-        every_row(spec, Kernel(spec, wmultiplier=width, level=kernel_levels(spec, width)[-1]))
+        every_row(spec, Kernel(spec, wmultiplier=width, level=kernel_top(spec, width)))
     every = ~(Exp2 if function == "exp2" else Log2).CoreStages.NONE
     for width in sorted({min(width for width in found if width >= 16), 18, 24}):
         simulate(build(function, ZkfFormat(8, wman), width, stage_core=every, fast=fast), 1000)

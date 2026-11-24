@@ -7,7 +7,7 @@ from amaranth.lib.wiring import In, Out
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, pipe
 from ._pack import Pack
 from ._fixed_to_float import fixed_to_float_reference
-from ._pmul import Pmul
+from ._pmul import Pmul, latency
 from ._value import Zkf
 
 
@@ -17,16 +17,38 @@ class Mul(Operator):
 
     operator = "mul"
     stage_input: int = 0
-    stage_core_mul: int = 0
+    stage_core_mul_level: int = 0
     """
-    Taken in this order: the output, the operands' capture, the grid of products (a lone multiplier's pipeline
-    register), then each level of the grid's sum but its last.
+    The registers of the product, by level:
+
+        level         registers
+        0             none
+        1             O
+        2             G
+        3             S
+        4             G+O
+        5             C+S
+        6             C+O
+        7             G+G2
+        8             G+S
+        9             G+S+O
+        10            C+G+O
+        11            C+G+S
+        12            C+G+S+O
+        13            C+G+G2+S+O
+        14, 15, ...   each further level of the grid's sum: first in place of G2, then with it
+
+    C captures the operands ahead of the multipliers; G registers the product of each multiplier, G2 again; S cuts the
+    grid's sum after its first level, and is O where the sum has one level or none; O registers the whole product. On a
+    lone multiplier, G, G2 and O are one chain behind it. The latency is the count of registers; a level past the last
+    is refused.
+    Which level of a latency serves best depends on the logic around the product and on the flow.
     """
     stage_output: int = 0
     wmultiplier: int
     """The operand width of the target's multipliers."""
     mul_attrs: Attrs | None = field(default=None, compare=False)
-    """On the product's operand capture: from `stage_core_mul=2` on."""
+    """On the product's operand capture, at the levels that have it."""
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -34,10 +56,20 @@ class Mul(Operator):
             raise ValueError(f"stage_input={self.stage_input} is negative")
         if self.stage_output < 0:
             raise ValueError(f"stage_output={self.stage_output} is negative")
+        self.timing  # refuses a level outside the product's range
 
     @property
     def timing(self) -> Timing:
-        return Timing(self.stage_input + self.stage_core_mul + self.stage_output, 1)
+        wman = self.fmt.wman
+        product = latency(
+            self.stage_core_mul_level,
+            wman,
+            wman,
+            signed=False,
+            wmultiplier=self.wmultiplier,
+            knob="stage_core_mul_level",
+        )
+        return Timing(self.stage_input + product + self.stage_output, 1)
 
     @property
     def signature(self) -> wiring.Signature:
@@ -91,7 +123,7 @@ class _Mul(wiring.Component):
             wman,
             signed=False,
             wmultiplier=model.wmultiplier,
-            stages=model.stage_core_mul,
+            level=model.stage_core_mul_level,
             sideband=side,
             attrs=model.mul_attrs,
         )

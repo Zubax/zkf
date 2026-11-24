@@ -118,8 +118,8 @@ def models(cls: type[Block], fmt: ZkfFormat, fixed: dict[str, object], every_pai
         try:
             model = make(cls, fmt, **(knobs | fixed))
         except ValueError as refusal:
-            # A kernel's level that adds no register or is past the last.
-            expected = r"level=\d+ (is outside 0\.\.\d+|adds no register here; take \d+ or \d+)"
+            # A product's or a kernel's level past the last.
+            expected = r"stage_core_(mul|kernel)_level=\d+ is outside 0\.\.\d+"
             assert re.fullmatch(expected, str(refusal)), refusal
             continue
         if admits(model):
@@ -160,7 +160,7 @@ def test_lint(linter: str, proc_nomux: bool, tmp_path: Path) -> None:
     # vectorings without the length, and a rounding alone behind an input stage.
     specs = list(CATALOG.values()) + [next(models(cls, fmt, fixed)) for cls, fmt, fixed in MODELS]
     for mode in (0, 1, 2):
-        registers = Cordic(ZkfFormat(5, 17), wmultiplier=18, stage_core_mul=3, stage_core=~LACKED[mode])
+        registers = Cordic(ZkfFormat(5, 17), wmultiplier=18, stage_core_mul_level=13, stage_core=~LACKED[mode])
         specs.append(registers.specialized(**SPECIALIZED[mode]))
     cordic = Cordic(ZkfFormat(5, 17), wmultiplier=18)
     specs += [cordic.specialized(vectoring=True, length=False), cordic.specialized(length=False)]

@@ -6,9 +6,9 @@ from dataclasses import fields
 from itertools import combinations
 
 import zkf._cordic
-import zkf._log2
-from zkf import Block, Cordic, Fma, Log2, Mul, Operator, Resize, RoundMode, ZkfFormat
-from zkf._pmul import positions
+from zkf import Block, Cordic, Operator, Resize, RoundMode, ZkfFormat
+from zkf._pmul import levels
+from zkf._trans import _KERNEL
 
 WIDTHS = {"fmt", "wmultiplier", "w", "wk", "wint", "fmt_in"}
 """What a sweep is given and does not vary."""
@@ -16,8 +16,8 @@ WIDTHS = {"fmt", "wmultiplier", "w", "wk", "wint", "fmt_in"}
 KNOBS: Mapping[str, tuple[object, ...]] = {
     "stage_input": (0, 1, 3),
     "stage_output": (0, 1, 3),
-    "stage_core_mul": (0, 1, 2, 3, 4, 5),
-    "stage_core_kernel_level": (0, 1, 2, 3, 4, 5, 6, 7, 8),
+    "stage_core_mul_level": tuple(range(16)),
+    "stage_core_kernel_level": tuple(range(len(_KERNEL) + 2)),
     "rotation_seed": (0, 1, 2),
     "n": (0, 1, 7),
     "fast": (False, True),
@@ -37,26 +37,19 @@ def make(cls: type[Block], fmt: ZkfFormat, **knobs: object) -> Block:
 
 def admits(model: Block) -> bool:
     """
-    Whether the product of a model has the registers that its count asks for, and Cordic's modes take its knobs, which
-    only elaboration refuses. Cordic's rotation widens its product's angle only where that keeps the slices, so the
-    product's top is that of its operands.
+    Whether Cordic's modes take its knobs, which only its timing and elaboration refuse: a build that rotates takes the
+    levels of the rotation's own product, a vectoring alone those of the length's.
     """
-    if isinstance(model, (Mul, Fma)):
-        wa = wb = model.fmt.wman
-    elif isinstance(model, Log2):
-        wa, wb = zkf._log2._last(model._spec, model.fmt)
-    elif isinstance(model, Cordic):
-        mode = zkf._cordic._mode(model)
-        if (mode != 1 and model.stage_core_mul < 1) or (mode and model.fmt.wexp < 5):
-            return False
-        served = zkf._cordic._served(model)
-        if served is None:
-            return True
-        wa, wb = zkf._cordic._geometry(model.fmt.wman).operands(served)
-    else:
+    if not isinstance(model, Cordic):
         return True
-    signed = isinstance(model, Cordic) and zkf._cordic._mode(model) != 1
-    return model.stage_core_mul <= len(positions(wa, wb, signed=signed, wmultiplier=model.wmultiplier))
+    mode = zkf._cordic._mode(model)
+    if (mode != 1 and model.stage_core_mul_level < 1) or (mode and model.fmt.wexp < 5):
+        return False
+    served = zkf._cordic._served(model)
+    if served is None:
+        return True
+    wa, wb = zkf._cordic._geometry(model.fmt.wman).operands(int(served == 1))
+    return model.stage_core_mul_level < len(levels(wa, wb, signed=served != 1, wmultiplier=model.wmultiplier))
 
 
 def configurations(cls: type[Block], wmultiplier: int = 18, every_pair: bool = False) -> list[dict[str, object]]:
