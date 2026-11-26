@@ -41,33 +41,40 @@ class Exp2(Operator):
     stage_input: int = 0
     stage_core_kernel_level: int = 0
     """
-    The registers of the kernel's products, each level keeping those of the level below and adding:
+    The registers of the kernel's products: each level gives each product a level of `Mul.stage_core_mul_level` by the
+    widest side of its grid, in multipliers:
 
-        level     register added                                    to every product
-        0         none: the products are combinational
-        1         its output                                        cut into a grid of multipliers
-        2         its operands' capture                             cut into a grid of multipliers
-        3         its output                                        of one multiplier
-        4         its grid's, behind the multipliers                cut wider than 2 multipliers a side
-        5         its grid's, behind the multipliers                cut 2 multipliers wide
-        6         its operands' capture                             of one multiplier
-        7, 8, ... the next one within the sum of its grid           whose grid's sum takes another
+        level         1    2    3+
+        0             0    0    0
+        1             0    2    0
+        2             0    2    2
+        3             1    2    2
+        4             1    2    8
+        5             1    4    8
+        6             6    4    8
+        7             6    4    11
+        8             6    10   11
+        9             6    10   12
+        10            6    13   12
+        11            10   13   12
+        12            10   13   13
+        13            13   13   13
+        14, 15, ...   the next level of a product that has one
 
     A product is cut into a grid where an operand is wider than `wmultiplier`. A single multiplier whose product is
-    added to a coefficient, as an odd term's is, takes its output register after that sum, for a DSP's post-adder. The
-    order is the one that measured best for f_max across the supported flows; a register adds a cycle only where it lies
-    on the kernel's longest path. A level that adds no register to the kernel at hand is refused, naming the nearest
-    that do: on a kernel of single multipliers only 0, 3 and 6 are taken. So is a level past the last.
+    added to a coefficient, as an odd term's is, takes its O, then its G2, after that sum, for a DSP's post-adder. The
+    table is the one that measured best for f_max across the supported flows; a register adds a cycle only where it
+    lies on the kernel's longest path, and no level takes fewer cycles than the one below. A level past the last is
+    refused.
 
-    On 18-bit multipliers, the levels taken and the operator's latency at each, its other knobs at their defaults:
+    On 18-bit multipliers, the operator's latency at levels 0 to 13, its other knobs at their defaults:
 
-        format             products of its kernel                               level: latency
-        e6m18              one multiplier                                       0: 1, 3: 2, 6: 3
-        e8m24              a 2x1 grid, three single multipliers                 0: 1, 1: 2, 2: 3, 3: 3, 5: 4, 6: 5
-        e8m36              a 3x2 grid, a 2x2 grid, three single multipliers     0: 1, 1: 2, 2: 3, 3: 4, 4: 4, 5: 5,
-                                                                                6: 6, 7: 6
-        e11m53, compact    grids of 4x3, 3x3 twice, 2x2 twice, and one single   0: 1, 1: 4, 2: 7, 4: 9, 5: 10, 6: 10,
-                           multiplier, whose output its pair already registers  7: 12
+        format             products of its kernel                               latency
+        e6m18              one multiplier                                       1 1 1 2 2 2 3 3 3 3 3 4 4 5
+        e8m24              a 2x1 grid, three single multipliers                 1 2 2 3 3 3 5 5 5 5 5 7 7 9
+        e8m36              a 3x2 grid, a 2x2 grid, three single multipliers     1 2 2 3 3 4 5 5 6 6 7 8 8 9
+        e11m53, compact    grids of 4x3, 3x3 twice, 2x2 twice, and one single   1 2 4 4 6 7 7 9 10 12 13 13 15 15
+                           multiplier, whose output its pair registers
     """
     stage_core: CoreStages = CoreStages.NONE
     """See `Exp2.CoreStages`."""
@@ -96,12 +103,11 @@ class Exp2(Operator):
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 16")
         if self.fmt.wexp < 3:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is below 3")
-        # Generates the table, refusing a format that has none, and refuses what the kernel cannot build.
-        kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level)
+        self.timing  # generates the table, refusing a format that has none, and refuses a level outside its range
 
     @property
     def timing(self) -> Timing:
-        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level)
+        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level, "stage_core_kernel_level")
         return Timing(self.stage_input + 1 + kernel + len(self.stage_core) + self.stage_output, 1)
 
     @property

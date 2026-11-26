@@ -11,12 +11,13 @@ from mpmath import mp
 from _bench import Case, run_pipeline
 from _operands import SEED, exp2_operands, log2_operands, random_bits
 from zkf import Exp2, Log2, Zkf, ZkfFormat
-from zkf._trans import _GUARD, Kernel, Spec, _generate
+from zkf._pmul import registers
+from zkf._trans import _GUARD, Kernel, Spec, _generate, _ladder, _sizes
 
 SHORT = {
     "si": "stage_input",
     "kl": "stage_core_kernel_level",
-    "sm": "stage_core_mul",
+    "sm": "stage_core_mul_level",
     "sc": "stage_core",
     "so": "stage_output",
     "fa": "fast",
@@ -31,11 +32,11 @@ def others(core: type[enum.Flag]) -> list[tuple[int, int, dict[str, Any]]]:
     """
     return [
         (8, 20, {}),
-        (8, 25, {"wm": 17, "kl": 6}),
-        (8, 30, {"wm": 24, "kl": 6, "sc": next(iter(core))}),
-        (8, 40, {"kl": 7}),
-        (8, 44, {"wm": 27, "kl": 6, "sc": ~core(0)}),
-        (6, 17, {"wm": 16, "kl": 6}),
+        (8, 25, {"wm": 17, "kl": 8}),
+        (8, 30, {"wm": 24, "kl": 8, "sc": next(iter(core))}),
+        (8, 40, {"kl": 9}),
+        (8, 44, {"wm": 27, "kl": 8, "sc": ~core(0)}),
+        (6, 17, {"wm": 16, "kl": 8}),
     ]
 
 
@@ -46,14 +47,37 @@ def staging(core: type[enum.Flag]) -> list[dict[str, Any]]:
     """
     every = ~core(0)
     return [
-        {"kl": 6},
+        {"kl": 8},
         *({"sc": member} for member in core),
         {"sc": every},
         {"si": 1},
         {"so": 1},
         {"si": 2, "so": 2},
-        {"si": 1, "kl": 6, "sc": every, "so": 1},
+        {"si": 1, "kl": 8, "sc": every, "so": 1},
     ]
+
+
+def kernel_top(spec: Spec, wmultiplier: int) -> int:
+    """The last level of `Exp2.stage_core_kernel_level` that `Kernel` takes."""
+    return len(_ladder(spec, wmultiplier)) - 1
+
+
+def taken(spec: Spec, wmultiplier: int) -> list[int]:
+    """
+    The levels of the kernel whose products take other registers than the level below, or whose results and pairs are
+    taken at other cycles: the pair's waiting registers may hold those of a product whose output follows its sum.
+    """
+
+    def built(level: int) -> tuple[object, ...]:
+        at = _ladder(spec, wmultiplier)[level]
+        own = {
+            name: registers(at.levels[name], *size, signed=False, wmultiplier=wmultiplier)
+            for name, size in _sizes(spec).items()
+        }
+        return own, at.ready, at.turn, at.begin
+
+    ladder = [built(level) for level in range(len(_ladder(spec, wmultiplier)))]
+    return [0] + [level for level in range(1, len(ladder)) if ladder[level] != ladder[level - 1]]
 
 
 def build(function: str, fmt: ZkfFormat, wmultiplier: int = 18, **stages: Any) -> Exp2 | Log2:

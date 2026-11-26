@@ -215,7 +215,7 @@ def canonical(fmt: ZkfFormat, count: int) -> list[int]:
 def test_arithmetic_is_that_of_numpy(fmt: ZkfFormat) -> None:
     """On canonical operands, the only ones the oracle answers, and on those of the benches."""
     add, divsqrt = Add(fmt), Divsqrt(fmt)
-    mul, fma = Mul(fmt, stage_core_mul=3, wmultiplier=18), Fma(fmt, stage_core_mul=3, wmultiplier=18)
+    mul, fma = Mul(fmt, stage_core_mul_level=10, wmultiplier=18), Fma(fmt, stage_core_mul_level=10, wmultiplier=18)
     rng = np.random.default_rng(SEED)
     values = [Zkf(fmt, bits) for bits in canonical(fmt, 28)]
     pairs = [(a, b) for a in values for b in values]
@@ -318,8 +318,8 @@ def test_a_float_of_another_format_is_refused() -> None:
     fmt, other = ZkfFormat(6, 18), ZkfFormat(6, 17)
     exp2, log2, cordic = (
         Exp2(fmt, wmultiplier=18),
-        Log2(fmt, stage_core_mul=3, wmultiplier=18),
-        Cordic(fmt, stage_core_mul=3, wmultiplier=18),
+        Log2(fmt, stage_core_mul_level=10, wmultiplier=18),
+        Cordic(fmt, stage_core_mul_level=10, wmultiplier=18),
     )
     divsqrt, mul_ilog2, rint = Divsqrt(fmt), MulIlog2(fmt), Rint(fmt)
     root, rotation = divsqrt.specialized(op_sqrt=True), cordic.specialized(vectoring=False)
@@ -362,7 +362,7 @@ def test_an_integer_that_its_port_does_not_hold_is_refused() -> None:
     fmt = ZkfFormat(6, 18)
     one = fmt.encode(1)
     from_int, mul_ilog2, pipe = FromInt(fmt, wint=9), MulIlog2(fmt, wk=5), Pipe(w=5)
-    cordic, divsqrt, rint = Cordic(fmt, stage_core_mul=3, wmultiplier=18), Divsqrt(fmt), Rint(fmt)
+    cordic, divsqrt, rint = Cordic(fmt, stage_core_mul_level=10, wmultiplier=18), Divsqrt(fmt), Rint(fmt)
     ports: list[tuple[Callable[[int], object], range]] = [
         (from_int.evaluate, range(-256, 256)),
         (lambda k: mul_ilog2.evaluate(one, k), range(-16, 16)),
@@ -387,7 +387,7 @@ def test_a_specialization() -> None:
     """
     fmt = ZkfFormat(6, 18)
     a, b, c = fmt.encode(Fraction(3, 8)), fmt.encode(5), fmt.encode(-7)
-    divsqrt, cordic, rint = Divsqrt(fmt), Cordic(fmt, stage_core_mul=3, wmultiplier=18), Rint(fmt)
+    divsqrt, cordic, rint = Divsqrt(fmt), Cordic(fmt, stage_core_mul_level=10, wmultiplier=18), Rint(fmt)
     for code in (0, 1):
         fixed: list[tuple[Operator, Operator, str]] = [
             (divsqrt.specialized(op_sqrt=bool(code)), divsqrt, "op_sqrt"),
@@ -418,8 +418,8 @@ def test_the_oracles() -> None:
     minus_zero, root2, root_half, minus_root_half = w(1 << 31 | 5), w(0x3FB504F3), w(0x3F3504F3), w(0xBF3504F3)
     exp2, log2, cordic = (
         Exp2(fmt, stage_core_kernel_level=6, wmultiplier=18),
-        Log2(fmt, stage_core_kernel_level=6, stage_core_mul=3, wmultiplier=18),
-        Cordic(fmt, stage_core_mul=3, wmultiplier=18),
+        Log2(fmt, stage_core_kernel_level=6, stage_core_mul_level=10, wmultiplier=18),
+        Cordic(fmt, stage_core_mul_level=10, wmultiplier=18),
     )
     for x, y in (
         (inf, inf),
@@ -488,8 +488,8 @@ def test_the_oracles_do_not_read_the_precision_of_the_caller() -> None:
     fmt = ZkfFormat(8, 36)
     exp2, log2, cordic = (
         Exp2(fmt, stage_core_kernel_level=6, wmultiplier=18),
-        Log2(fmt, stage_core_kernel_level=6, stage_core_mul=3, wmultiplier=18),
-        Cordic(fmt, stage_core_mul=3, wmultiplier=18),
+        Log2(fmt, stage_core_kernel_level=6, stage_core_mul_level=10, wmultiplier=18),
+        Cordic(fmt, stage_core_mul_level=10, wmultiplier=18),
     )
     x, one, near = fmt.encode(Fraction(1, 10)), fmt.encode(1), fmt.pack(0, fmt.bias, 1)
 

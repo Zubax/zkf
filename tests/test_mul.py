@@ -15,7 +15,7 @@ from _operands import (
     random_zero,
 )
 from zkf import Mul, Zkf, ZkfFormat
-from zkf._pmul import positions
+from zkf._pmul import levels
 
 # Operands and the product, worked by hand at 8/24.
 BINARY32 = [
@@ -58,7 +58,7 @@ BINARY32 = [
 
 def test_reference_by_hand() -> None:
     fmt = ZkfFormat(8, 24)
-    model = Mul(fmt, stage_core_mul=2, wmultiplier=18)
+    model = Mul(fmt, stage_core_mul_level=6, wmultiplier=18)
     for a, b, want in BINARY32:
         assert model.evaluate(Zkf(fmt, a), Zkf(fmt, b)).bits == want
 
@@ -163,20 +163,21 @@ FORMATS = [
 ]
 
 
-def taken(wman: int, wmultiplier: int) -> range:
-    """The counts that the product takes: none up to its registers."""
-    return range(len(positions(wman, wman, signed=False, wmultiplier=wmultiplier)) + 1)
+def taken(wman: int, wmultiplier: int) -> list[int]:
+    """The levels of the product that build registers that no lower level does."""
+    at = levels(wman, wman, signed=False, wmultiplier=wmultiplier)
+    return [level for level in range(len(at)) if at[level] not in at[:level]]
 
 
-@pytest.mark.parametrize("row, stage_core_mul", [(row, core) for row in FORMATS for core in taken(row[1], 18)], ids=str)
-def test_formats(row: tuple[int, int, int], stage_core_mul: int) -> None:
-    run(*row, stage_core_mul=stage_core_mul)
+@pytest.mark.parametrize("row, level", [(row, level) for row in FORMATS for level in taken(row[1], 18)], ids=str)
+def test_formats(row: tuple[int, int, int], level: int) -> None:
+    run(*row, stage_core_mul_level=level)
 
 
 @pytest.mark.parametrize(
     "knobs",
     [
-        {"stage_core_mul": 3, "stage_input": 1, "stage_output": 2},
+        {"stage_core_mul_level": 10, "stage_input": 1, "stage_output": 2},
         {"stage_input": 2},
         {"stage_input": 3},
         {"stage_output": 3},
@@ -187,10 +188,10 @@ def test_stages(knobs: dict[str, int]) -> None:
     run(3, 4, 0, **knobs)
 
 
-# The narrowest significands that 8-bit multipliers split in two and in three, at every count that they take.
-@pytest.mark.parametrize("row", [(wman, count) for wman in (12, 17) for count in taken(wman, 8)], ids=str)
+# The narrowest significands that 8-bit multipliers split in two and in three, at every level that they take.
+@pytest.mark.parametrize("row", [(wman, level) for wman in (12, 17) for level in taken(wman, 8)], ids=str)
 def test_split(row: tuple[int, int]) -> None:
-    run(3, row[0], 512, 8, stage_core_mul=row[1])
+    run(3, row[0], 512, 8, stage_core_mul_level=row[1])
 
 
 @pytest.mark.parametrize("model", [pytest.param(m, id=n) for n, m in CATALOG.items() if isinstance(m, Mul)])
@@ -199,14 +200,15 @@ def test_catalog(model: Mul) -> None:
 
 
 def test_refusals() -> None:
-    """The product refuses a count past its registers as it is built."""
-    with pytest.raises(ValueError, match=r"^stages=4 is outside 0\.\.3$"):
-        Mul(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=4).compile()
+    """A level outside the product's range is refused as the model is made, by the knob's name."""
+    for level in (14, -1):
+        with pytest.raises(ValueError, match=rf"^stage_core_mul_level={level} is outside 0\.\.13$"):
+            Mul(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul_level=level)
 
 
 def test_the_attributes_reach_the_capture_of_a_grid() -> None:
-    """At `stage_core_mul=2` a 2x2 grid's operands are captured, with no register behind its multipliers."""
-    text = Mul(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul=2, mul_attrs={"use_dsp": "yes"}).compile()
+    """At level 6 a 2x2 grid's operands are captured, with no register behind its multipliers."""
+    text = Mul(ZkfFormat(8, 36), wmultiplier=18, stage_core_mul_level=6, mul_attrs={"use_dsp": "yes"}).compile()
     assert text.count('(* use_dsp = "yes" *)') == 2
 
 
@@ -217,13 +219,13 @@ def test_every_stage_is_a_cycle() -> None:
         return Mul(fmt, wmultiplier=18, **knobs).timing.latency
 
     f36 = ZkfFormat(8, 36)
-    assert [latency(f36, stage_input=1, stage_core_mul=k) for k in (2, 3)] == [3, 4]
-    assert latency(f36, stage_input=1, stage_core_mul=3, stage_output=1) == 5
+    assert [latency(f36, stage_input=1, stage_core_mul_level=k) for k in (6, 10)] == [3, 4]
+    assert latency(f36, stage_input=1, stage_core_mul_level=10, stage_output=1) == 5
 
 
 # The split product at 8/25 with its output registered.
 def test_split_registered() -> None:
-    run(8, 25, 512, stage_core_mul=3, stage_output=1)
+    run(8, 25, 512, stage_core_mul_level=10, stage_output=1)
 
 
 DEEP = [
@@ -245,23 +247,23 @@ DEEP = [
 # No split at a width that has none.
 @pytest.mark.deep
 @pytest.mark.parametrize(
-    "row, stage_core_mul",
-    [(row, core) for row in DEEP for core in taken(row[1], 8) if core < 3 or row[1] > 8],
+    "row, level",
+    [(row, level) for row in DEEP for level in taken(row[1], 8) if level < 10 or row[1] > 8],
     ids=str,
 )
-def test_deep(row: tuple[int, int, int], stage_core_mul: int) -> None:
-    run(*row, 8, stage_core_mul=stage_core_mul)
+def test_deep(row: tuple[int, int, int], level: int) -> None:
+    run(*row, 8, stage_core_mul_level=level)
 
 
 @pytest.mark.deep
-@pytest.mark.parametrize("stage_core_mul", range(4))
+@pytest.mark.parametrize("level", taken(5, 18))
 @pytest.mark.parametrize("row", [(3, 5), (2, 6)], ids=str)
-def test_deep_every_pair(row: tuple[int, int], stage_core_mul: int) -> None:
-    run(*row, 0, stage_core_mul=stage_core_mul)
+def test_deep_every_pair(row: tuple[int, int], level: int) -> None:
+    run(*row, 0, stage_core_mul_level=level)
 
 
-# The count of a 2x2 and of a 3x3 that the default tier does not run: the grid unregistered, and every level summed.
+# The levels of a 2x2 and of a 3x3 that the default tier does not run: the grid unregistered, and every register.
 @pytest.mark.deep
-@pytest.mark.parametrize("row", [(8, 36, 512, 2), (11, 53, 384, 4)], ids=str)
+@pytest.mark.parametrize("row", [(8, 36, 512, 6), (11, 53, 384, 13)], ids=str)
 def test_deep_wide_split(row: tuple[int, int, int, int]) -> None:
-    run(*row[:3], stage_core_mul=row[3])
+    run(*row[:3], stage_core_mul_level=row[3])

@@ -20,9 +20,7 @@ Each attribute adds maintenance and portability risk.
 Less code does not always imply simpler code. Apply common sense and keep the code straightforward.
 
 Register-stage knobs that the chosen configuration cannot implement are silently ignored by design, not refused:
-e.g., a register of a mode that the operator lacks. A stage count outside its knob's range is refused, not clamped.
-A level knob, whose levels each add registers in a measured order, refuses a level that adds none, naming the
-nearest that do.
+e.g., a register of a mode that the operator lacks. A stage count or level outside its knob's range is refused.
 No configuration is refused for the timing that it is expected to miss: closing timing is the user's job.
 
 ### Reset strategy
@@ -83,7 +81,7 @@ Special things to look out for:
 - DSP tiles should begin and end with a register stage. If retiming has moved a register away from a DSP tile,
   it means that the adjacent hop is starving and needs a new register there, even if it's not on the critical path.
 - A product is cut into a grid of multipliers only where an operand is wider than `wmultiplier`, so `wmultiplier` must
-  be the DSP slice input width: a narrower one splits products that a slice takes whole. A product's count only places
+  be the DSP slice input width: a narrower one splits products that a slice takes whole. A product's level only places
   registers in it.
 - Retiming is sneaky: a moved stage may cause a different path to become critical, so with retiming enabled one needs
   to evaluate the adjacent stages as well.

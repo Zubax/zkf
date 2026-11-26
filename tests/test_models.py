@@ -75,7 +75,7 @@ def test_names() -> None:
         f"//   timing: {add.timing}",
         f"module {add.name}(clk, rst, in_valid, a, b, out_valid, y);",
     ]
-    both = Cordic(F36, stage_core_mul=3, wmultiplier=18)
+    both = Cordic(F36, stage_core_mul_level=10, wmultiplier=18)
     assert f"//   timing: {both.timing}" in both.compile().splitlines()
 
 
@@ -187,9 +187,10 @@ def test_names_are_distinct() -> None:
             for knobs in configurations(cls):
                 try:
                     model = make(cls, fmt, **knobs)
+                    model.timing
                 except ValueError:
-                    # Every value of the sweep is taken but a rotation's count of 0 and a kernel's past its registers.
-                    assert cls in (Cordic, Exp2, Log2), knobs
+                    # Every value of the sweep is taken but a product's or a kernel's level past the last.
+                    assert cls in (Mul, Fma, Cordic, Exp2, Log2), knobs
                     continue
                 assert seen.setdefault(model.name, model) == model
 
@@ -233,9 +234,10 @@ def test_a_negative_count_of_stages_is_refused() -> None:
 
 def test_refusals() -> None:
     knobs: tuple[Callable[[], Block], ...] = (
-        lambda: Exp2(F18, wmultiplier=18, stage_core_kernel_level=7),
-        lambda: Exp2(F36, wmultiplier=18, stage_core_kernel_level=8),
-        lambda: Log2(F18, wmultiplier=18, stage_core_kernel_level=1),
+        lambda: Exp2(F18, wmultiplier=18, stage_core_kernel_level=99),
+        lambda: Exp2(F36, wmultiplier=18, stage_core_kernel_level=-1),
+        lambda: Log2(F18, wmultiplier=18, stage_core_kernel_level=99),
+        lambda: Mul(F18, wmultiplier=18, stage_core_mul_level=99),
         lambda: Pipe(w=0),
     )
     for build in knobs:
@@ -299,10 +301,10 @@ def test_ports() -> None:
     }
     unary = valid | {"x": (i, f, False), "y": (o, f, False)}
     assert widths(Exp2(F18, wmultiplier=18, stage_core_kernel_level=6)) == unary
-    log2 = Log2(F18, wmultiplier=18, stage_core_kernel_level=6, stage_core_mul=2)
+    log2 = Log2(F18, wmultiplier=18, stage_core_kernel_level=6, stage_core_mul_level=6)
     assert widths(log2) == unary | {"domain_error": (o, 1, False), "pole": (o, 1, False)}
     assert widths(Pipe(w=5)) == valid | {"x": (i, 5, False), "y": (o, 5, False)}
-    assert widths(Cordic(F18, stage_core_mul=3, wmultiplier=18)) == valid | {
+    assert widths(Cordic(F18, stage_core_mul_level=10, wmultiplier=18)) == valid | {
         "in_ready": (o, 1, False),
         "out_ready": (i, 1, False),
         "vectoring": (i, 1, False),
@@ -319,7 +321,7 @@ def test_specialized() -> None:
     A specialization lacks the selecting input and the ports that it leaves unread or undriven; each call starts from
     the default, and each build has its name.
     """
-    cordic, divsqrt, rint = Cordic(F18, stage_core_mul=3, wmultiplier=18), Divsqrt(F18), Rint(F18)
+    cordic, divsqrt, rint = Cordic(F18, stage_core_mul_level=10, wmultiplier=18), Divsqrt(F18), Rint(F18)
 
     def lacks(model: Block, alone: Block, *ports: str) -> bool:
         return widths(alone) == {name: port for name, port in widths(model).items() if name not in ports}
@@ -349,7 +351,11 @@ def test_one_configuration_is_one_model() -> None:
     assert table == plain and table.name != plain.name  # one configuration, two texts, two names
     assert replace(table, stage_output=1).rom_attrs == block and "rom_attrs" not in table.config
     keep: dict[str, int | str] = {"keep": "true", "syn_keep": 1}
-    for model in (Mul(F36, stage_core_mul=3, wmultiplier=18), Cordic(F18, stage_core_mul=3, wmultiplier=18), table):
+    for model in (
+        Mul(F36, stage_core_mul_level=10, wmultiplier=18),
+        Cordic(F18, stage_core_mul_level=10, wmultiplier=18),
+        table,
+    ):
         kept = replace(model, mul_attrs=keep)
         assert kept == model and kept.name != model.name and "mul_attrs" not in kept.config
         assert kept.name == replace(model, mul_attrs=dict(reversed(list(keep.items())))).name
@@ -366,7 +372,10 @@ def test_one_configuration_is_one_model() -> None:
 
 def test_clocked() -> None:
     assert not Pipe(w=1).clocked and Pipe(w=1, n=1).clocked
-    assert Mul(F18, stage_core_mul=1, wmultiplier=18).clocked and Cordic(F18, stage_core_mul=3, wmultiplier=18).clocked
+    assert (
+        Mul(F18, stage_core_mul_level=1, wmultiplier=18).clocked
+        and Cordic(F18, stage_core_mul_level=10, wmultiplier=18).clocked
+    )
     assert AbsNeg(F18, stage_output=1).clocked and Finite(F18, stage_output=1).clocked
     unclocked = (
         AbsNeg(F18),
@@ -394,11 +403,11 @@ from zkf import Cordic, Exp2, Log2, ZkfFormat
 mpmath.mp.prec = int(sys.argv[1])
 fitting = zkf._trans._fitting.prec  # the search's context, which generations at once would leave moved
 models = [
-    lambda: Log2(ZkfFormat(6, 16), wmultiplier=18, stage_core_kernel_level=6, stage_core_mul=2),
-    lambda: Log2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel_level=6, stage_core_mul=3),
+    lambda: Log2(ZkfFormat(6, 16), wmultiplier=18, stage_core_kernel_level=6, stage_core_mul_level=6),
+    lambda: Log2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel_level=6, stage_core_mul_level=10),
     lambda: Exp2(ZkfFormat(8, 24), wmultiplier=18, stage_core_kernel_level=6),
     lambda: Exp2(ZkfFormat(8, 36), wmultiplier=18, stage_core_kernel_level=6),
-    lambda: Cordic(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul=3),
+    lambda: Cordic(ZkfFormat(11, 53), wmultiplier=18, stage_core_mul_level=10),
 ]
 compile = lambda model: model().compile()  # made where it is compiled, which generates its tables
 texts = list(ThreadPoolExecutor(8).map(compile, models) if sys.argv[2] == "threads" else map(compile, models))

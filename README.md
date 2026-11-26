@@ -19,7 +19,7 @@ ZKF is written in Amaranth and can be integrated into Amaranth designs as well a
 ```python
 import zkf
 
-mul = zkf.Mul(zkf.ZkfFormat(8, 24), wmultiplier=18, stage_core_mul=2)  # 8b exponent, 24b mantissa, 18b multipliers
+mul = zkf.Mul(zkf.ZkfFormat(8, 24), wmultiplier=18, stage_core_mul_level=6)  # 8b exp, 24b mantissa, 18b mults
 latency = mul.timing.latency # cycles from in_valid to out_valid
 verilog = mul.compile()      # generate Verilog source
 component = mul.component()  # or the Amaranth component, for an Amaranth design or its simulator
@@ -130,7 +130,7 @@ When zero, internal combinational paths are exposed directly;
 when greater than one, dummy stages are added which helps with retiming or when routing delays dominate.
 
 - `stage_core` -- a set of the operator's own registers, e.g. `Add.CoreStages.SUM | Add.CoreStages.PACK`;
-operators made of parts take one knob per part, such as the product's `stage_core_mul`.
+operators made of parts take one knob per part, such as the product's `stage_core_mul_level`.
 The docstrings describe the knobs of each operator.
 
 The `timing` property gives the latency and the initiation interval (II) of the chosen staging configuration.

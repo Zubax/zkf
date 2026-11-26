@@ -11,7 +11,7 @@ from amaranth.utils import ceil_log2
 
 from ._block import Attrs, FloatLayout, FloatView, Operator, Timing, bundle, delay, pipe, zext
 from ._trans import Kernel, Spec, kernel_depth, pack_fixed, spec as table
-from ._pmul import Pmul
+from ._pmul import Pmul, latency
 from ._shift import Normshift
 from ._value import UnsupportedFormat, Zkf, ZkfFormat, context
 
@@ -57,8 +57,8 @@ class Log2(Operator):
     operator = "log2"
     stage_input: int = 0
     stage_core_kernel_level: int = 0
-    """As `Exp2`'s, on Log2's own kernel, whose products, and so levels and latencies, differ from Exp2's."""
-    stage_core_mul: int = 0
+    """As `Exp2`'s, on Log2's own kernel, whose products, and so latencies, differ from Exp2's."""
+    stage_core_mul_level: int = 0
     """Of the last product, `f * C(f)`, as `Mul`'s."""
     stage_core: CoreStages = CoreStages.NONE
     """See `Log2.CoreStages`."""
@@ -82,13 +82,16 @@ class Log2(Operator):
             raise ValueError(f"wmultiplier={self.wmultiplier} is below 16")
         if self.fmt.wexp > self.fmt.wman + 1:
             raise UnsupportedFormat(f"WEXP={self.fmt.wexp} is above WMAN + 1")
-        # Generates the table, refusing a format that has none, and refuses what the kernel cannot build.
-        kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level)
+        self.timing  # generates the table, refusing a format that has none, and refuses a level outside its range
 
     @property
     def timing(self) -> Timing:
-        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level)
-        inside = 1 + kernel + self.stage_core_mul + len(self.stage_core)
+        kernel = kernel_depth(self._spec, self.wmultiplier, self.stage_core_kernel_level, "stage_core_kernel_level")
+        wa, wb = _last(self._spec, self.fmt)
+        product = latency(
+            self.stage_core_mul_level, wa, wb, signed=False, wmultiplier=self.wmultiplier, knob="stage_core_mul_level"
+        )
+        inside = 1 + kernel + product + len(self.stage_core)
         return Timing(self.stage_input + inside + self.stage_output, 1)
 
     @property
@@ -239,7 +242,7 @@ class _Log2(wiring.Component):
             *_last(spec, fmt),
             signed=False,
             wmultiplier=model.wmultiplier,
-            stages=model.stage_core_mul,
+            level=model.stage_core_mul_level,
             attrs=model.mul_attrs,
         )
         m.d.comb += final.in_valid.eq(a_valid)
